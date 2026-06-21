@@ -1,0 +1,13 @@
+{
+  "name": "SmartFarm — Greenhouse IoT",
+  "short_name": "SmartFarm",
+  "description": "ระบบควบคุมโรงเรือนอัตโนมัติ บริษัทประวิทย์กรุ๊ป ปุ๋ยไวกิ้ง",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0fdf4",
+  "theme_color": "#14532d",
+  "orientation": "any",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

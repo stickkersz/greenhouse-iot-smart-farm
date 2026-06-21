@@ -1,0 +1,15 @@
+# Sensitive — ห้าม commit เด็ดขาด
+smartfarm_firmware/config.h
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Firebase cache
+.firebase/
+
+# Claude session data
+.claude/
+
+# Node / npm (ถ้ามีในอนาคต)
+node_modules/

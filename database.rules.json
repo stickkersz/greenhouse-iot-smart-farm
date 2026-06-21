@@ -1,0 +1,33 @@
+{
+  "rules": {
+    "smartfarm": {
+      "sensors": {
+        ".read":  "auth != null && auth.token.email != null",
+        ".write": "auth != null"
+      },
+      "status": {
+        ".read":  "auth != null && auth.token.email != null",
+        ".write": "auth != null"
+      },
+      "control": {
+        ".read":  "auth != null",
+        ".write": "auth != null && auth.token.email != null"
+      },
+      "alerts": {
+        ".read":  "auth != null && auth.token.email != null",
+        ".write": "auth != null"
+      },
+      "action_log": {
+        ".read":  "auth != null && auth.token.email != null",
+        ".write": "auth != null && auth.token.email != null",
+        "$entry": {
+          ".validate": "newData.hasChildren(['action', 'user', 'timestamp'])"
+        }
+      }
+    },
+    "logs": {
+      ".read":  "auth != null && auth.token.email != null",
+      ".write": "auth != null"
+    }
+  }
+}

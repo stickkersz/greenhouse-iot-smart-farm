@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Seed Log Data — Greenhouse IoT</title>
+<style>
+  body{font-family:'Prompt',sans-serif;background:#f0fdf4;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .box{background:#fff;border-radius:16px;padding:36px;box-shadow:0 4px 24px rgba(0,0,0,.1);max-width:480px;width:100%}
+  h2{color:#14532d;margin:0 0 6px}
+  p{color:#4b7a5e;font-size:.9rem;margin:0 0 24px}
+  button{background:#16a34a;color:#fff;border:none;border-radius:10px;padding:12px 28px;font-size:1rem;font-family:'Prompt',sans-serif;cursor:pointer;width:100%}
+  button:disabled{background:#86efac;cursor:not-allowed}
+  #log{margin-top:18px;background:#f0fdf4;border-radius:8px;padding:12px;font-size:.8rem;color:#166534;line-height:1.8;max-height:260px;overflow-y:auto;display:none}
+  .ok{color:#16a34a} .err{color:#dc2626} .inf{color:#0369a1}
+</style>
+</head>
+<body>
+<div class="box">
+  <h2>🌱 Seed Log Data</h2>
+  <p>กด Seed เพื่อสร้างข้อมูลย้อนหลัง 24 ชั่วโมงจำลอง<br>ให้กราฟในหน้า Dashboard แสดงผลได้ทันที</p>
+  <button id="btn" onclick="seed()">🚀 Seed ข้อมูล 24 ชั่วโมง</button>
+  <div id="log"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey:      "AIzaSyBZ2ke2Bbx-Nd9zhsZa0QDZUlKRtEbnCWE",
+  authDomain:  "greenhouse-iot-smart-farm.firebaseapp.com",
+  databaseURL: "https://greenhouse-iot-smart-farm-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:   "greenhouse-iot-smart-farm",
+});
+const db   = firebase.database();
+const auth = firebase.auth();
+
+function padZ(n) { return String(n).padStart(2,'0'); }
+function fmtDate(d) { return `${d.getFullYear()}-${padZ(d.getMonth()+1)}-${padZ(d.getDate())}`; }
+function rnd(base, range) { return +(base + (Math.random()-0.5)*range*2).toFixed(1); }
+
+function genHour(hour) {
+  const dayFactor = Math.max(0, Math.sin((hour - 6) * Math.PI / 14));
+  const tempBase  = 28 + dayFactor * 10;
+  const humBase   = 75 - dayFactor * 25;
+  const waterBase = 26 + dayFactor * 3;
+  const t  = rnd(tempBase, 1.2);
+  const rh = Math.min(99, Math.max(30, rnd(humBase, 3)));
+  const wt = rnd(waterBase, 0.5);
+  return {
+    air_temp_avg:     t,
+    air_temp_max:     +(t + Math.abs(rnd(1,0.5))).toFixed(1),
+    air_temp_min:     +(t - Math.abs(rnd(1,0.5))).toFixed(1),
+    air_humidity_avg: rh,
+    air_humidity_max: Math.min(99, +(rh + Math.abs(rnd(3,1))).toFixed(1)),
+    air_humidity_min: Math.max(30, +(rh - Math.abs(rnd(3,1))).toFixed(1)),
+    water_temp_avg:   wt,
+    water_temp_max:   +(wt + 0.3).toFixed(1),
+    water_temp_min:   +(wt - 0.3).toFixed(1),
+    soil_moisture_avg: rnd(55, 10),
+    samples: 60,
+  };
+}
+
+function log(msg, cls='inf') {
+  const el = document.getElementById('log');
+  el.style.display = 'block';
+  el.innerHTML += `<div class="${cls}">${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function seed() {
+  const btn = document.getElementById('btn');
+  btn.disabled = true; btn.textContent = '⏳ กำลัง seed...';
+  document.getElementById('log').innerHTML = '';
+
+  try {
+    await auth.signInAnonymously();
+    log('✅ Firebase Auth สำเร็จ', 'ok');
+  } catch(e) {
+    log('❌ Auth ล้มเหลว: ' + e.message, 'err');
+    btn.disabled = false; btn.textContent = '🚀 Seed ข้อมูล 24 ชั่วโมง';
+    return;
+  }
+
+  const now = new Date();
+  let ok = 0, fail = 0;
+
+  for (let i = 23; i >= 0; i--) {
+    const d  = new Date(now - i * 3600000);
+    const ds = fmtDate(d);
+    const hr = padZ(d.getHours());
+    const data = genHour(d.getHours());
+    try {
+      await db.ref(`/logs/${ds}/${hr}`).set(data);
+      log(`✅ /logs/${ds}/${hr} — ${data.air_temp_avg}°C  ${data.air_humidity_avg}% RH`, 'ok');
+      ok++;
+    } catch(e) {
+      log(`❌ /logs/${ds}/${hr}: ${e.message}`, 'err');
+      fail++;
+    }
+  }
+
+  log('─────────────────────────────', 'inf');
+  if (fail === 0) {
+    log(`🎉 เสร็จแล้ว! ${ok} ชั่วโมง — กลับไปที่ Dashboard แล้วกด 🔄 รีเฟรช ในแท็บ Chart`, 'ok');
+    btn.textContent = '✅ Seed เสร็จแล้ว';
+  } else {
+    log(`⚠️ เสร็จ ${ok} ชั่วโมง | ผิดพลาด ${fail} ชั่วโมง`, 'err');
+    btn.disabled = false; btn.textContent = '🔄 ลองอีกครั้ง';
+  }
+}
+</script>
+</body>
+</html>
