@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>SmartFarm — Greenhouse IoT</title>
   <!-- PWA -->
   <meta name="theme-color" content="#14532d" />
@@ -11,7 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="SmartFarm" />
-  <meta name="description" content="ระบบควบคุมโรงเรือนอัตโนมัติ บริษัทประวิทย์กรุ๊ป ปุ๋ยไวกิ้ง" />
+  <meta name="description" content="ระบบควบคุมโรงเรือนอัตโนมัติ บริษัท ปุ๋ยไวกิ้ง จำกัด" />
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
@@ -148,14 +148,33 @@
     /* ── Settings ── */
     .setting-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
     .setting-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
-    .setting-card label{display:block;font-size:.7rem;font-weight:600;color:var(--sub);margin-bottom:9px}
+    .setting-card label{display:block;font-size:.7rem;font-weight:600;color:var(--sub);margin-bottom:6px}
     .si-wrap{position:relative}
-    .setting-card input[type=number]{width:100%;background:var(--g50);border:1.5px solid var(--g200);border-radius:10px;color:var(--text);padding:8px 32px 8px 11px;font-size:1rem;font-weight:600;font-family:'Prompt',sans-serif;outline:none;transition:border-color .2s;-moz-appearance:textfield}
+    .setting-card input[type=number]{width:100%;background:var(--g50);border:1.5px solid var(--g200);border-radius:10px;color:var(--text);padding:9px 36px 9px 11px;font-size:1rem;font-weight:600;font-family:'Prompt',sans-serif;outline:none;transition:border-color .2s;-moz-appearance:textfield}
     .setting-card input::-webkit-outer-spin-button,.setting-card input::-webkit-inner-spin-button{-webkit-appearance:none}
     .setting-card input:focus{border-color:var(--g400);box-shadow:0 0 0 3px rgba(74,222,128,.2)}
     .si-unit{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-size:.75rem;color:var(--muted);font-weight:500;pointer-events:none}
-    .save-btn{margin-top:9px;width:100%;padding:9px;background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:10px;color:#fff;font-size:.82rem;font-weight:600;cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif;box-shadow:0 3px 10px rgba(22,163,74,.3)}
+    .save-btn{margin-top:4px;width:100%;padding:10px;background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:10px;color:#fff;font-size:.84rem;font-weight:600;cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif;box-shadow:0 3px 10px rgba(22,163,74,.3)}
     .save-btn:hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(22,163,74,.4)}
+    /* ── Settings Groups ── */
+    .setting-group{border:1.5px solid var(--g200);border-radius:12px;padding:13px 14px;margin-bottom:12px}
+    .setting-group-title{font-size:.78rem;font-weight:700;color:var(--g800);margin-bottom:11px;display:flex;align-items:center;gap:6px}
+    .setting-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .preset-row{display:flex;gap:7px;margin-bottom:14px;flex-wrap:wrap}
+    .preset-btn{flex:1;min-width:72px;padding:8px 6px;border:1.5px solid var(--g300);border-radius:10px;background:var(--g50);color:var(--g700);font-size:.73rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;text-align:center;white-space:nowrap}
+    .preset-btn:hover{background:var(--g100);border-color:var(--g500)}
+    .preset-btn.active-preset{background:var(--g700);color:#fff;border-color:var(--g700)}
+    .ch-assign-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:14px}
+    .ch-assign-item{background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:8px 10px;display:flex;align-items:flex-start;gap:8px}
+    .ch-num{font-size:.65rem;font-weight:700;background:var(--g600);color:#fff;border-radius:6px;padding:2px 6px;flex-shrink:0;margin-top:1px}
+    .ch-num.spare{background:#94a3b8}
+    .ch-desc{font-size:.74rem;font-weight:600;color:var(--text);line-height:1.3}
+    .ch-ctrl{font-size:.63rem;color:var(--muted);margin-top:1px}
+    .alert-field label{color:#b45309!important}
+    .alert-field input{border-color:#fde68a!important;background:#fffbeb!important}
+    .alert-field input:focus{border-color:#f59e0b!important;box-shadow:0 0 0 3px rgba(245,158,11,.15)!important}
+    .alert-field .si-unit{color:#b45309}
+    .setting-section-label{font-size:.72rem;font-weight:600;color:var(--sub);margin-bottom:8px;display:block}
 
     /* ── Log ── */
     .log-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
@@ -193,6 +212,46 @@
     #loginError{margin-top:12px;font-size:.78rem;color:#dc2626;min-height:1.2em;font-weight:500}
     .logout-btn{background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:5px;font-family:'Prompt',sans-serif}
 
+    /* ── Notification Panel ── */
+    .notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:600;opacity:0;pointer-events:none;transition:opacity .3s}
+    .notif-overlay.open{opacity:1;pointer-events:all}
+    .notif-panel{position:fixed;top:0;right:0;bottom:0;width:min(380px,100vw);background:#fff;z-index:601;transform:translateX(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,.18)}
+    .notif-panel.open{transform:translateX(0)}
+    .notif-panel-hdr{background:linear-gradient(135deg,#14532d,#166534);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding-top:max(16px,env(safe-area-inset-top))}
+    .notif-panel-title{font-size:1rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px}
+    .notif-panel-close{background:rgba(255,255,255,.15);border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;color:#fff;font-size:1rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .notif-panel-body{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+    .notif-item{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:12px;border-left:3px solid #ef4444;background:#fff5f5}
+    .notif-item-icon{font-size:1.2rem;flex-shrink:0;line-height:1.3}
+    .notif-item-msg{font-size:.82rem;font-weight:500;color:#991b1b;line-height:1.4}
+    .notif-item-time{font-size:.65rem;color:#b45309;margin-top:3px}
+    .notif-empty{text-align:center;padding:50px 20px;color:var(--muted);flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+    .notif-empty-icon{font-size:3rem}
+    .notif-empty-text{font-size:.85rem}
+    .notif-panel-footer{padding:12px 14px;border-top:1px solid var(--g100);flex-shrink:0}
+    .notif-enable-btn{width:100%;padding:10px;background:var(--g600);border:none;border-radius:10px;color:#fff;font-size:.8rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s}
+    .notif-enable-btn:hover{background:var(--g700)}
+    .notif-clear-btn{width:100%;padding:8px;background:#fee2e2;border:none;border-radius:10px;color:#dc2626;font-size:.78rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;margin-top:6px;transition:.2s}
+    .notif-clear-btn:hover{background:#fecaca}
+    .bell-wrap{position:relative;display:flex}
+    .notif-badge{position:absolute;top:-5px;right:-5px;background:#ef4444;color:#fff;font-size:.55rem;font-weight:700;border-radius:999px;min-width:16px;height:16px;display:none;align-items:center;justify-content:center;padding:0 3px;border:2px solid #14532d}
+    .notif-badge.show{display:flex}
+
+    /* ── Range Selector & Export ── */
+    .range-btns{display:flex;gap:3px;background:#f1f5f9;border-radius:8px;padding:3px}
+    .range-btn{padding:5px 12px;border:none;background:transparent;border-radius:6px;font-size:.73rem;font-weight:600;color:#64748b;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;white-space:nowrap}
+    .range-btn.active{background:#fff;color:#15803d;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+    .export-btn{background:var(--g100);border:1px solid var(--g300);border-radius:8px;color:var(--g700);padding:5px 11px;font-size:.73rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;white-space:nowrap}
+    .export-btn:hover{background:var(--g200)}
+    /* ── Alert History ── */
+    .alert-hist-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
+    .alert-hist-item{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--g100)}
+    .alert-hist-item:last-child{border-bottom:none;padding-bottom:0}
+    .alert-hist-icon{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+    .alert-hist-msg{font-size:.81rem;font-weight:500;color:var(--text);line-height:1.4}
+    .alert-hist-time{font-size:.65rem;color:var(--muted);margin-top:2px}
+    .alert-hist-empty{text-align:center;padding:20px 0;color:var(--muted);font-size:.82rem}
+
     /* ── Sensor Detail Bottom Sheet ── */
     .detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;opacity:0;pointer-events:none;transition:opacity .3s}
     .detail-overlay.open{opacity:1;pointer-events:all}
@@ -219,44 +278,105 @@
     .sensor-card{cursor:pointer}
 
     /* ── Bottom Nav ── */
-    .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:60px;background:#fff;border-top:1px solid var(--border);z-index:200;box-shadow:0 -4px 20px rgba(20,83,45,.1)}
-    .bnav-inner{display:flex;height:100%}
+    .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:calc(60px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:#fff;border-top:1px solid var(--border);z-index:200;box-shadow:0 -4px 20px rgba(20,83,45,.1)}
+    .bnav-inner{display:flex;height:60px}
     .nav-tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:none;border:none;cursor:pointer;font-family:'Prompt',sans-serif;font-size:.58rem;font-weight:600;color:var(--muted);transition:color .2s;padding:5px 0;-webkit-tap-highlight-color:transparent}
     .nav-tab .ni{font-size:1.25rem;line-height:1;transition:transform .2s}
     .nav-tab.active{color:var(--g700)}
     .nav-tab.active .ni{transform:scale(1.18)}
 
-    /* ── Tabs ── */
-    @media(max-width:768px){
-      body{padding-bottom:68px}
+    /* ── RESPONSIVE ── */
+
+    /* Mobile: แสดง Bottom Nav, ซ่อน Tab ที่ไม่ active */
+    @media(max-width:767px){
+      body{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
       .bottom-nav{display:block}
       .tab-section{display:none}
       .tab-section.active{display:flex;flex-direction:column;gap:18px}
       main{padding:12px 10px;gap:0}
-      #toast{bottom:70px}
+      #toast{bottom:calc(76px + env(safe-area-inset-bottom))}
     }
-    @media(min-width:769px){
+    /* Desktop: ซ่อน Bottom Nav, แสดง Tab ทั้งหมด */
+    @media(min-width:768px){
       .tab-section{display:flex;flex-direction:column;gap:22px}
       .bottom-nav{display:none}
       #toast{bottom:24px;right:24px}
     }
-    @media(max-width:600px){
-      header{padding:0 12px;height:52px}
-      .hl h1{font-size:.78rem;white-space:nowrap}
+
+    /* Tablet 768-1023px (iPad portrait / landscape ขนาดเล็ก) */
+    @media(min-width:768px) and (max-width:1023px){
+      main{padding:14px 12px}
+      .relay-grid{grid-template-columns:1fr 1fr}
+      .setting-fields{grid-template-columns:1fr 1fr}
+      .chart-wrap{height:260px}
+      .sensor-grid{grid-template-columns:repeat(2,1fr)}
+      .gauge-wrap{width:145px;height:118px}
+    }
+
+    /* Desktop 1024px+ */
+    @media(min-width:1024px){
+      .relay-grid{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+      .setting-fields{grid-template-columns:repeat(3,1fr)}
+      .sensor-grid{grid-template-columns:repeat(auto-fit,minmax(185px,1fr))}
+    }
+
+    /* Title switching */
+    .title-short{display:none}
+    .title-long{display:inline}
+
+    /* Mobile < 600px (โทรศัพท์ทั่วไป) */
+    @media(max-width:599px){
+      header{padding:0 10px;height:54px}
+      .title-long{display:none}
+      .title-short{display:inline}
+      .hl h1{font-size:.98rem;font-weight:700;white-space:nowrap;overflow:visible;max-width:none}
       .hl small{display:none}
+      .status-text{display:none}
+      .status-pill{padding:5px 8px}
       .user-chip-name{display:none}
-      .uptime-card{padding:8px 14px;border-radius:10px}
-      .uptime-card h3{font-size:.58rem;margin-bottom:1px}
-      .uptime-card .val{font-size:1rem}
+      /* Uptime */
+      .uptime-card{padding:12px 16px;border-radius:12px}
+      .uptime-card h3{font-size:.62rem;margin-bottom:2px}
+      .uptime-card .val{font-size:1.15rem}
       .uptime-r{display:none}
-      .sensor-grid{grid-template-columns:1fr 1fr;gap:9px}
-      .gauge-wrap{width:135px;height:110px}
-      .relay-card{padding:12px;gap:8px}
+      /* Sensor section header */
+      .sh-title{font-size:.92rem}
+      .sh-sub{font-size:.76rem}
+      /* Sensor cards */
+      .sensor-grid{grid-template-columns:1fr 1fr;gap:10px}
+      .sensor-label{font-size:.76rem}
+      .sensor-badge{font-size:.64rem;padding:2px 8px}
+      .sensor-status{font-size:.74rem}
+      .gauge-wrap{width:132px;height:108px}
+      /* Relay */
+      .relay-card{padding:13px;gap:9px}
       .relay-top{gap:8px}
-      .relay-name{font-size:.82rem}
-      .relay-ch{font-size:.62rem}
-      .relay-icon{width:32px;height:32px;font-size:1rem}
+      .relay-name{font-size:.84rem}
+      .relay-ch{font-size:.64rem}
+      .relay-icon{width:34px;height:34px;font-size:1.05rem}
+      /* Settings */
       .setting-fields{display:flex;flex-direction:column;gap:10px}
+      /* Chart */
+      .chart-wrap{height:200px}
+      .chart-toolbar{flex-direction:column;align-items:stretch;gap:7px}
+      .chart-toolbar > div:last-child{justify-content:flex-end}
+      .range-btn{flex:1;padding:6px 4px;text-align:center;font-size:.76rem}
+      /* Detail sheet */
+      .detail-chart-canvas-wrap{height:155px}
+      .detail-val{font-size:2.6rem}
+      /* Nav tabs */
+      .nav-tab span:not(.ni){font-size:.65rem}
+      .nav-tab .ni{font-size:1.35rem}
+    }
+
+    /* Very small phone < 375px (iPhone SE) */
+    @media(max-width:374px){
+      header{height:50px}
+      .hl h1{font-size:.88rem}
+      .sensor-grid{gap:8px}
+      .gauge-wrap{width:118px;height:96px}
+      .sensor-label{font-size:.7rem}
+      .status-pill{display:none}
     }
   </style>
 </head>
@@ -293,12 +413,15 @@
   <div class="hl">
     <span class="logo">🌿</span>
     <div>
-      <h1>Greenhouse IoT Smart Farm</h1>
+      <h1><span class="title-long">Greenhouse IoT Smart Farm</span><span class="title-short">SmartFarm</span></h1>
       <small>บริษัท ปุ๋ยไวกิ้ง จำกัด</small>
     </div>
   </div>
   <div class="hr">
-    <button class="bell-btn" id="bellBtn" onclick="requestNotifPermission()" title="เปิดการแจ้งเตือน">🔔</button>
+    <div class="bell-wrap">
+      <button class="bell-btn" id="bellBtn" onclick="openNotifPanel()" title="การแจ้งเตือน">🔔</button>
+      <div class="notif-badge" id="notifBadge">0</div>
+    </div>
     <button class="logout-btn user-chip" onclick="doLogout()" title="ออกจากระบบ">
       👤 <span class="user-chip-name" id="userChipName">—</span>
     </button>
@@ -488,16 +611,24 @@
     <div>
       <div class="sh">
         <div class="sh-icon">📈</div>
-        <div><div class="sh-title">กราฟย้อนหลัง 24 ชั่วโมง</div><div class="sh-sub">ค่าเฉลี่ยรายชั่วโมงจาก Firebase</div></div>
+        <div><div class="sh-title" id="chartSectionTitle">กราฟย้อนหลัง 24 ชั่วโมง</div><div class="sh-sub">ค่าเฉลี่ยจาก Firebase</div></div>
       </div>
       <div class="chart-card">
         <div class="chart-toolbar">
-          <div class="chart-legend">
-            <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>อุณหภูมิอากาศ (°C)</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>ความชื้นอากาศ (%)</div>
-            <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div>อุณหภูมิน้ำ (°C)</div>
+          <div class="range-btns">
+            <button class="range-btn active" id="rangeBtn-24h" onclick="setRange('24h')">24 ชม.</button>
+            <button class="range-btn" id="rangeBtn-7d"  onclick="setRange('7d')">7 วัน</button>
+            <button class="range-btn" id="rangeBtn-30d" onclick="setRange('30d')">30 วัน</button>
           </div>
-          <button class="chart-btn" id="chartRefreshBtn" onclick="reloadChart()">🔄 รีเฟรช</button>
+          <div style="display:flex;gap:6px">
+            <button class="export-btn" onclick="exportCSV()" title="Export ข้อมูลเป็น CSV">⬇️ CSV</button>
+            <button class="chart-btn" id="chartRefreshBtn" onclick="reloadChart()">🔄</button>
+          </div>
+        </div>
+        <div class="chart-legend" style="margin-bottom:10px;margin-top:4px">
+          <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>อุณหภูมิอากาศ (°C)</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>ความชื้นอากาศ (%)</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div>อุณหภูมิน้ำ (°C)</div>
         </div>
         <div class="chart-wrap">
           <div class="chart-loading" id="chartLoading">⏳ กำลังโหลดข้อมูล...</div>
@@ -509,6 +640,17 @@
         </div>
       </div>
     </div>
+
+    <!-- ── Alert History ── -->
+    <div>
+      <div class="sh">
+        <div class="sh-icon">⚠️</div>
+        <div><div class="sh-title">ประวัติการแจ้งเตือน</div><div class="sh-sub">บันทึกเมื่ออุณหภูมิ/ความชื้นเกินเกณฑ์</div></div>
+      </div>
+      <div class="alert-hist-card" id="alertHistList">
+        <div class="alert-hist-empty">📭 ยังไม่มีประวัติการแจ้งเตือน</div>
+      </div>
+    </div>
   </section>
 
   <!-- ── SETTINGS TAB ── -->
@@ -516,26 +658,78 @@
     <div>
       <div class="sh">
         <div class="sh-icon">⚙️</div>
-        <div><div class="sh-title">ตั้งค่า Auto Control</div><div class="sh-sub">ระบบเปิด/ปิดอัตโนมัติ · ESP32 รับค่าใหม่ทันที</div></div>
+        <div><div class="sh-title">ตั้งค่า Auto Control</div><div class="sh-sub">ESP32 รับค่าใหม่ทันที · บันทึกเมื่อกด 💾</div></div>
       </div>
       <div class="setting-card">
-        <div class="setting-fields">
-          <div>
-            <label>🌡️ เปิดเมื่ออุณหภูมิ ≥</label>
-            <div class="si-wrap"><input type="number" id="tempOn" value="35" step="0.5" min="20" max="50"><span class="si-unit">°C</span></div>
+
+        <!-- Quick Preset -->
+        <span class="setting-section-label">⚡ Quick Preset</span>
+        <div class="preset-row">
+          <button class="preset-btn" id="preset-summer" onclick="applyPreset('summer')">☀️ ฤดูร้อน</button>
+          <button class="preset-btn active-preset" id="preset-normal" onclick="applyPreset('normal')">🌤️ ปกติ</button>
+          <button class="preset-btn" id="preset-rainy" onclick="applyPreset('rainy')">🌧️ ฤดูฝน</button>
+          <button class="preset-btn" id="preset-custom" onclick="applyPreset('custom')">✏️ กำหนดเอง</button>
+        </div>
+
+        <!-- Channel Assignment -->
+        <span class="setting-section-label">🔌 Channel ควบคุมอะไร</span>
+        <div class="ch-assign-grid">
+          <div class="ch-assign-item">
+            <span class="ch-num">CH1</span>
+            <div><div class="ch-desc">💧 ปั๊มน้ำ</div><div class="ch-ctrl">เปิดเมื่อความชื้นต่ำ</div></div>
           </div>
-          <div>
-            <label>❄️ ปิดเมื่ออุณหภูมิ ≤</label>
-            <div class="si-wrap"><input type="number" id="tempOff" value="32" step="0.5" min="15" max="45"><span class="si-unit">°C</span></div>
+          <div class="ch-assign-item">
+            <span class="ch-num">CH2</span>
+            <div><div class="ch-desc">🌬️ พัดลม OUT</div><div class="ch-ctrl">เปิดเมื่ออุณหภูมิสูง</div></div>
           </div>
-          <div>
-            <label>💧 ความชื้นอากาศ ≤</label>
-            <div class="si-wrap"><input type="number" id="humidityMin" value="60" step="1" min="10" max="95"><span class="si-unit">%</span></div>
+          <div class="ch-assign-item">
+            <span class="ch-num">CH3</span>
+            <div><div class="ch-desc">💨 พัดลม IN</div><div class="ch-ctrl">เปิดเมื่ออุณหภูมิสูง</div></div>
+          </div>
+          <div class="ch-assign-item">
+            <span class="ch-num spare">CH4</span>
+            <div><div class="ch-desc">⚡ สำรอง</div><div class="ch-ctrl">Manual / Schedule only</div></div>
           </div>
         </div>
+
+        <!-- Temperature Control -->
+        <div class="setting-group">
+          <div class="setting-group-title">🌡️ ควบคุมอุณหภูมิ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH2 + CH3 พัดลม)</span></div>
+          <div class="setting-row">
+            <div>
+              <label>🌡️ เปิดพัดลมเมื่อ ≥</label>
+              <div class="si-wrap"><input type="number" id="tempOn" value="35" step="0.5" min="20" max="50"><span class="si-unit">°C</span></div>
+            </div>
+            <div>
+              <label>❄️ ปิดพัดลมเมื่อ ≤</label>
+              <div class="si-wrap"><input type="number" id="tempOff" value="32" step="0.5" min="15" max="45"><span class="si-unit">°C</span></div>
+            </div>
+          </div>
+          <div style="margin-top:10px" class="alert-field">
+            <label>🚨 แจ้งเตือนวิกฤตเมื่อ ≥</label>
+            <div class="si-wrap"><input type="number" id="tempAlert" value="38" step="0.5" min="25" max="60"><span class="si-unit">°C</span></div>
+          </div>
+        </div>
+
+        <!-- Humidity Control -->
+        <div class="setting-group">
+          <div class="setting-group-title">💧 ควบคุมความชื้นอากาศ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH1 ปั๊มน้ำ)</span></div>
+          <div class="setting-row">
+            <div>
+              <label>💧 เปิดปั๊มน้ำเมื่อ ≤</label>
+              <div class="si-wrap"><input type="number" id="humidityMin" value="60" step="1" min="10" max="95"><span class="si-unit">%</span></div>
+            </div>
+            <div class="alert-field">
+              <label>🚨 แจ้งเตือนวิกฤตเมื่อ ≤</label>
+              <div class="si-wrap"><input type="number" id="humidityAlert" value="40" step="1" min="10" max="90"><span class="si-unit">%</span></div>
+            </div>
+          </div>
+        </div>
+
         <button class="save-btn" onclick="saveThresholds()">💾 บันทึกการตั้งค่า</button>
       </div>
     </div>
+
     <div>
       <div class="sh">
         <div class="sh-icon">📋</div>
@@ -559,6 +753,22 @@
 </nav>
 
 <div id="toast"></div>
+
+<!-- ── Notification Panel ── -->
+<div class="notif-overlay" id="notifOverlay" onclick="closeNotifPanel()"></div>
+<div class="notif-panel" id="notifPanel">
+  <div class="notif-panel-hdr">
+    <div class="notif-panel-title">🔔 การแจ้งเตือน <span id="notifCount" style="font-size:.75rem;font-weight:400;opacity:.8"></span></div>
+    <button class="notif-panel-close" onclick="closeNotifPanel()">✕</button>
+  </div>
+  <div class="notif-panel-body" id="notifPanelBody">
+    <div class="notif-empty"><span class="notif-empty-icon">🔕</span><span class="notif-empty-text">ยังไม่มีการแจ้งเตือน</span></div>
+  </div>
+  <div class="notif-panel-footer">
+    <button class="notif-enable-btn" id="notifEnableBtn" onclick="requestNotifPermission()">🔔 เปิดการแจ้งเตือน Push</button>
+    <button class="notif-clear-btn" onclick="clearAlertHistory()">🗑️ ล้างประวัติทั้งหมด</button>
+  </div>
+</div>
 
 <!-- ── Sensor Detail Bottom Sheet ── -->
 <div class="detail-overlay" id="detailOverlay" onclick="closeDetail()"></div>
@@ -766,9 +976,31 @@ function startListeners() {
   db.ref('/smartfarm/control').on('value', snap => {
     const d = snap.val(); if (!d) return;
     if (d.thresholds) {
-      if (d.thresholds.temp_on      != null) document.getElementById('tempOn').value      = d.thresholds.temp_on;
-      if (d.thresholds.temp_off     != null) document.getElementById('tempOff').value     = d.thresholds.temp_off;
-      if (d.thresholds.humidity_min != null) document.getElementById('humidityMin').value = d.thresholds.humidity_min;
+      const th = d.thresholds;
+      if (th.temp_on       != null) document.getElementById('tempOn').value        = th.temp_on;
+      if (th.temp_off      != null) document.getElementById('tempOff').value       = th.temp_off;
+      if (th.humidity_min  != null) document.getElementById('humidityMin').value   = th.humidity_min;
+      if (th.temp_alert    != null) document.getElementById('tempAlert').value     = th.temp_alert;
+      if (th.humidity_alert!= null) document.getElementById('humidityAlert').value = th.humidity_alert;
+      // อัปเดต alertThresholds ให้ checkAlerts() ใช้ค่าล่าสุดเสมอ
+      alertThresholds = {
+        temp_alert:     th.temp_alert     ?? alertThresholds.temp_alert,
+        humidity_alert: th.humidity_alert ?? alertThresholds.humidity_alert,
+      };
+      // ไฮไลต์ preset ที่ตรง
+      let matched = false;
+      Object.entries(PRESETS).forEach(([k,p]) => {
+        if (p.temp_on===th.temp_on && p.temp_off===th.temp_off && p.humidity_min===th.humidity_min
+            && p.temp_alert===th.temp_alert && p.humidity_alert===th.humidity_alert) {
+          document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
+          document.getElementById('preset-'+k)?.classList.add('active-preset');
+          matched = true;
+        }
+      });
+      if (!matched) {
+        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
+        document.getElementById('preset-custom')?.classList.add('active-preset');
+      }
     }
     const chMap = {ch1_pump:'ch1', ch2_fan_out:'ch2', ch3_fan_in:'ch3', ch4_spare:'ch4'};
     for (const [key, id] of Object.entries(chMap)) {
@@ -781,6 +1013,10 @@ function startListeners() {
       });
       if (d[key].schedule) updateScheduleUI(id, d[key].schedule);
     }
+  });
+
+  db.ref('/smartfarm/alert_history').orderByChild('timestamp').limitToLast(30).on('value', snap => {
+    const rows = []; snap.forEach(c => rows.unshift(c.val())); renderAlertHistory(rows);
   });
 
   db.ref('/smartfarm/action_log').orderByChild('timestamp').limitToLast(10).on('value', snap => {
@@ -833,74 +1069,142 @@ function updateScheduleUI(id, s) {
 }
 
 // ── Thresholds ────────────────────────────────────────
+let alertThresholds = {temp_alert: 38, humidity_alert: 40};
+
+const PRESETS = {
+  summer: {temp_on:33, temp_off:30, humidity_min:70, temp_alert:38, humidity_alert:50, label:'☀️ ฤดูร้อน'},
+  normal: {temp_on:35, temp_off:32, humidity_min:60, temp_alert:40, humidity_alert:40, label:'🌤️ ปกติ'},
+  rainy:  {temp_on:38, temp_off:35, humidity_min:50, temp_alert:42, humidity_alert:35, label:'🌧️ ฤดูฝน'},
+};
+
+function applyPreset(name) {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active-preset'));
+  document.getElementById('preset-' + name)?.classList.add('active-preset');
+  if (name === 'custom') return;
+  const p = PRESETS[name];
+  document.getElementById('tempOn').value        = p.temp_on;
+  document.getElementById('tempOff').value       = p.temp_off;
+  document.getElementById('humidityMin').value   = p.humidity_min;
+  document.getElementById('tempAlert').value     = p.temp_alert;
+  document.getElementById('humidityAlert').value = p.humidity_alert;
+  showToast(`✅ โหลด Preset ${p.label}`);
+}
+
 function saveThresholds() {
-  const ton  = parseFloat(document.getElementById('tempOn').value);
-  const toff = parseFloat(document.getElementById('tempOff').value);
-  const hmin = parseFloat(document.getElementById('humidityMin').value);
-  if (ton <= toff) { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
-  db.ref('/smartfarm/control/thresholds').set({temp_on:ton, temp_off:toff, humidity_min:hmin})
-    .then(() => {
-      logAction(`ตั้งค่า Threshold — เปิด ${ton}°C / ปิด ${toff}°C / ชื้น ≤ ${hmin}%`);
-      showToast('✅ บันทึกการตั้งค่า · ESP32 รับค่าใหม่ทันที');
+  const ton   = parseFloat(document.getElementById('tempOn').value);
+  const toff  = parseFloat(document.getElementById('tempOff').value);
+  const hmin  = parseFloat(document.getElementById('humidityMin').value);
+  const tAlert= parseFloat(document.getElementById('tempAlert').value);
+  const hAlert= parseFloat(document.getElementById('humidityAlert').value);
+  if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
+  if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
+  if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
+  const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, temp_alert:tAlert, humidity_alert:hAlert};
+  db.ref('/smartfarm/control/thresholds').set(data).then(() => {
+    alertThresholds = {temp_alert: tAlert, humidity_alert: hAlert};
+    logAction(`ตั้งค่า — พัดลมเปิด ${ton}°C ปิด ${toff}°C · ปั๊มเปิด ≤${hmin}% · Alert ${tAlert}°C / ${hAlert}%`);
+    showToast('✅ บันทึกแล้ว · ESP32 รับค่าใหม่ทันที');
+    // ทำให้ preset ไฮไลต์ถ้า match
+    let matched = false;
+    Object.entries(PRESETS).forEach(([k,p]) => {
+      if (p.temp_on===ton && p.temp_off===toff && p.humidity_min===hmin && p.temp_alert===tAlert && p.humidity_alert===hAlert) {
+        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
+        document.getElementById('preset-'+k)?.classList.add('active-preset');
+        matched = true;
+      }
     });
+    if (!matched) {
+      document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
+      document.getElementById('preset-custom')?.classList.add('active-preset');
+    }
+  });
 }
 
 // ── History Chart ─────────────────────────────────────
 let historyChart = null;
+let currentRange = '24h';
+let chartRawData = null;
+const THAI_MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+
 function padZ(n) { return String(n).padStart(2,'0'); }
 function fmtDate(d) { return `${d.getFullYear()}-${padZ(d.getMonth()+1)}-${padZ(d.getDate())}`; }
 
-async function loadHistoryChart() {
-  const btn   = document.getElementById('chartRefreshBtn');
-  const loadEl  = document.getElementById('chartLoading');
-  const emptyEl = document.getElementById('chartEmpty');
-  const canvas  = document.getElementById('historyChart');
-  btn.disabled = true; btn.textContent = '⏳ กำลังโหลด...';
-  loadEl.style.display = 'flex'; emptyEl.style.display = 'none'; canvas.style.display = 'none';
-  try {
-    const now   = new Date();
-    const today = fmtDate(now), yesterday = fmtDate(new Date(now - 86400000));
-    const [sT, sY] = await Promise.all([
-      db.ref(`/logs/${today}`).once('value'),
-      db.ref(`/logs/${yesterday}`).once('value'),
-    ]);
-    const td = sT.val()||{}, yd = sY.val()||{};
-    const labels=[], tData=[], hData=[], wData=[];
-    let hasData = false;
-    for (let i=23; i>=0; i--) {
-      const d = new Date(now - i*3600000);
-      const ds = fmtDate(d), hr = padZ(d.getHours());
-      const src = ds===today ? td : yd;
-      const e = src[hr]||null;
-      labels.push(hr+':00');
-      if (e) {
-        hasData = true;
-        tData.push(e.air_temp_avg     != null ? +e.air_temp_avg.toFixed(1)     : null);
-        hData.push(e.air_humidity_avg != null ? +e.air_humidity_avg.toFixed(1)  : null);
-        wData.push(e.water_temp_avg   != null ? +e.water_temp_avg.toFixed(1)    : null);
-      } else { tData.push(null); hData.push(null); wData.push(null); }
-    }
-    loadEl.style.display = 'none';
-    if (!hasData) { emptyEl.style.display = 'flex'; }
-    else { canvas.style.display = 'block'; renderChart(labels, tData, hData, wData); }
-  } catch(err) {
-    console.error('loadHistoryChart:', err);
-    loadEl.textContent = '❌ โหลดข้อมูลไม่สำเร็จ';
-  } finally {
-    btn.disabled = false; btn.textContent = '🔄 รีเฟรช';
-  }
+function setRange(range) {
+  currentRange = range;
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.id === 'rangeBtn-' + range));
+  const titles = {'24h':'กราฟย้อนหลัง 24 ชั่วโมง','7d':'กราฟย้อนหลัง 7 วัน','30d':'กราฟย้อนหลัง 30 วัน'};
+  document.getElementById('chartSectionTitle').textContent = titles[range];
+  loadHistoryChart();
 }
 
 function reloadChart() { loadHistoryChart(); }
 
-function renderChart(labels, tData, hData, wData) {
+async function loadHistoryChart() {
+  const btn    = document.getElementById('chartRefreshBtn');
+  const loadEl = document.getElementById('chartLoading');
+  const emptyEl= document.getElementById('chartEmpty');
+  const canvas = document.getElementById('historyChart');
+  btn.disabled = true; btn.textContent = '⏳';
+  loadEl.style.display = 'flex'; emptyEl.style.display = 'none'; canvas.style.display = 'none';
+  try {
+    const now = new Date();
+    let labels=[], tData=[], hData=[], wData=[], hasData=false;
+
+    if (currentRange === '24h') {
+      const today = fmtDate(now), yesterday = fmtDate(new Date(now - 86400000));
+      const [sT,sY] = await Promise.all([db.ref(`/logs/${today}`).once('value'), db.ref(`/logs/${yesterday}`).once('value')]);
+      const td=sT.val()||{}, yd=sY.val()||{};
+      const curHr = padZ(now.getHours());
+      for (let i=23; i>=0; i--) {
+        const d=new Date(now-i*3600000), ds=fmtDate(d), hr=padZ(d.getHours());
+        let e=(ds===today?td:yd)[hr]||null;
+        // ถ้าชั่วโมงปัจจุบันยังไม่มี log → ใช้ค่า live sensor แทน
+        if (!e && i===0 && sensorLive.airTemp!=null) {
+          e = {air_temp_avg:sensorLive.airTemp, air_humidity_avg:sensorLive.airHum, water_temp_avg:sensorLive.waterTemp};
+        }
+        labels.push(hr+':00');
+        if (e) { hasData=true; tData.push(e.air_temp_avg!=null?+e.air_temp_avg.toFixed(1):null); hData.push(e.air_humidity_avg!=null?+e.air_humidity_avg.toFixed(1):null); wData.push(e.water_temp_avg!=null?+e.water_temp_avg.toFixed(1):null); }
+        else   { tData.push(null); hData.push(null); wData.push(null); }
+      }
+    } else {
+      const days = currentRange === '7d' ? 7 : 30;
+      const dates = Array.from({length:days}, (_,i) => new Date(now - (days-1-i)*86400000));
+      const snaps = await Promise.all(dates.map(d => db.ref(`/logs/${fmtDate(d)}`).once('value')));
+      dates.forEach((d, idx) => {
+        const dayData = snaps[idx].val()||{};
+        let tS=0,hS=0,wS=0,cnt=0;
+        Object.values(dayData).forEach(e => { if(e?.air_temp_avg!=null){tS+=e.air_temp_avg;hS+=(e.air_humidity_avg||0);wS+=(e.water_temp_avg||0);cnt++;} });
+        const lbl = days===7 ? `${d.getDate()} ${THAI_MONTHS[d.getMonth()]}` : `${d.getDate()}/${d.getMonth()+1}`;
+        labels.push(lbl);
+        if (cnt) { hasData=true; tData.push(+(tS/cnt).toFixed(1)); hData.push(+(hS/cnt).toFixed(1)); wData.push(+(wS/cnt).toFixed(1)); }
+        else      { tData.push(null); hData.push(null); wData.push(null); }
+      });
+    }
+
+    chartRawData = {labels, tData, hData, wData};
+    loadEl.style.display = 'none';
+    if (!hasData) { emptyEl.style.display = 'flex'; }
+    else { canvas.style.display = 'block'; renderChart(labels, tData, hData, wData, currentRange==='24h'); }
+  } catch(err) {
+    console.error('loadHistoryChart:', err);
+    loadEl.textContent = '❌ โหลดข้อมูลไม่สำเร็จ';
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄';
+  }
+}
+
+function renderChart(labels, tData, hData, wData, forceShowDots=false) {
   if (historyChart) { historyChart.destroy(); historyChart = null; }
+  const isManyPoints = labels.length > 10;
+  const pr = forceShowDots ? 3 : (isManyPoints ? 0 : 3);
+  // 24h mode: show all 24 hour labels; 7d/30d: limit to fewer for readability
+  const maxTicks = labels.length <= 24 ? labels.length : 10;
   historyChart = new Chart(document.getElementById('historyChart').getContext('2d'), {
     type: 'line',
     data: { labels, datasets: [
-      {label:'อุณหภูมิอากาศ (°C)', data:tData, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.1)',  borderWidth:2, pointRadius:3, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
-      {label:'ความชื้นอากาศ (%)',   data:hData, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.08)',borderWidth:2, pointRadius:3, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yHum'},
-      {label:'อุณหภูมิน้ำ (°C)',    data:wData, borderColor:'#14b8a6', backgroundColor:'rgba(20,184,166,.08)',borderWidth:2, pointRadius:3, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
+      {label:'อุณหภูมิอากาศ (°C)', data:tData, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.08)',  borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
+      {label:'ความชื้นอากาศ (%)',   data:hData, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.06)', borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yHum'},
+      {label:'อุณหภูมิน้ำ (°C)',    data:wData, borderColor:'#14b8a6', backgroundColor:'rgba(20,184,166,.06)', borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
     ]},
     options: {
       responsive:true, maintainAspectRatio:false,
@@ -911,12 +1215,103 @@ function renderChart(labels, tData, hData, wData) {
           callbacks:{label:c=>c.raw==null?`${c.dataset.label}: —`:`${c.dataset.label}: ${c.raw}`}},
       },
       scales:{
-        x:{grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'},maxRotation:0}},
-        yTemp:{type:'linear',position:'left', title:{display:true,text:'°C',    color:'#4b7a5e',font:{size:11,family:'Prompt'}}, grid:{color:'rgba(187,247,208,.4)'}, ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'}}, suggestedMin:20, suggestedMax:45},
-        yHum: {type:'linear',position:'right',title:{display:true,text:'% RH', color:'#3b82f6',font:{size:11,family:'Prompt'}}, grid:{drawOnChartArea:false},          ticks:{color:'#3b82f6',font:{size:11,family:'Prompt'}}, min:0, max:100},
+        x:{grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'},maxRotation:0,maxTicksLimit:maxTicks}},
+        yTemp:{type:'linear',position:'left', title:{display:true,text:'°C',   color:'#4b7a5e',font:{size:11,family:'Prompt'}},grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'}},suggestedMin:20,suggestedMax:45},
+        yHum: {type:'linear',position:'right',title:{display:true,text:'% RH',color:'#3b82f6',font:{size:11,family:'Prompt'}},grid:{drawOnChartArea:false},        ticks:{color:'#3b82f6',font:{size:11,family:'Prompt'}},min:0,max:100},
       },
     },
   });
+}
+
+// ── Export CSV ────────────────────────────────────────
+function exportCSV() {
+  if (!chartRawData) { showToast('⚠️ โหลดข้อมูลก่อนครับ'); return; }
+  const {labels, tData, hData, wData} = chartRawData;
+  const rangeName = {'24h':'24h','7d':'7d','30d':'30d'}[currentRange];
+  let csv = '﻿'; // BOM for Excel Thai
+  csv += 'เวลา/วันที่,อุณหภูมิอากาศ (°C),ความชื้นอากาศ (%),อุณหภูมิน้ำ (°C)\n';
+  labels.forEach((lbl,i) => { csv += `${lbl},${tData[i]??''},${hData[i]??''},${wData[i]??''}\n`; });
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = `smartfarm_${rangeName}_${fmtDate(new Date())}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast('✅ Export CSV สำเร็จ');
+}
+
+// ── Alert History ──────────────────────────────────────
+function saveAlertHistory(icon, msg, type) {
+  const key  = 'sfah_' + type;
+  const last = +(sessionStorage.getItem(key)||0);
+  if (Date.now() - last < 300000) return;
+  sessionStorage.setItem(key, String(Date.now()));
+  db.ref('/smartfarm/alert_history').push({icon, msg, type, timestamp: Date.now()});
+}
+
+let allAlerts = [];
+let lastSeenAlertTs = +(localStorage.getItem('sfLastSeenAlert')||0);
+
+function renderAlertHistory(entries) {
+  allAlerts = entries || [];
+
+  // อัปเดต badge
+  const unseen = allAlerts.filter(e => e.timestamp > lastSeenAlertTs).length;
+  const badge = document.getElementById('notifBadge');
+  if (unseen > 0) { badge.textContent = unseen > 99 ? '99+' : unseen; badge.classList.add('show'); }
+  else             { badge.classList.remove('show'); }
+
+  // อัปเดต chart tab list
+  const c = document.getElementById('alertHistList');
+  if (c) {
+    if (!allAlerts.length) { c.innerHTML = '<div class="alert-hist-empty">📭 ยังไม่มีประวัติการแจ้งเตือน</div>'; }
+    else c.innerHTML = allAlerts.map(e => `<div class="alert-hist-item"><div class="alert-hist-icon">${esc(e.icon||'⚠️')}</div><div><div class="alert-hist-msg">${esc(e.msg)}</div><div class="alert-hist-time">${fmtTs(e.timestamp)}</div></div></div>`).join('');
+  }
+
+  // ถ้า panel เปิดอยู่ให้ render เลย
+  if (document.getElementById('notifPanel').classList.contains('open')) renderNotifPanel();
+}
+
+function renderNotifPanel() {
+  const body = document.getElementById('notifPanelBody');
+  const count = document.getElementById('notifCount');
+  count.textContent = allAlerts.length ? `(${allAlerts.length})` : '';
+  if (!allAlerts.length) {
+    body.innerHTML = '<div class="notif-empty"><span class="notif-empty-icon">🔕</span><span class="notif-empty-text">ยังไม่มีการแจ้งเตือน</span></div>';
+    return;
+  }
+  body.innerHTML = allAlerts.map(e => `
+    <div class="notif-item">
+      <div class="notif-item-icon">${esc(e.icon||'⚠️')}</div>
+      <div><div class="notif-item-msg">${esc(e.msg)}</div><div class="notif-item-time">${fmtTs(e.timestamp)}</div></div>
+    </div>`).join('');
+}
+
+function openNotifPanel() {
+  // mark all as seen
+  lastSeenAlertTs = Date.now();
+  localStorage.setItem('sfLastSeenAlert', String(lastSeenAlertTs));
+  document.getElementById('notifBadge').classList.remove('show');
+
+  // อัปเดต enable button
+  const btn = document.getElementById('notifEnableBtn');
+  if (Notification.permission === 'granted') { btn.textContent = '✅ เปิดการแจ้งเตือน Push แล้ว'; btn.disabled = true; btn.style.opacity='.6'; }
+  else { btn.textContent = '🔔 เปิดการแจ้งเตือน Push'; btn.disabled = false; btn.style.opacity=''; }
+
+  renderNotifPanel();
+  document.getElementById('notifOverlay').classList.add('open');
+  document.getElementById('notifPanel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeNotifPanel() {
+  document.getElementById('notifOverlay').classList.remove('open');
+  document.getElementById('notifPanel').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function clearAlertHistory() {
+  if (!confirm('ล้างประวัติการแจ้งเตือนทั้งหมดใช่ไหมครับ?')) return;
+  db.ref('/smartfarm/alert_history').remove().then(() => showToast('🗑️ ล้างประวัติแล้ว'));
 }
 
 // ── Helpers ───────────────────────────────────────────
@@ -946,12 +1341,14 @@ function setBadge(id, cls, text) { const el=document.getElementById(id); if(!el)
 function setText(id, text)       { const el=document.getElementById(id); if(!el)return; el.textContent=text; }
 
 function checkAlerts(t, rh) {
-  const msgs = [];
-  if (t  != null && t  > 38) msgs.push('อุณหภูมิสูงวิกฤต ' + t.toFixed(1)  + '°C');
-  if (rh != null && rh < 40) msgs.push('ความชื้นต่ำมาก '   + rh.toFixed(1) + '%');
-  if (msgs.length) {
-    showAlertBanner(msgs.join(' · '));
-    msgs.forEach(m => sendNotif('SmartFarm ⚠️ แจ้งเตือน', m));
+  const tLim  = alertThresholds.temp_alert;
+  const rhLim = alertThresholds.humidity_alert;
+  const alerts = [];
+  if (t  != null && t  > tLim)  alerts.push({icon:'🌡️', msg:`อุณหภูมิสูงวิกฤต ${t.toFixed(1)}°C (เกิน ${tLim}°C)`,   type:'temp_high'});
+  if (rh != null && rh < rhLim) alerts.push({icon:'💧', msg:`ความชื้นอากาศต่ำมาก ${rh.toFixed(1)}% (ต่ำกว่า ${rhLim}%)`, type:'humidity_low'});
+  if (alerts.length) {
+    showAlertBanner(alerts.map(a=>a.msg).join(' · '));
+    alerts.forEach(a => { sendNotif('SmartFarm ⚠️ แจ้งเตือน', a.msg); saveAlertHistory(a.icon, a.msg, a.type); });
   } else {
     document.getElementById('alertBanner').style.display = 'none';
   }

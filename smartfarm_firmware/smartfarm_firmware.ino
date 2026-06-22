@@ -1,6 +1,6 @@
 /*
   smartfarm_firmware.ino
-  Greenhouse IoT Smart Farm — บริษัทประวิทย์กรุ๊ป ปุ๋ยไวกิ้ง จำกัด
+  Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
   Version: 1.2.0
 

@@ -17,6 +17,10 @@
         ".read":  "auth != null && auth.token.email != null",
         ".write": "auth != null"
       },
+      "alert_history": {
+        ".read":  "auth != null && auth.token.email != null",
+        ".write": "auth != null && auth.token.email != null"
+      },
       "action_log": {
         ".read":  "auth != null && auth.token.email != null",
         ".write": "auth != null && auth.token.email != null",

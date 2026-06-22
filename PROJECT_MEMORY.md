@@ -1,5 +1,5 @@
 # Greenhouse IoT Smart Farm — Project Memory
-**บริษัทประวิทย์กรุ๊ป ปุ๋ยไวกิ้ง จำกัด**
+**บริษัท ปุ๋ยไวกิ้ง จำกัด**
 จัดทำโดย: Tonkla (IT Intern, CS Year 2, KMUTT) | มิถุนายน–กรกฎาคม 2569
 
 ---
