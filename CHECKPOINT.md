@@ -1,322 +1,243 @@
-# Greenhouse IoT Smart Farm — Checkpoint v1.2.0
+# Greenhouse IoT Smart Farm — Checkpoint v1.3.0
 
-**Date:** 2026-06-22  
-**Status:** ✅ Production Ready  
-**Version:** 1.2.0 (Notification Panel + Mobile Optimization + Live Chart Injection)
-
----
-
-## 📋 Session Summary
-
-This session focused on completing the notification panel UI, fixing 24h chart display, and comprehensive mobile/tablet responsiveness improvements.
-
-### Completed Tasks
-
-#### 1. ✅ Notification Panel Implementation
-- **Bell icon (🔔)** in header with red badge counter
-- **Slide-in panel** from right side with alert history
-- **Mark as seen** → `lastSeenAlertTs` stored in localStorage
-- **Clear all** → remove from Firebase `/smartfarm/alert_history/`
-- **Push notification enable button** → requests browser permission + state indicator
-- Full Thai UI text
-
-**Files Modified:**
-- `dashboard/index.html` → HTML + CSS + JS functions
-
-**JS Functions Added:**
-```javascript
-openNotifPanel()          // open + mark seen + render
-closeNotifPanel()         // close
-clearAlertHistory()       // remove all + toast
-renderAlertHistory()      // populate both chart tab + notif panel
-renderNotifPanel()        // populate panel body + badge count
-requestNotifPermission()  // request browser permission
-```
-
-#### 2. ✅ 24h Chart Live Data Injection
-**Problem:** Chart showed empty graph if ESP32 hadn't logged a full hour yet  
-**Solution:** Inject current `sensorLive` values as "hour 0" data point
-
-**Changes:**
-- If current hour has no log → use `sensorLive.airTemp / airHum / waterTemp`
-- Always show dots on 24h chart (even with sparse data)
-- Chart remains responsive across all data ranges
-
-#### 3. ✅ Mobile & Tablet Responsive Design
-
-**Breakpoints Implemented:**
-
-| Screen | Width | Layout |
-|--------|-------|--------|
-| Very small (iPhone SE) | < 375px | Status pill hidden, compact gauge, 2-col sensors |
-| Mobile (iPhone 12 mini) | < 600px | Bottom nav, title → "SmartFarm", larger fonts, stacked toolbar |
-| Tablet portrait (iPad) | 768–1023px | 2-col relay grid, 2-col settings, 2-col sensor grid |
-| Desktop/iPad Pro | ≥ 1024px | Full auto-fit grid layout |
-
-**Key Mobile Fixes:**
-- ✅ `viewport-fit=cover` → nav bar stays visible above home indicator
-- ✅ `safe-area-inset-bottom` → padding on iPhone notch/home bar
-- ✅ Header title: "Greenhouse IoT Smart Farm" → "SmartFarm" (< 600px)
-- ✅ Font sizes increased by 15–20% for readability
-- ✅ Nav tab labels: .58rem → .65rem, icons: 1.25rem → 1.35rem
-- ✅ Sensor cards: 2x2 grid with better spacing
-- ✅ Chart toolbar: stacks vertically on small screens
-- ✅ Detail sheet chart: height reduced to 155px on mobile
+**Date:** 2026-06-23 (วันจันทร์)  
+**Status:** ✅ Production Ready — Tested at Company  
+**Version:** 1.3.0  
+**GitHub:** https://github.com/stickkersz/greenhouse-iot-smart-farm (private)  
+**Deployed:** https://greenhouse-iot-smart-farm.web.app  
+**Last Commit:** `f98160e feat: redesign settings + dynamic alert thresholds + presets`
 
 ---
 
-## 🏗️ Architecture Overview
+## ✅ Test Results (ทดสอบที่บริษัท วันนี้)
+
+| Feature | Status | หมายเหตุ |
+|---------|--------|---------|
+| ESP32 connect WiFi (floor-1-2-2.4G) | ✅ | WiFiMulti auto-connect |
+| Sensor data live (30s interval) | ✅ | air_temp, humidity, water_temp, soil |
+| Relay control — Manual mode | ✅ | CH1–CH4 click ได้ยินเสียง relay |
+| Dashboard action log | ✅ | บันทึก user + time ทุก action |
+| Chart 24h มีข้อมูล | ✅ | Live injection + hourly logs |
+| Chart X-axis รายชั่วโมง | ✅ | แสดงครบ 24 ชั่วโมง |
+| Alert trigger + notification panel | ✅ | Dynamic threshold ทำงานได้ |
+| Settings presets | ✅ | ☀️ / 🌤️ / 🌧️ / ✏️ |
+| Export CSV | ✅ | UTF-8 BOM เปิด Excel ถูก encoding |
+| Mobile responsive (iPhone 12 mini) | ✅ | Bottom nav + fonts OK |
+
+---
+
+## 📋 Session วันนี้ (2026-06-23)
+
+### งานที่ทำ
+
+#### 1. ✅ แก้ชื่อบริษัทครบทุกไฟล์
+- เปลี่ยนจาก **บริษัทประวิทย์กรุ๊ป ปุ๋ยไวกิ้ง** → **บริษัท ปุ๋ยไวกิ้ง จำกัด**
+- ไฟล์ที่แก้: `dashboard/index.html`, `smartfarm_firmware/smartfarm_firmware.ino`, `STATUS.md`, `PROJECT_MEMORY.md`
+
+#### 2. ✅ Chart 24h X-axis รายชั่วโมง
+- เพิ่ม `maxTicks = labels.length` สำหรับ 24h mode
+- 7d/30d ยังใช้ limit 10 ticks (readable)
+
+#### 3. ✅ Mobile UX Overhaul
+- `viewport-fit=cover` → แก้ bottom nav ซ่อนใต้ Safari bar
+- `safe-area-inset-bottom` → bottom nav ลอยเหนือ home indicator
+- Header title: "Greenhouse IoT Smart Farm" → **"SmartFarm"** (< 600px)
+- Font sizes เพิ่มขึ้น 15–20% ทั่ว mobile
+- Alert threshold ปรับได้จาก Settings
+
+#### 4. ✅ Settings Tab Redesign (สำคัญมาก)
+
+**ก่อน:** 3 input fields เท่านั้น (temp_on, temp_off, humidity_min)
+
+**หลัง:**
+- **⚡ Quick Preset** — ☀️ ฤดูร้อน / 🌤️ ปกติ / 🌧️ ฤดูฝน / ✏️ กำหนดเอง
+- **🔌 Channel Assignment** — แสดงว่า CH ไหนควบคุมอะไร
+- **🌡️ Temperature group** — Temp ON + Temp OFF + 🚨 Alert threshold
+- **💧 Humidity group** — Humidity MIN + 🚨 Alert threshold
+
+#### 5. ✅ Dynamic Alert Thresholds
+- Alert threshold เดิม: hardcode `t > 38` และ `rh < 40`
+- ตอนนี้: โหลดจาก Firebase `/smartfarm/control/thresholds/temp_alert` + `humidity_alert`
+- `checkAlerts()` ใช้ `alertThresholds` variable ที่ sync กับ Firebase real-time
+- ทดสอบ: ตั้ง Alert Temp = 28°C → แจ้งเตือนขึ้นทันที ✅
+
+#### 6. ✅ Notification Panel (จาก session ก่อน)
+- Bell icon 🔔 + badge แดงแสดงจำนวน unseen
+- Slide-in panel จากขวา พร้อม alert history
+- Clear all + Enable Push Notifications
+
+---
+
+## 🏗️ Architecture
 
 ### Tech Stack
 - **Frontend:** HTML5 + Vanilla JS + Chart.js 4.4.0 + SVG gauges
 - **Backend:** Firebase Realtime Database (asia-southeast1)
-- **Auth:** Firebase Email/Password (disguised as username/password)
-- **Hosting:** Firebase Hosting (Spark tier)
-- **PWA:** manifest.json + service worker + icon.svg
+- **Auth:** Firebase Email/Password (disguised username/password → `user@smartfarm.local`)
+- **Hosting:** Firebase Hosting (Spark tier — free)
+- **PWA:** manifest.json + sw.js
 
 ### Database Structure
 ```
 /smartfarm/
-  sensors/              → current sensor values
-  status/               → system status
-  control/              → relay manual overrides
-  alerts/               → current alert state
-  alert_history/        → historical alerts (30 min retention)
-  action_log/           → user actions (dashboard)
+  sensors/
+    air_temp, air_humidity, water_temp, soil_moisture_pct
+    uptime_sec, firmware_ver
+  status/
+    online, ch1_pump, ch2_fan_out, ch3_fan_in, ch4_spare, firmware
+  control/
+    thresholds/
+      temp_on, temp_off, humidity_min        ← ESP32 ใช้ (auto relay)
+      temp_alert, humidity_alert             ← Dashboard ใช้ (alert)
+    ch1_pump/   {mode, state, schedule}
+    ch2_fan_out/{mode, state, schedule}
+    ch3_fan_in/ {mode, state, schedule}
+    ch4_spare/  {mode, state, schedule}
+  alerts/
+  alert_history/   ← 30 รายการล่าสุด, 5min cooldown/type
+  action_log/      ← 10 รายการล่าสุด, required fields validated
 /logs/
-  YYYY-MM-DD/
-    HH/
-      air_temp_avg, air_temp_min, air_temp_max
-      air_humidity_avg, air_humidity_min, air_humidity_max
-      water_temp_avg, water_temp_min, water_temp_max
-      soil_pct_avg, soil_pct_min, soil_pct_max
-      sample_count
+  YYYY-MM-DD/HH/
+    air_temp_avg/min/max
+    air_humidity_avg/min/max
+    water_temp_avg/min/max
+    soil_pct_avg/min/max
+    sample_count
 ```
 
-### Firebase Rules
-```json
-{
-  "smartfarm": {
-    "sensors":  { ".read": "email", ".write": "anon" },
-    "status":   { ".read": "email", ".write": "anon" },
-    "control":  { ".read": "anon",  ".write": "email" },
-    "alerts":   { ".read": "email", ".write": "anon" },
-    "alert_history": { ".read": "email", ".write": "email" },
-    "action_log": { ".read": "email", ".write": "email", ".validate": "..." }
-  },
-  "logs": { ".read": "email", ".write": "anon" }
-}
+### Firebase Rules Summary
 ```
+sensors:       read=email, write=anon (ESP32)
+status:        read=email, write=anon
+control:       read=anon,  write=email (dashboard only)
+alerts:        read=email, write=anon
+alert_history: read=email, write=email
+action_log:    read=email, write=email + validate fields
+logs:          read=email, write=anon
+```
+
+---
+
+## ⚙️ Settings Presets
+
+| Preset | Temp ON | Temp OFF | Pump ON | Alert Temp | Alert Hum |
+|--------|---------|----------|---------|------------|-----------|
+| ☀️ ฤดูร้อน | 33°C | 30°C | ≤70% | 38°C | 50% |
+| 🌤️ ปกติ (default) | 35°C | 32°C | ≤60% | 40°C | 40% |
+| 🌧️ ฤดูฝน | 38°C | 35°C | ≤50% | 42°C | 35% |
+| ✏️ กำหนดเอง | user input | - | - | - | - |
 
 ---
 
 ## 🔌 Hardware
 
 **ESP32 DevKit V1**
-- Sensors: DS18B20 (water temp), DHT11 (air temp+humidity), capacitive soil moisture (ADC)
-- Relays: 4x relay module (GPIO 26, 27, 14, 25)
-- WiFiMulti: home + company networks
-- Partition: Huge APP (3MB No OTA)
-- Firmware: `smartfarm_firmware.ino`
 
-**Firebase Integration:**
-- Anonymous auth (token-only, no email)
-- getJSON() for batch control reads (prevents SSL heap fragmentation)
-- Hourly log push (avg/min/max aggregation on device)
+| Channel | GPIO | อุปกรณ์ | ควบคุมด้วย |
+|---------|------|---------|-----------|
+| CH1 | 26 | ปั๊มน้ำ 24V | Humidity (auto) |
+| CH2 | 27 | พัดลม Shutter OUT | Temperature (auto) |
+| CH3 | 14 | พัดลม Shutter IN | Temperature (auto) |
+| CH4 | 25 | สำรอง | Manual / Schedule only |
 
----
+**Sensors:**
+- DHT11 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว รอ SHT35)
+- DS18B20 (GPIO4) — อุณหภูมิน้ำ
+- Capacitive Soil Moisture (GPIO34) — ความชื้นดิน
 
-## 📱 UI Features
+**WiFiMulti:**
+- `floor-1-2-2.4G` / `pvg4239500` — บริษัท
+- `Tonkla_2.4G` / *(in config.h)* — บ้าน
 
-### Tabs (Bottom Nav on mobile)
-1. **Sensors** — 4 gauge cards + uptime + status
-2. **Control** — 4 relay cards (auto/manual/schedule)
-3. **Chart** — 24h/7d/30d history + CSV export
-4. **Settings** — control thresholds (temp on/off, humidity min)
-
-### Dashboard Sections
-- **Uptime Card** → firmware version + last update time
-- **Sensor Gauges** → real-time values + trend arrows + status badges
-- **Relay Cards** → toggle + mode (auto/manual) + schedule details
-- **Alert History** → timestamped alert log (chart tab + notification panel)
-- **Control State** → live relay status (on/off) + mode
-- **History Chart** → selectable range + dual-axis (temp, humidity) + CSV export
-
-### Notification System
-- **Push Notifications** — triggered on high temp/low humidity
-- **Alert History** — persistent, 5-min cooldown per alert type
-- **Notification Panel** — slide-in from right, shows recent alerts + enable/disable push
-- **Badge Counter** → red dot shows unseen alerts
+**Partition:** Huge APP (3MB No OTA) — เพราะ sketch ใหญ่
 
 ---
 
-## 🔐 Security Notes
+## 📱 UI / UX
 
-**Credentials:**
-- `config.h` (firmware WiFi + Firebase API key) → .gitignore ✅
-- Dashboard auth → username/password (disguised as `username@smartfarm.local`)
-- Session token stored in localStorage (browser only)
+### Tabs (Bottom Nav mobile / Full desktop)
+1. **📊 Sensors** — gauge cards + uptime + status
+2. **🔌 Control** — relay toggle + mode + schedule
+3. **📈 Chart** — 24h/7d/30d + CSV export + alert history
+4. **⚙️ Settings** — presets + thresholds + action log
 
-**Database Rules:**
-- Dashboard (email users): can read sensors/alerts, write control
-- ESP32 (anonymous): can write sensors/logs, read control
-- Alert history: email-only read/write
-- Action log: email-only + required fields validation
+### Responsive Breakpoints
+| Width | Layout |
+|-------|--------|
+| < 375px | iPhone SE — compact, ซ่อน status pill |
+| < 600px | Mobile — "SmartFarm" title, bottom nav, larger fonts |
+| 768–1023px | Tablet — 2-col relay/settings, 2-col sensors |
+| ≥ 1024px | Desktop — full auto-fit grid |
 
----
-
-## 🚀 Deployment
-
-**Current URL:** https://greenhouse-iot-smart-farm.web.app
-
-**Deploy Process:**
-```bash
-# Stage + commit
-git add dashboard/index.html manifest.json
-git commit -m "feat: notification panel + mobile optimizations"
-
-# Deploy to Firebase
-firebase deploy --only hosting
-
-# Check status
-firebase hosting:channel:list
-```
-
-**Environment:**
-- `.firebaserc` → project: greenhouse-iot-smart-farm
-- Firebase config in `index.html` (SDK v9 compat)
-- CI/CD: manual via `firebase deploy`
+### Alert System
+- **checkAlerts()** — เรียกทุกครั้งที่ sensor data update
+- Threshold โหลดจาก Firebase → dynamic (ผู้ใช้ปรับได้)
+- Banner แดงบน dashboard + badge 🔔 + push notification
+- 5-minute cooldown per alert type (sessionStorage)
+- บันทึก history → `/smartfarm/alert_history`
 
 ---
 
-## 📊 Charts & Data
+## 🐛 Known Issues & Fixes (ประวัติ)
 
-### 24h Chart
-- Pulls hourly logs from `/logs/{today}/{HH}` + `/logs/{yesterday}/{HH}`
-- Plots air temp (green), humidity (blue), water temp (teal)
-- **Live injection:** if current hour has no log → uses `sensorLive` values
-- Always shows dots on mobile (even sparse data)
-- Dual-axis: left (°C, 20–45), right (%, 0–100)
-
-### 7d / 30d Charts
-- Daily average from all hourly logs in that day
-- Parallel Firebase reads via `Promise.all()`
-- Lower point density → no dots (cleaner UI)
-
-### CSV Export
-- UTF-8 BOM for Excel Thai support
-- Columns: timestamp, air_temp, humidity, water_temp
-- Filename: `smartfarm_24h_YYYY-MM-DD.csv`
+| ปัญหา | สถานะ | วิธีแก้ |
+|-------|--------|---------|
+| WiFi connect ไม่ได้ 2 network | ✅ Fixed | WiFiMulti library |
+| Firebase SSL errors | ✅ Fixed | getJSON() batching (1 call แทน 11) |
+| Arduino flash 106%+ | ✅ Fixed | Partition: Huge APP 3MB |
+| Chart 24h ว่างเปล่า | ✅ Fixed | Live sensor injection ชั่วโมงปัจจุบัน |
+| Bottom nav ซ่อนใต้ Safari | ✅ Fixed | viewport-fit=cover + safe-area-inset |
+| Alert hardcode ปรับไม่ได้ | ✅ Fixed | Dynamic threshold จาก Firebase |
+| Chart X-axis ไม่ครบ 24h | ✅ Fixed | maxTicksLimit = 24 |
+| ชื่อบริษัทผิด | ✅ Fixed | แก้ครบทุกไฟล์ |
 
 ---
 
-## 🐛 Known Issues & Workarounds
-
-### Issue: WiFi Not Connecting
-- **Status:** ✅ Fixed (WiFiMulti)
-- **Details:** Firmware now tries home + company network automatically
-- **Config:** stored in `config.h` (excluded from git)
-
-### Issue: Firebase SSL Errors
-- **Status:** ✅ Fixed (getJSON batching)
-- **Root cause:** 11 sequential Firebase calls → heap fragmentation
-- **Solution:** single `Firebase.getJSON()` call + local JSON parsing
-- **Impact:** reduced SSL connections from 11 to 1 per poll cycle
-
-### Issue: Chart Empty on Fresh Boot
-- **Status:** ✅ Fixed (live injection)
-- **Details:** no logs until 1 hour has passed → now shows live sensor data
-- **Impact:** chart always has ≥1 data point if ESP32 is online
-
-### Issue: Bottom Nav Hidden on iPhone
-- **Status:** ✅ Fixed (safe-area-inset)
-- **Details:** 60px nav bar was behind home indicator
-- **Solution:** `safe-area-inset-bottom` + `viewport-fit=cover`
-- **Impact:** nav bar now floats above home indicator
-
----
-
-## 📝 Files & Structure
+## 📂 Files
 
 ```
 /Users/tonklax/Documents/Greenhouse IoT Smart Farm/
 ├── dashboard/
-│   ├── index.html            (↑ main app, 1600+ lines)
-│   ├── manifest.json         (PWA manifest)
-│   ├── icon.svg              (PWA icon)
-│   └── sw.js                 (service worker)
+│   ├── index.html          ← Main app (~1700+ lines)
+│   ├── manifest.json       ← PWA
+│   ├── icon.svg
+│   └── sw.js
 ├── smartfarm_firmware/
-│   ├── smartfarm_firmware.ino (↑ main firmware)
-│   ├── config.h.example      (credentials template)
-│   └── config.h              (↑ .gitignore, real credentials)
-├── database.rules.json       (↑ Firebase rules)
-├── .firebaserc               (Firebase project config)
-├── .gitignore                (excludes config.h, .firebase)
-├── CLAUDE.md                 (legacy docs)
-└── CHECKPOINT.md             (this file)
+│   ├── smartfarm_firmware.ino
+│   ├── config.h            ← .gitignore (WiFi + Firebase credentials)
+│   └── config.h.example    ← Template
+├── database.rules.json     ← Firebase security rules
+├── .firebaserc
+├── .gitignore
+├── STATUS.md
+├── PROJECT_MEMORY.md
+└── CHECKPOINT.md           ← This file
 ```
 
 ---
 
-## ✨ Latest Changes (This Session)
+## 🎯 Next Steps (Phase 2)
 
-### Merged Features
-1. **Notification Panel** (HTML + CSS + JS)
-   - Slide-in from right, header+body+footer
-   - Alert items with icon/message/timestamp
-   - Clear all button + enable push notifications
-   - Badge counter on bell icon
-   - Responsive width: `min(380px, 100vw)`
+### Hardware
+- [ ] ซื้อ SHT35 แทน DHT11 (แม่นยำกว่า)
+- [ ] ต่อปั๊มน้ำ CH1 จริง
+- [ ] ต่อพัดลม CH2/CH3 จริง
+- [ ] ทดสอบ Auto mode ครบ loop
 
-2. **Live Chart Injection**
-   - 24h chart now shows current hour's live data if no log exists
-   - Always displays dots on 24h chart
-   - Prevents empty/blank graph on fresh boot
-
-3. **Mobile UX Overhaul**
-   - Added `viewport-fit=cover` + `safe-area-inset`
-   - Bottom nav: 60px + safe area padding
-   - Header title: "SmartFarm" on < 600px
-   - Font size increases across all mobile breakpoints
-   - Responsive grid layouts: 2-col (mobile), 2-col (tablet), auto (desktop)
-   - Chart toolbar stacks vertically on small screens
-   - Status text hidden on mobile (keep colored dot)
-   - Nav tabs: larger text + icons
-
-### Testing Checklist
-- ✅ Desktop (1024px+) — all features visible, layout stable
-- ✅ Tablet (768–1023px) — 2-col grids, readable fonts
-- ✅ Mobile (375–599px) — bottom nav accessible, no truncation
-- ✅ Very small (< 375px) — compact but usable
-
----
-
-## 🎯 Next Steps (Optional)
-
-### Phase 2 Ideas
-1. **Dark Mode Toggle** — theme switcher in settings
-2. **Email Alerts** — send summary to user email (Firebase Cloud Functions)
-3. **Historical Reports** — downloadable daily/weekly PDFs
-4. **Multiple Rooms** — support for 2+ growing zones
-5. **Advanced Scheduling** — recurring schedules, conditional triggers
-6. **Analytics Dashboard** — trends, predictive models (TBD)
+### Software
+- [ ] Dark Mode toggle
+- [ ] Email alerts (Firebase Cloud Functions)
+- [ ] Soil moisture alert threshold ใน Settings
+- [ ] Multiple zones support
+- [ ] Weekly/monthly report PDF
 
 ### Maintenance
-- Monitor Firebase costs (Spark tier free limits)
-- Regular firmware backups to GitHub (private repo)
-- Update npm dependencies (if adding build tools)
-- Test WiFi failover on real hardware
+- [ ] Monitor Firebase free tier usage
+- [ ] Regular git backup
+- [ ] Test WiFi failover home ↔ company
 
 ---
 
-## 🔗 References
-
-**GitHub:** https://github.com/stickkersz/greenhouse-iot-smart-farm (private)  
-**Firebase Console:** https://console.firebase.google.com/project/greenhouse-iot-smart-farm  
-**Deployed App:** https://greenhouse-iot-smart-farm.web.app  
-**Firmware Docs:** ESP32 + Arduino IDE  
-
----
-
-**Last Updated:** 2026-06-22 (Sonnet 4.6)  
-**Commit:** `f090dd9` (v1.2.0)
+**Last Updated:** 2026-06-23  
+**Commits:** `f090dd9` → `f98160e`  
+**Tested by:** Tonkla (IT Intern, KMUTT CS Year 2)
