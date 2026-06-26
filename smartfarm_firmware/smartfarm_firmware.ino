@@ -124,7 +124,7 @@ void syncNTP();
 String getHourlyPath();
 void checkSchedule();
 void updateLCD();
-void buzzerBeep(int times, int onMs, int offMs);
+void buzzerBeep(int times, int onMs = 200, int offMs = 150);
 void checkFailsafe();
 void pumpSafetyCheck();
 bool timeValid();
@@ -197,8 +197,11 @@ void setup() {
 
   // Watchdog — reboot อัตโนมัติถ้า loop ค้าง (worst-case: ESP32 แฮงค์/SSL ค้าง)
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+  // core 3.x: TWDT ถูก init ไว้แล้วตอน boot (timeout สั้น ~5 วิ) → ปรับเป็น 60 วิ
   esp_task_wdt_config_t wdtCfg = { .timeout_ms = WDT_TIMEOUT_S * 1000, .idle_core_mask = 0, .trigger_panic = true };
-  esp_task_wdt_init(&wdtCfg);
+  if (esp_task_wdt_init(&wdtCfg) == ESP_ERR_INVALID_STATE) {
+    esp_task_wdt_reconfigure(&wdtCfg);   // มีอยู่แล้ว → แค่ปรับ timeout
+  }
 #else
   esp_task_wdt_init(WDT_TIMEOUT_S, true);
 #endif
@@ -525,7 +528,7 @@ void pushToFirebase() {
 }
 
 // ─────────────────────────────────────────────────────
-void buzzerBeep(int times, int onMs = 200, int offMs = 150) {
+void buzzerBeep(int times, int onMs, int offMs) {
   for (int i = 0; i < times; i++) {
     digitalWrite(PIN_BUZZER, HIGH); delay(onMs);
     digitalWrite(PIN_BUZZER, LOW);  if (i < times-1) delay(offMs);
