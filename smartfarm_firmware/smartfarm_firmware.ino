@@ -36,6 +36,11 @@ WiFiMulti wifiMulti;
 #include <esp_task_wdt.h>
 #include "config.h"
 
+// เผื่อ config.h เก่าไม่มี define นี้ — relay เป็น active-LOW (LOW=เปิด, HIGH=ปิด)
+#ifndef RELAY_ACTIVE_LOW
+#define RELAY_ACTIVE_LOW true
+#endif
+
 // ── LCD I2C (16x2, address 0x27) ─────────────────────
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 uint8_t lcdPage = 0;  // หน้าปัจจุบัน (สลับทุก 5 วิ)
@@ -102,6 +107,7 @@ unsigned long lastNtpSync    = 0;
 #define DHT_TEMP_MIN        -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
 #define DHT_TEMP_MAX         70.0
 #define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม.
+#define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
 unsigned long lastFailsafeBeep = 0;            // เวลาที่ buzzer เตือน failsafe ครั้งล่าสุด
@@ -113,7 +119,8 @@ bool waterSensorOk  = true;                    // DS18B20 อ่านได้�
 // ── Forward Declarations ──────────────────────────────
 void readSensors();
 void autoControl();
-void applyManualControl();
+bool applyManualControl();
+void pushStatus();
 void setRelay(int pin, bool state);
 void pushToFirebase();
 void checkAlerts();
@@ -134,9 +141,9 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n=== Greenhouse IoT Smart Farm v1.3.0 ===");
 
-  // Relay: ปิดทั้งหมดก่อน (active-LOW → HIGH = ปิด)
+  // Relay: ปิดทั้งหมดก่อน (boot-safe) — active-LOW → HIGH = ปิด
   const int relayPins[] = {PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4};
-  for (int p : relayPins) { pinMode(p, OUTPUT); digitalWrite(p, HIGH); }
+  for (int p : relayPins) { pinMode(p, OUTPUT); digitalWrite(p, RELAY_ACTIVE_LOW ? HIGH : LOW); }
 
   // Buzzer
   pinMode(PIN_BUZZER, OUTPUT);
@@ -236,12 +243,15 @@ void loop() {
   // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 5 นาทีในโหมดอัตโนมัติ)
   pumpSafetyCheck();
 
-  // ทุก 5 วินาที: poll Firebase สำหรับ control changes — รอ 3 วิหลัง push เพื่อป้องกัน SSL ชน
+  // poll คำสั่งควบคุมทุก CONTROL_POLL_MS (1.5 วิ) — รอ 2 วิหลัง push กัน SSL ชน
   static unsigned long lastControlPoll = 0;
-  if (now - lastControlPoll >= 5000 && Firebase.ready() && (millis() - lastPushTime >= 3000)) {
+  if (now - lastControlPoll >= CONTROL_POLL_MS && Firebase.ready() && (millis() - lastPushTime >= 2000)) {
     lastControlPoll = now;
     loadControlFromFirebase();
-    if (!failsafeActive) applyManualControl();
+    if (!failsafeActive) {
+      bool changed = applyManualControl();
+      if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
+    }
   }
 
   // ทุก 1 ชั่วโมง: push hourly log แล้ว reset accumulator
@@ -387,34 +397,43 @@ void autoControl() {
 
 // ─────────────────────────────────────────────────────
 // Apply Manual Control — เรียกหลัง loadControlFromFirebase()
-void applyManualControl() {
+// คืน true ถ้ามี relay เปลี่ยนสถานะ (เพื่อให้ loop push ยืนยันกลับทันที)
+bool applyManualControl() {
+  bool changed = false;
   // precedence: ถ้า channel เปิด Schedule อยู่ → checkSchedule คุม (ข้าม manual)
   if (!ch_isAuto[0] && !ch_schedEnabled[0] && (bool)ch_manual[0] != ch1_pump) {
     ch1_pump = ch_manual[0];
     setRelay(PIN_RELAY_CH1, ch1_pump);
     Serial.printf("[MANUAL] CH1 Pump → %s\n", ch1_pump ? "ON" : "OFF");
+    changed = true;
   }
   if (!ch_isAuto[1] && !ch_schedEnabled[1] && (bool)ch_manual[1] != ch2_fanOut) {
     ch2_fanOut = ch_manual[1];
     setRelay(PIN_RELAY_CH2, ch2_fanOut);
     Serial.printf("[MANUAL] CH2 Fan OUT → %s\n", ch2_fanOut ? "ON" : "OFF");
+    changed = true;
   }
   if (!ch_isAuto[2] && !ch_schedEnabled[2] && (bool)ch_manual[2] != ch3_fanIn) {
     ch3_fanIn = ch_manual[2];
     setRelay(PIN_RELAY_CH3, ch3_fanIn);
     Serial.printf("[MANUAL] CH3 Fan IN → %s\n", ch3_fanIn ? "ON" : "OFF");
+    changed = true;
   }
   if (!ch_isAuto[3] && !ch_schedEnabled[3] && (bool)ch_manual[3] != ch4_spare) {
     ch4_spare = ch_manual[3];
     setRelay(PIN_RELAY_CH4, ch4_spare);
     Serial.printf("[MANUAL] CH4 Spare → %s\n", ch4_spare ? "ON" : "OFF");
+    changed = true;
   }
+  return changed;
 }
 
 // ─────────────────────────────────────────────────────
 void setRelay(int pin, bool state) {
-  // Active-LOW: state=true → LOW (relay เปิด), state=false → HIGH (relay ปิด)
-  digitalWrite(pin, state ? LOW : HIGH);
+  // state=true = เปิด relay, false = ปิด
+  // active-LOW: เปิด→LOW ปิด→HIGH | active-HIGH: เปิด→HIGH ปิด→LOW
+  if (RELAY_ACTIVE_LOW) digitalWrite(pin, state ? LOW : HIGH);
+  else                  digitalWrite(pin, state ? HIGH : LOW);
 }
 
 // ─────────────────────────────────────────────────────
@@ -495,6 +514,24 @@ void pumpSafetyCheck() {
 }
 
 // ─────────────────────────────────────────────────────
+// push เฉพาะสถานะ relay + health — เบา เรียกแยกเพื่อยืนยันผลให้ dashboard ทันที
+void pushStatus() {
+  const String base = "/smartfarm/";
+  Firebase.setBool  (fbData, base + "status/online",      true);
+  Firebase.setBool  (fbData, base + "status/ch1_pump",    ch1_pump);
+  Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
+  Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
+  Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
+  Firebase.setString(fbData, base + "status/firmware",    "1.3.0");
+  // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
+  Firebase.setBool (fbData, base + "status/sensor_ok",   (dhtFailCount == 0));
+  Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
+  Firebase.setBool (fbData, base + "status/failsafe",    failsafeActive);
+  Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
+  Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
+  Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
+}
+
 void pushToFirebase() {
   const String base = "/smartfarm/";
 
@@ -505,20 +542,7 @@ void pushToFirebase() {
   Firebase.setInt   (fbData, base + "sensors/soil_moisture_pct", soilPct);
   Firebase.setInt   (fbData, base + "sensors/uptime_sec",        (int)(millis() / 1000));
 
-  Firebase.setBool  (fbData, base + "status/online",      true);
-  Firebase.setBool  (fbData, base + "status/ch1_pump",    ch1_pump);
-  Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
-  Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
-  Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "1.3.0");
-
-  // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
-  Firebase.setBool (fbData, base + "status/sensor_ok",   (dhtFailCount == 0));
-  Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
-  Firebase.setBool (fbData, base + "status/failsafe",    failsafeActive);
-  Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
-  Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
-  Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
+  pushStatus();
 
   if (fbData.errorReason() != "") {
     Serial.println("[Firebase] Error: " + fbData.errorReason());

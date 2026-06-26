@@ -17,11 +17,15 @@ static const WifiCred wifiNetworks[] = {
 #define PIN_DS18B20       4
 #define PIN_SOIL_MOISTURE 34
 #define PIN_DHT11        32
+#define PIN_BUZZER       33
 
 #define PIN_RELAY_CH1    26
 #define PIN_RELAY_CH2    27
 #define PIN_RELAY_CH3    14
 #define PIN_RELAY_CH4    25
+
+// โมดูล Relay active-LOW: LOW=เปิด, HIGH=ปิด (ถ้าโมดูลกลับด้าน เปลี่ยนเป็น false)
+#define RELAY_ACTIVE_LOW  true
 
 // ===== Auto Control Thresholds =====
 #define TEMP_ON       35.0

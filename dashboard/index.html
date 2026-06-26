@@ -206,6 +206,9 @@
     .relay-badge{font-size:.66rem;font-weight:700;padding:3px 8px;border-radius:999px}
     .s-on{background:var(--accent-soft);color:var(--accent-text)}
     .s-off{background:var(--surface-2);color:var(--muted)}
+    .relay-badge.pending{background:#fef3c7;color:#b45309;animation:pendPulse 1s ease-in-out infinite}
+    @keyframes pendPulse{0%,100%{opacity:1}50%{opacity:.55}}
+    .relay-card.relay-pending{border-color:#fbbf24}
     .toggle-row{display:flex;align-items:center;justify-content:space-between}
     .toggle-label{font-size:.76rem;color:var(--sub);font-weight:500}
     .toggle{position:relative;width:48px;height:25px;flex-shrink:0}
@@ -1312,7 +1315,32 @@ const CH_LABELS = {ch1_pump:'ปั๊มน้ำ (CH1)', ch2_fan_out:'พั�
 function setRelay(channel, state) {
   db.ref('/smartfarm/control/' + channel).update({manual_state: state});
   logAction(`${CH_LABELS[channel]||channel} → ${state ? 'เปิด ON' : 'ปิด OFF'}`);
+  markRelayPending(channel.slice(0,3), state);   // feedback ทันที รอ board ยืนยัน
 }
+
+// ── Relay pending feedback (ตอบสนองทันที ระหว่างรอ ESP32 ยืนยัน) ──
+const pendingRelay   = {};   // id (ch1..ch4) -> {state, ts}
+const lastRelayState = {};   // id -> สถานะจริงล่าสุดที่ board รายงาน
+
+function markRelayPending(id, state) {
+  pendingRelay[id] = {state, ts: Date.now()};
+  const badge = document.getElementById('relayBadge_' + id);
+  const card  = document.getElementById('relayCard_' + id);
+  if (badge) { badge.textContent = '⏳ ส่ง...'; badge.className = 'relay-badge pending'; }
+  if (card)  card.classList.add('relay-pending');
+}
+
+// ถ้า board ไม่ยืนยันใน 12 วิ → revert กลับสถานะจริง + เตือนเบาๆ (กัน ⏳ ค้าง)
+setInterval(() => {
+  const now = Date.now();
+  Object.keys(pendingRelay).forEach(id => {
+    if (now - pendingRelay[id].ts > 12000) {
+      delete pendingRelay[id];
+      updateRelayUI(id, lastRelayState[id] === true);   // คืนค่าเป็นสถานะจริงล่าสุด
+      showToast('⚠️ บอร์ดตอบช้า — ตรวจสอบการเชื่อมต่อ ESP32');
+    }
+  });
+}, 1000);
 
 function setMode(channel, mode, btn) {
   db.ref('/smartfarm/control/' + channel).update({mode});
@@ -1622,10 +1650,22 @@ function showAlertBanner(msg) {
 
 function updateRelayUI(ch, state) {
   const on   = !!state;
-  const tog  = document.getElementById('toggle_ch' + ch.slice(-1));
-  const badge= document.getElementById('relayBadge_ch' + ch.slice(-1));
-  const icon = document.getElementById('relayIcon_ch'  + ch.slice(-1));
-  const card = document.getElementById('relayCard_ch'  + ch.slice(-1));
+  const id   = 'ch' + ch.slice(-1);
+  const tog  = document.getElementById('toggle_' + id);
+  const badge= document.getElementById('relayBadge_' + id);
+  const icon = document.getElementById('relayIcon_'  + id);
+  const card = document.getElementById('relayCard_'  + id);
+  const p    = pendingRelay[id];
+
+  // ยังรอ board ยืนยัน และค่าที่รายงานยังไม่ตรงกับที่สั่ง → คงสถานะ "⏳ ส่ง..."
+  if (p && p.state !== on) {
+    if (tog) tog.checked = p.state;   // toggle สะท้อนสิ่งที่ผู้ใช้สั่ง ไม่กระตุก
+    return;
+  }
+  // board ยืนยันตรงกับที่สั่งแล้ว → เคลียร์ pending
+  if (p && p.state === on) { delete pendingRelay[id]; if (card) card.classList.remove('relay-pending'); }
+
+  lastRelayState[id] = on;   // จำสถานะจริงล่าสุด (ใช้ตอน revert)
   if (tog)  tog.checked = on;
   if (badge){ badge.textContent = on ? 'ON' : 'OFF'; badge.className = 'relay-badge ' + (on ? 's-on' : 's-off'); }
   if (icon) { icon.className = 'relay-icon ' + (on ? 'on' : ''); }

@@ -146,8 +146,9 @@ logs:          read=email, write=anon
 - Capacitive Soil Moisture (GPIO34) — ความชื้นดิน
 
 **WiFiMulti:**
-- `floor-1-2-2.4G` / `pvg4239500` — บริษัท
-- `Tonkla_2.4G` / *(in config.h)* — บ้าน
+- `floor-1-2-2.4G` — บริษัท (ชั้น 1-2)
+- `Lab_F2-2.4G` — บริษัท (Lab ชั้น 2)
+- 🔒 รหัสผ่านเก็บใน `config.h` เท่านั้น (ห้าม commit)
 
 **Partition:** Huge APP (3MB No OTA) — เพราะ sketch ใหญ่
 

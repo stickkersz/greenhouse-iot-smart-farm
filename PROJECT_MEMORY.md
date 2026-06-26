@@ -231,10 +231,12 @@ bool shouldClose = (airTemp <= thresh_temp_off) && (airHumidity >= thresh_hum_mi
 
 ## 7. WiFi
 
+เครือข่าย (WiFiMulti — ต่ออัตโนมัติเครือข่ายที่เจอ):
 ```
-SSID:     floor-1-2-2.4G
-Password: pvg4239500
+- floor-1-2-2.4G   (บริษัท ชั้น 1-2)
+- Lab_F2-2.4G      (บริษัท Lab ชั้น 2)
 ```
+> 🔒 รหัสผ่านเก็บใน `config.h` เท่านั้น (gitignore — ห้าม commit)
 > ⚠️ ESP32 รองรับ **2.4GHz เท่านั้น** — 5GHz จะ connect ไม่ได้
 
 ---
