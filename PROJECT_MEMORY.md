@@ -28,8 +28,8 @@
 | ESP32 DevKit V1 (38-pin) | ✅ ใช้งาน | WiFi 2.4GHz เท่านั้น |
 | DS18B20 Waterproof | ✅ ทำงาน | วัดอุณหภูมิน้ำ, ต่อผ่าน Terminal Block |
 | Relay Module 4CH (5V) | ✅ ทำงาน | Active-LOW |
-| DHT11 | ✅ ทำงาน (ชั่วคราว) | รอ SHT35 มาแทน |
-| SHT35 | 🛒 ต้องซื้อ × 2 | แม่นยำกว่า DHT11 มาก |
+| DHT22 | ✅ ทำงาน (ชั่วคราว) | รอ SHT35 มาแทน |
+| SHT35 | 🛒 ต้องซื้อ × 2 | แม่นยำกว่า DHT22 มาก |
 | Capacitive Soil Moisture | 🛒 ต้องซื้อ | แทน Resistive (2-pin) ที่มีอยู่ |
 | Fan Shutter 10" AC 220V | 🛒 ต้องซื้อ × 2 | ระบายอากาศโรงเรือน |
 | Fan Module 5V | ✅ มีแล้ว | ระบายความร้อนกล่อง IP65 — ต่อตรง XL4015 |
@@ -49,7 +49,7 @@
 // Soil Moisture
 #define PIN_SOIL_MOISTURE 34   // Capacitive (ADC)
 
-// DHT11 (ชั่วคราว แทน SHT35)
+// DHT22 (ชั่วคราว แทน SHT35)
 #define PIN_DHT11        32
 
 // SHT35 — I2C: SDA=21, SCL=22 (default ESP32)
@@ -90,7 +90,7 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
     ch2_fan_out       bool
     ch3_fan_in        bool
     ch4_spare         bool
-    firmware          string  "1.2.0"
+    firmware          string  "1.3.0"
   control/
     thresholds/
       temp_on         float   (35.0)
@@ -123,11 +123,11 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
 | OneWire by Paul Stoffregen | DS18B20 |
 | DallasTemperature by Miles Burton | DS18B20 |
 | Adafruit SHT31 Library | SHT35 (ใช้ address 0x44) |
-| DHT sensor library by Adafruit | DHT11 (ชั่วคราว) |
+| DHT sensor library by Adafruit | DHT22 (ชั่วคราว) |
 
 ---
 
-## 6. Firmware v1.2.0 — จุดสำคัญ
+## 6. Firmware v1.3.0 — จุดสำคัญ
 
 ### Firebase Auth
 ```cpp
@@ -178,7 +178,7 @@ waterTemp = ds18b20.getTempCByIndex(0);
 // External Pull-up 5.1kΩ ระหว่าง VCC กับ DAT
 ```
 
-### SHT35 / DHT11 Auto-Switch
+### SHT35 / DHT22 Auto-Switch
 ```cpp
 Wire.begin();
 if (sht35.begin(0x44)) { useSHT35 = true; }
@@ -239,7 +239,7 @@ Password: pvg4239500
 
 ---
 
-## 8. Web Dashboard v1.1.0
+## 8. Web Dashboard v1.3.0
 
 **ไฟล์:** `dashboard/index.html`
 **เปิดได้:** double-click ไฟล์ หรือ deploy ขึ้น Firebase Hosting
@@ -278,7 +278,7 @@ Password: pvg4239500
 ## 9. สิ่งที่ต้องทำต่อ (TODO)
 
 ### Phase 1 — Hardware
-- [ ] ซื้อ SHT35 × 2 (~300–500฿) → เปลี่ยนแทน DHT11
+- [ ] ซื้อ SHT35 × 2 (~300–500฿) → เปลี่ยนแทน DHT22
 - [ ] ซื้อ Capacitive Soil Moisture × 1 (~50–80฿)
 - [ ] ซื้อ Fan Shutter 10" × 2 (~1,000–1,600฿)
 - [ ] ทดสอบปั๊มน้ำ 24V เมื่อของมาส่ง
@@ -352,4 +352,4 @@ Password: pvg4239500
 
 ---
 
-*อัปเดตล่าสุด: มิถุนายน 2569 (v1.1.0)*
+*อัปเดตล่าสุด: มิถุนายน 2569 (v1.3.0)*

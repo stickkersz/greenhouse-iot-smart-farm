@@ -13,3 +13,6 @@ smartfarm_firmware/config.h
 
 # Node / npm (ถ้ามีในอนาคต)
 node_modules/
+
+# Backup ทำมือ (git เก็บ history อยู่แล้ว)
+dashboard/*.backup.html

@@ -141,7 +141,7 @@ logs:          read=email, write=anon
 | CH4 | 25 | สำรอง | Manual / Schedule only |
 
 **Sensors:**
-- DHT11 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว รอ SHT35)
+- DHT22 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว รอ SHT35)
 - DS18B20 (GPIO4) — อุณหภูมิน้ำ
 - Capacitive Soil Moisture (GPIO34) — ความชื้นดิน
 
@@ -219,7 +219,7 @@ logs:          read=email, write=anon
 ## 🎯 Next Steps (Phase 2)
 
 ### Hardware
-- [ ] ซื้อ SHT35 แทน DHT11 (แม่นยำกว่า)
+- [ ] ซื้อ SHT35 แทน DHT22 (แม่นยำกว่า)
 - [ ] ต่อปั๊มน้ำ CH1 จริง
 - [ ] ต่อพัดลม CH2/CH3 จริง
 - [ ] ทดสอบ Auto mode ครบ loop

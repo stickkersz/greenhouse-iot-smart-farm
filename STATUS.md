@@ -9,17 +9,17 @@
 | อุปกรณ์ | สถานะ | หมายเหตุ |
 |---|---|---|
 | ESP32 DevKit V1 | ✅ Online | IP 192.168.59.233 |
-| DHT11 | ✅ ทำงาน | อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว) |
+| DHT22 | ✅ ทำงาน | อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว) |
 | DS18B20 Waterproof | ✅ ทำงาน | อุณหภูมิน้ำ พบ 1 ตัว |
 | Relay 4CH Active-LOW | ✅ ทำงาน | โหลด config จาก Firebase ได้ |
 | Capacitive Soil Moisture | ✅ ต่อแล้ว | GPIO34 |
-| SHT35 | 🛒 ยังไม่ได้ซื้อ | แม่นยำกว่า DHT11 — ซื้อแล้วแทน DHT11 ได้เลย |
+| SHT35 | 🛒 ยังไม่ได้ซื้อ | แม่นยำกว่า DHT22 — ซื้อแล้วแทน DHT22 ได้เลย |
 | Fan Shutter 10" AC 220V | 🛒 ยังไม่ได้ซื้อ | CH2/CH3 รอต่อ |
 | ปั๊มน้ำ DC 24V | ⏳ รอต่อ relay | CH1 พร้อม |
 
 ---
 
-## Firmware v1.2.0 — สถานะ Features
+## Firmware v1.3.0 — สถานะ Features
 
 | Feature | สถานะ | รายละเอียด |
 |---|---|---|
@@ -35,7 +35,7 @@
 
 ---
 
-## Dashboard v1.2.0 (Blynk IoT Level) — สถานะ Features
+## Dashboard v1.3.0 (Blynk IoT Level) — สถานะ Features
 
 | Feature | สถานะ | รายละเอียด |
 |---|---|---|
@@ -87,7 +87,7 @@ Auth:         Anonymous Authentication
 | OneWire | Paul Stoffregen | |
 | DallasTemperature | Miles Burton | |
 | Adafruit SHT31 Library | Adafruit | ใช้ address 0x44 |
-| DHT sensor library | Adafruit | DHT11 ชั่วคราว |
+| DHT sensor library | Adafruit | DHT22 ชั่วคราว |
 
 ---
 
@@ -102,7 +102,7 @@ Auth:         Anonymous Authentication
 
 - [ ] **รอ Hourly Log แรก** — ประมาณ 1 ชม. หลัง firmware boot → กราฟจะขึ้นเอง
 
-- [ ] **ซื้อและต่อ SHT35** — แม่นยำกว่า DHT11 มาก (I2C: SDA=21, SCL=22, address 0x44)
+- [ ] **ซื้อและต่อ SHT35** — แม่นยำกว่า DHT22 มาก (I2C: SDA=21, SCL=22, address 0x44)
 
 - [ ] **ต่อ Fan Shutter** — CH2 GPIO27 (ระบายออก), CH3 GPIO14 (ดึงเข้า)
 
@@ -122,4 +122,4 @@ Auth:         Anonymous Authentication
 
 ---
 
-*อัปเดตล่าสุด: 19 มิถุนายน 2569*
+*อัปเดตล่าสุด: 25 มิถุนายน 2569 (v1.3.0)*

@@ -4,7 +4,9 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "seed_logs.html",
+      "index.v1.1.0.backup.html"
     ]
   },
   "database": {

@@ -12,27 +12,90 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="SmartFarm" />
   <meta name="description" content="ระบบควบคุมโรงเรือนอัตโนมัติ บริษัท ปุ๋ยไวกิ้ง จำกัด" />
+  <!-- ตั้งธีมก่อน paint เพื่อกัน flash -->
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem('sfTheme');
+        if (!t) t = (window.matchMedia && window.matchMedia('(prefers-color-scheme:dark)').matches) ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch(e) { document.documentElement.setAttribute('data-theme','light'); }
+    })();
+  </script>
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --g50:#f0fdf4;--g100:#dcfce7;--g200:#bbf7d0;--g300:#86efac;
-      --g400:#4ade80;--g500:#22c55e;--g600:#16a34a;--g700:#15803d;
-      --g800:#166534;--g900:#14532d;
-      --bg:#f0fdf4;--card:#fff;--border:#bbf7d0;
-      --text:#14532d;--sub:#4b7a5e;--muted:#86a998;
+      /* brand ramp (คงที่ทั้ง 2 ธีม) */
+      --g50:#f0fdf4;--g100:#dcfce7;--g200:#bbf7d0;--g300:#86efac;--g400:#4ade80;
+      --g500:#22c55e;--g600:#16a34a;--g700:#15803d;--g800:#166534;--g900:#14532d;
+
+      /* semantic — LIGHT */
+      --bg:#eefcf3;
+      --card:#ffffff;
+      --surface-2:#eef4f1;
+      --border:#cdeed8;
+      --border-soft:#e4f6ea;
+      --text:#14532d;
+      --sub:#4b7a5e;
+      --muted:#8aa99a;
+      --accent:#16a34a;
+      --accent-strong:#15803d;
+      --accent-text:#15803d;
+      --accent-soft:#dcfce7;
+      --accent-soft-2:#f0fdf4;
+      --input-bg:#f1faf4;
+      --toggle-off:#d1d5db;
+      --track:#e2e8f0;
+      --grid:rgba(120,190,150,.35);
+      --shadow-sm:0 2px 10px rgba(20,83,45,.06);
+      --shadow-md:0 10px 30px rgba(20,83,45,.14);
+      --alert-soft:#fff5f5;
+      --alert-text:#991b1b;
+      --skeleton-base:#e3f3ea;
+      --skeleton-shine:rgba(255,255,255,.75);
+      --header-grad:linear-gradient(135deg,#14532d,#166534,#15803d);
+      --mode-active-bg:#ffffff;
+    }
+    [data-theme="dark"] {
+      --bg:#0a120e;
+      --card:#13201a;
+      --surface-2:#1a2a21;
+      --border:#26392f;
+      --border-soft:#1d2e25;
+      --text:#e7f5ed;
+      --sub:#aacdb9;
+      --muted:#6f9282;
+      --accent:#22c55e;
+      --accent-strong:#16a34a;
+      --accent-text:#7fe3a6;
+      --accent-soft:#18301f;
+      --accent-soft-2:#15271c;
+      --input-bg:#0f1a14;
+      --toggle-off:#3a4b41;
+      --track:#27362d;
+      --grid:rgba(120,200,150,.14);
+      --shadow-sm:0 2px 10px rgba(0,0,0,.4);
+      --shadow-md:0 12px 30px rgba(0,0,0,.55);
+      --alert-soft:#241414;
+      --alert-text:#fca5a5;
+      --skeleton-base:#1b2a21;
+      --skeleton-shine:rgba(255,255,255,.06);
+      --header-grad:linear-gradient(135deg,#0c3a20,#0f4527,#114e2c);
+      --mode-active-bg:#22382c;
     }
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Prompt','Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    body{font-family:'Prompt','Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .3s,color .3s}
 
     /* ── Header ── */
-    header{background:linear-gradient(135deg,#14532d,#166534,#15803d);padding:0 20px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 4px 20px rgba(20,83,45,.3)}
-    .hl{display:flex;align-items:center;gap:10px}
+    header{background:var(--header-grad);padding:0 20px;height:58px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 4px 20px rgba(20,83,45,.3)}
+    .hl{display:flex;align-items:center;gap:10px;min-width:0}
     .hl .logo{font-size:1.35rem}
     .hl h1{font-size:.92rem;font-weight:700;color:#fff}
     .hl small{font-size:.63rem;color:#86efac;font-weight:300}
-    .hr{display:flex;align-items:center;gap:10px}
-    .bell-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);border-radius:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.95rem;color:#fff;transition:background .2s;flex-shrink:0}
-    .bell-btn:hover{background:rgba(255,255,255,.22)}
+    .hr{display:flex;align-items:center;gap:8px}
+    .icon-btn{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);border-radius:9px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:.95rem;color:#fff;transition:background .2s,transform .15s;flex-shrink:0}
+    .icon-btn:hover{background:rgba(255,255,255,.24);transform:translateY(-1px)}
+    .icon-btn:active{transform:scale(.92)}
     .bell-btn.granted{color:#fbbf24}
     .user-chip{display:flex;align-items:center;gap:5px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);border-radius:999px;padding:4px 10px;cursor:pointer;transition:background .2s}
     .user-chip:hover{background:rgba(255,255,255,.2)}
@@ -49,17 +112,25 @@
     #alertBanner{display:none;background:linear-gradient(90deg,#7f1d1d,#991b1b);border-bottom:2px solid #f87171;padding:8px 20px;color:#fecaca;font-size:.82rem;font-weight:500;animation:slideDown .3s ease}
     @keyframes slideDown{from{transform:translateY(-100%);opacity:0}to{transform:translateY(0);opacity:1}}
 
+    /* ── System Health Banner (worst-case states) ── */
+    .sysbanner{display:none;padding:8px 20px;font-size:.82rem;font-weight:600;text-align:center;animation:slideDown .3s ease;position:sticky;top:58px;z-index:90}
+    .sysbanner.show{display:block}
+    .sysbanner.sev-crit{background:linear-gradient(90deg,#7f1d1d,#991b1b);color:#fee2e2;border-bottom:2px solid #f87171}
+    .sysbanner.sev-warn{background:linear-gradient(90deg,#92400e,#b45309);color:#fff7ed;border-bottom:2px solid #fbbf24}
+    .sysbanner.sev-info{background:linear-gradient(90deg,#1e3a8a,#1d4ed8);color:#eff6ff;border-bottom:2px solid #60a5fa}
+    @media(max-width:599px){.sysbanner{top:54px}}
+
     /* ── Main ── */
     main{max-width:1200px;margin:0 auto;padding:18px 14px;display:flex;flex-direction:column;gap:22px}
 
     /* ── Section header ── */
     .sh{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-    .sh-icon{width:30px;height:30px;border-radius:8px;background:var(--g100);display:flex;align-items:center;justify-content:center;font-size:.95rem}
-    .sh-title{font-size:.88rem;font-weight:600;color:var(--g800)}
+    .sh-icon{width:30px;height:30px;border-radius:8px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:.95rem}
+    .sh-title{font-size:.88rem;font-weight:600;color:var(--text)}
     .sh-sub{font-size:.7rem;color:var(--muted)}
 
     /* ── Uptime ── */
-    .uptime-card{background:linear-gradient(135deg,#14532d,#166534);border-radius:14px;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;color:#dcfce7;box-shadow:0 4px 20px rgba(20,83,45,.25)}
+    .uptime-card{background:var(--header-grad);border-radius:14px;padding:16px 22px;display:flex;align-items:center;justify-content:space-between;color:#dcfce7;box-shadow:0 4px 20px rgba(20,83,45,.25)}
     .uptime-card h3{font-size:.68rem;font-weight:500;color:#86efac;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}
     .uptime-card .val{font-size:1.35rem;font-weight:700;color:#fff}
     .uptime-r{display:flex;gap:18px}
@@ -67,10 +138,24 @@
     .ustat-l{font-size:.6rem;color:#86efac;text-transform:uppercase;letter-spacing:.05em}
     .ustat-v{font-size:.88rem;font-weight:700;color:#fff}
 
+    /* ── System Status Chips ── */
+    .sys-chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px}
+    .sys-chip{display:flex;align-items:center;gap:11px;background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:11px 13px;box-shadow:var(--shadow-sm);font-family:'Prompt',sans-serif;text-align:left;width:100%}
+    button.sys-chip{cursor:pointer;transition:transform .15s,box-shadow .2s,border-color .2s}
+    button.sys-chip:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+    button.sys-chip:active{transform:scale(.98)}
+    .sys-ico{font-size:1.25rem;width:38px;height:38px;display:flex;align-items:center;justify-content:center;border-radius:11px;background:var(--accent-soft);flex-shrink:0;transition:background .2s}
+    .sys-info{min-width:0}
+    .sys-k{font-size:.62rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+    .sys-v{font-size:.84rem;font-weight:700;color:var(--text);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sys-chip.chip-off .sys-v{color:var(--muted)}
+    .sys-chip.chip-off .sys-ico{background:var(--surface-2);filter:grayscale(.4) opacity(.8)}
+    .sys-chip.chip-on{border-color:var(--g400)}
+
     /* ── Sensor grid ── */
     .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px}
-    .sensor-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 12px;position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;transition:transform .2s,box-shadow .2s;box-shadow:0 2px 8px rgba(20,83,45,.06)}
-    .sensor-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(20,83,45,.12)}
+    .sensor-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 12px;position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;transition:transform .2s,box-shadow .2s;box-shadow:var(--shadow-sm);cursor:pointer}
+    .sensor-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
     .sensor-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0}
     .sensor-card.green::before{background:linear-gradient(90deg,#22c55e,#4ade80)}
     .sensor-card.blue::before{background:linear-gradient(90deg,#3b82f6,#60a5fa)}
@@ -79,21 +164,27 @@
     .sensor-top{width:100%;display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
     .sensor-label{font-size:.7rem;font-weight:600;color:var(--sub)}
     .sensor-badge{font-size:.6rem;font-weight:600;padding:2px 7px;border-radius:999px}
-    .badge-ok{background:#dcfce7;color:#15803d}
+    .badge-ok{background:var(--accent-soft);color:var(--accent-text)}
     .badge-warn{background:#fef3c7;color:#92400e}
     .badge-danger{background:#fee2e2;color:#991b1b}
-    .badge-offline{background:#f1f5f9;color:#64748b}
+    .badge-offline{background:var(--surface-2);color:var(--muted)}
     .gauge-wrap{width:155px;height:125px}
     .gauge-wrap svg{width:100%;height:100%}
     .sensor-status{margin-top:2px;font-size:.7rem;color:var(--muted);text-align:center;min-height:1.2em}
 
+    /* ── Skeleton Loading ── */
+    .skeleton{position:relative;overflow:hidden;background:var(--skeleton-base)}
+    .skeleton::after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,var(--skeleton-shine),transparent);animation:shimmer 1.4s infinite}
+    @keyframes shimmer{100%{transform:translateX(100%)}}
+    .skel-gauge{width:118px;height:112px;border-radius:50% 50% 12px 12px;margin:6px auto 0}
+
     /* ── Chart ── */
-    .chart-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:18px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
+    .chart-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:18px;box-shadow:var(--shadow-sm)}
     .chart-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px}
     .chart-legend{display:flex;gap:12px;flex-wrap:wrap}
     .legend-item{display:flex;align-items:center;gap:5px;font-size:.7rem;color:var(--sub);font-weight:500}
     .legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-    .chart-btn{background:var(--g100);border:1px solid var(--g300);border-radius:8px;color:var(--g700);padding:5px 12px;font-size:.73rem;font-weight:600;cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
+    .chart-btn{background:var(--accent-soft);border:1px solid var(--border);border-radius:8px;color:var(--accent-text);padding:5px 12px;font-size:.73rem;font-weight:600;cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
     .chart-btn:hover{background:var(--g200)}
     .chart-btn:disabled{opacity:.5;cursor:not-allowed}
     .chart-wrap{position:relative;height:230px}
@@ -103,87 +194,87 @@
 
     /* ── Relay ── */
     .relay-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
-    .relay-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:11px;transition:transform .2s,box-shadow .2s;box-shadow:0 2px 8px rgba(20,83,45,.06)}
-    .relay-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(20,83,45,.12)}
-    .relay-card.active-card{border-color:#86efac;background:linear-gradient(135deg,#f0fdf4,#fff)}
+    .relay-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:11px;transition:transform .2s,box-shadow .2s;box-shadow:var(--shadow-sm)}
+    .relay-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-md)}
+    .relay-card.active-card{border-color:var(--g400);background:var(--accent-soft-2)}
     .relay-top{display:flex;align-items:center;gap:10px}
-    .relay-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;background:var(--g100);flex-shrink:0;transition:background .3s}
+    .relay-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;background:var(--accent-soft);flex-shrink:0;transition:background .3s}
     .relay-icon.on{background:linear-gradient(135deg,#dcfce7,#bbf7d0);box-shadow:0 0 12px rgba(34,197,94,.3)}
     .relay-info{flex:1}
     .relay-name{font-size:.85rem;font-weight:600;color:var(--text)}
     .relay-ch{font-size:.66rem;color:var(--muted)}
     .relay-badge{font-size:.66rem;font-weight:700;padding:3px 8px;border-radius:999px}
-    .s-on{background:#dcfce7;color:#15803d}
-    .s-off{background:#f1f5f9;color:#64748b}
+    .s-on{background:var(--accent-soft);color:var(--accent-text)}
+    .s-off{background:var(--surface-2);color:var(--muted)}
     .toggle-row{display:flex;align-items:center;justify-content:space-between}
     .toggle-label{font-size:.76rem;color:var(--sub);font-weight:500}
     .toggle{position:relative;width:48px;height:25px;flex-shrink:0}
     .toggle input{opacity:0;width:0;height:0;position:absolute}
-    .slider{position:absolute;cursor:pointer;inset:0;background:#d1d5db;border-radius:999px;transition:.3s}
+    .slider{position:absolute;cursor:pointer;inset:0;background:var(--toggle-off);border-radius:999px;transition:.3s}
     .slider::before{content:"";position:absolute;width:17px;height:17px;left:4px;bottom:4px;background:#fff;border-radius:50%;transition:.3s;box-shadow:0 2px 4px rgba(0,0,0,.2)}
     input:checked+.slider{background:linear-gradient(135deg,#16a34a,#22c55e)}
     input:checked+.slider::before{transform:translateX(23px)}
     input:disabled+.slider{opacity:.4;cursor:not-allowed}
-    .mode-row{display:flex;gap:4px;background:#f1f5f9;border-radius:8px;padding:3px}
-    .mode-btn{flex:1;font-size:.68rem;font-weight:600;padding:5px 0;border-radius:6px;border:none;background:transparent;color:#64748b;cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
-    .mode-btn.active{background:#fff;color:#15803d;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+    .mode-row{display:flex;gap:4px;background:var(--surface-2);border-radius:8px;padding:3px}
+    .mode-btn{flex:1;font-size:.68rem;font-weight:600;padding:5px 0;border-radius:6px;border:none;background:transparent;color:var(--muted);cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
+    .mode-btn.active{background:var(--mode-active-bg);color:var(--accent-text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 
     /* ── Schedule ── */
-    .schedule-wrap{border:1px solid var(--g200);border-radius:10px;overflow:hidden}
+    .schedule-wrap{border:1px solid var(--border);border-radius:10px;overflow:hidden}
     .schedule-wrap summary{padding:7px 11px;font-size:.73rem;font-weight:600;color:var(--sub);cursor:pointer;list-style:none;display:flex;align-items:center;gap:5px;user-select:none;transition:background .2s}
-    .schedule-wrap summary:hover{background:var(--g50)}
-    .schedule-wrap[open] summary{border-bottom:1px solid var(--g100)}
+    .schedule-wrap summary:hover{background:var(--accent-soft-2)}
+    .schedule-wrap[open] summary{border-bottom:1px solid var(--border-soft)}
     .schedule-body{padding:10px;display:flex;flex-direction:column;gap:9px}
     .sched-en{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--sub);cursor:pointer}
     .sched-en input{width:14px;height:14px;accent-color:var(--g600);cursor:pointer}
     .sched-times{display:grid;grid-template-columns:1fr 1fr;gap:7px}
     .sched-time{display:flex;flex-direction:column;gap:3px}
     .sched-time span{font-size:.65rem;font-weight:600;color:var(--muted);text-transform:uppercase}
-    .sched-time input[type=time]{width:100%;padding:5px 7px;border:1.5px solid var(--g200);border-radius:7px;font-family:'Prompt',sans-serif;font-size:.82rem;color:var(--text);background:var(--g50);outline:none;transition:border-color .2s}
+    .sched-time input[type=time]{width:100%;padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;font-family:'Prompt',sans-serif;font-size:.82rem;color:var(--text);background:var(--input-bg);outline:none;transition:border-color .2s}
     .sched-time input[type=time]:focus{border-color:var(--g400)}
     .sched-save{padding:6px;background:var(--g600);border:none;border-radius:8px;color:#fff;font-size:.72rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:background .2s;width:100%}
     .sched-save:hover{background:var(--g700)}
     .sched-status{font-size:.68rem;color:var(--muted);text-align:center;min-height:1em}
 
     /* ── Settings ── */
-    .setting-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
+    .setting-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow-sm)}
     .setting-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
     .setting-card label{display:block;font-size:.7rem;font-weight:600;color:var(--sub);margin-bottom:6px}
     .si-wrap{position:relative}
-    .setting-card input[type=number]{width:100%;background:var(--g50);border:1.5px solid var(--g200);border-radius:10px;color:var(--text);padding:9px 36px 9px 11px;font-size:1rem;font-weight:600;font-family:'Prompt',sans-serif;outline:none;transition:border-color .2s;-moz-appearance:textfield}
+    .setting-card input[type=number]{width:100%;background:var(--input-bg);border:1.5px solid var(--border);border-radius:10px;color:var(--text);padding:9px 36px 9px 11px;font-size:1rem;font-weight:600;font-family:'Prompt',sans-serif;outline:none;transition:border-color .2s;-moz-appearance:textfield}
     .setting-card input::-webkit-outer-spin-button,.setting-card input::-webkit-inner-spin-button{-webkit-appearance:none}
     .setting-card input:focus{border-color:var(--g400);box-shadow:0 0 0 3px rgba(74,222,128,.2)}
     .si-unit{position:absolute;right:9px;top:50%;transform:translateY(-50%);font-size:.75rem;color:var(--muted);font-weight:500;pointer-events:none}
     .save-btn{margin-top:4px;width:100%;padding:10px;background:linear-gradient(135deg,#16a34a,#22c55e);border:none;border-radius:10px;color:#fff;font-size:.84rem;font-weight:600;cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif;box-shadow:0 3px 10px rgba(22,163,74,.3)}
     .save-btn:hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(22,163,74,.4)}
     /* ── Settings Groups ── */
-    .setting-group{border:1.5px solid var(--g200);border-radius:12px;padding:13px 14px;margin-bottom:12px}
-    .setting-group-title{font-size:.78rem;font-weight:700;color:var(--g800);margin-bottom:11px;display:flex;align-items:center;gap:6px}
+    .setting-group{border:1.5px solid var(--border);border-radius:12px;padding:13px 14px;margin-bottom:12px}
+    .setting-group-title{font-size:.78rem;font-weight:700;color:var(--text);margin-bottom:11px;display:flex;align-items:center;gap:6px}
     .setting-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .preset-row{display:flex;gap:7px;margin-bottom:14px;flex-wrap:wrap}
-    .preset-btn{flex:1;min-width:72px;padding:8px 6px;border:1.5px solid var(--g300);border-radius:10px;background:var(--g50);color:var(--g700);font-size:.73rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;text-align:center;white-space:nowrap}
-    .preset-btn:hover{background:var(--g100);border-color:var(--g500)}
+    .preset-btn{flex:1;min-width:72px;padding:8px 6px;border:1.5px solid var(--border);border-radius:10px;background:var(--accent-soft-2);color:var(--accent-text);font-size:.73rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;text-align:center;white-space:nowrap}
+    .preset-btn:hover{background:var(--accent-soft);border-color:var(--g500)}
     .preset-btn.active-preset{background:var(--g700);color:#fff;border-color:var(--g700)}
     .ch-assign-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:14px}
-    .ch-assign-item{background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:8px 10px;display:flex;align-items:flex-start;gap:8px}
+    .ch-assign-item{background:var(--accent-soft-2);border:1px solid var(--border);border-radius:10px;padding:8px 10px;display:flex;align-items:flex-start;gap:8px}
     .ch-num{font-size:.65rem;font-weight:700;background:var(--g600);color:#fff;border-radius:6px;padding:2px 6px;flex-shrink:0;margin-top:1px}
     .ch-num.spare{background:#94a3b8}
     .ch-desc{font-size:.74rem;font-weight:600;color:var(--text);line-height:1.3}
     .ch-ctrl{font-size:.63rem;color:var(--muted);margin-top:1px}
     .alert-field label{color:#b45309!important}
-    .alert-field input{border-color:#fde68a!important;background:#fffbeb!important}
+    .alert-field input{border-color:#fde68a!important;background:#fffbeb!important;color:#78350f!important}
     .alert-field input:focus{border-color:#f59e0b!important;box-shadow:0 0 0 3px rgba(245,158,11,.15)!important}
     .alert-field .si-unit{color:#b45309}
     .setting-section-label{font-size:.72rem;font-weight:600;color:var(--sub);margin-bottom:8px;display:block}
 
     /* ── Log ── */
-    .log-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
-    .log-item{display:flex;align-items:flex-start;gap:9px;padding:8px 0;border-bottom:1px solid var(--g100)}
+    .log-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow-sm)}
+    .log-item{display:flex;align-items:flex-start;gap:9px;padding:8px 0;border-bottom:1px solid var(--border-soft)}
     .log-item:last-child{border-bottom:none;padding-bottom:0}
     .log-dot{width:7px;height:7px;border-radius:50%;background:var(--g400);margin-top:4px;flex-shrink:0}
     .log-action{font-size:.81rem;font-weight:500;color:var(--text);line-height:1.4}
     .log-meta{font-size:.66rem;color:var(--muted);margin-top:2px}
-    .log-user{display:inline-block;background:var(--g100);color:var(--g700);font-size:.6rem;font-weight:600;padding:1px 6px;border-radius:999px;margin-right:3px}
+    .log-user{display:inline-block;background:var(--accent-soft);color:var(--accent-text);font-size:.6rem;font-weight:600;padding:1px 6px;border-radius:999px;margin-right:3px}
     .log-empty{text-align:center;font-size:.81rem;color:var(--muted);padding:20px 0}
 
     /* ── Toast ── */
@@ -191,17 +282,17 @@
     #toast.show{transform:translateY(0);opacity:1}
 
     /* ── Footer ── */
-    footer{text-align:center;padding:16px;font-size:.66rem;color:var(--muted);border-top:1px solid var(--g100);margin-top:6px}
+    footer{text-align:center;padding:16px;font-size:.66rem;color:var(--muted);border-top:1px solid var(--border-soft);margin-top:6px}
 
     /* ── Login Screen ── */
     #loginScreen{position:fixed;inset:0;background:linear-gradient(145deg,#052e16,#14532d,#166534);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}
-    .login-card{background:#fff;border-radius:22px;padding:36px 28px 30px;width:100%;max-width:360px;box-shadow:0 24px 80px rgba(0,0,0,.35);text-align:center}
+    .login-card{background:var(--card);border-radius:22px;padding:36px 28px 30px;width:100%;max-width:360px;box-shadow:0 24px 80px rgba(0,0,0,.35);text-align:center}
     .login-logo{font-size:2.8rem;margin-bottom:8px;display:block}
-    .login-title{font-size:1.3rem;font-weight:700;color:var(--g900);margin-bottom:3px}
+    .login-title{font-size:1.3rem;font-weight:700;color:var(--text);margin-bottom:3px}
     .login-sub{font-size:.72rem;color:var(--muted);margin-bottom:28px;line-height:1.5}
     .login-field{text-align:left;margin-bottom:14px}
     .login-field label{display:block;font-size:.72rem;font-weight:600;color:var(--sub);margin-bottom:5px}
-    .login-field input{width:100%;padding:11px 14px;border:1.5px solid var(--g200);border-radius:10px;font-size:.92rem;font-family:'Prompt',sans-serif;color:var(--text);background:var(--g50);outline:none;transition:border-color .2s}
+    .login-field input{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:.92rem;font-family:'Prompt',sans-serif;color:var(--text);background:var(--input-bg);outline:none;transition:border-color .2s}
     .login-field input:focus{border-color:var(--g400);box-shadow:0 0 0 3px rgba(74,222,128,.2)}
     .pw-wrap{position:relative}
     .pw-wrap input{padding-right:42px}
@@ -215,20 +306,20 @@
     /* ── Notification Panel ── */
     .notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:600;opacity:0;pointer-events:none;transition:opacity .3s}
     .notif-overlay.open{opacity:1;pointer-events:all}
-    .notif-panel{position:fixed;top:0;right:0;bottom:0;width:min(380px,100vw);background:#fff;z-index:601;transform:translateX(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,.18)}
+    .notif-panel{position:fixed;top:0;right:0;bottom:0;width:min(380px,100vw);background:var(--card);z-index:601;transform:translateX(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:-8px 0 40px rgba(0,0,0,.18)}
     .notif-panel.open{transform:translateX(0)}
-    .notif-panel-hdr{background:linear-gradient(135deg,#14532d,#166534);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding-top:max(16px,env(safe-area-inset-top))}
+    .notif-panel-hdr{background:var(--header-grad);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;padding-top:max(16px,env(safe-area-inset-top))}
     .notif-panel-title{font-size:1rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:8px}
     .notif-panel-close{background:rgba(255,255,255,.15);border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;color:#fff;font-size:1rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .notif-panel-body{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
-    .notif-item{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:12px;border-left:3px solid #ef4444;background:#fff5f5}
+    .notif-item{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:12px;border-left:3px solid #ef4444;background:var(--alert-soft)}
     .notif-item-icon{font-size:1.2rem;flex-shrink:0;line-height:1.3}
-    .notif-item-msg{font-size:.82rem;font-weight:500;color:#991b1b;line-height:1.4}
-    .notif-item-time{font-size:.65rem;color:#b45309;margin-top:3px}
+    .notif-item-msg{font-size:.82rem;font-weight:500;color:var(--alert-text);line-height:1.4}
+    .notif-item-time{font-size:.65rem;color:var(--muted);margin-top:3px}
     .notif-empty{text-align:center;padding:50px 20px;color:var(--muted);flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
     .notif-empty-icon{font-size:3rem}
     .notif-empty-text{font-size:.85rem}
-    .notif-panel-footer{padding:12px 14px;border-top:1px solid var(--g100);flex-shrink:0}
+    .notif-panel-footer{padding:12px 14px;border-top:1px solid var(--border-soft);flex-shrink:0}
     .notif-enable-btn{width:100%;padding:10px;background:var(--g600);border:none;border-radius:10px;color:#fff;font-size:.8rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s}
     .notif-enable-btn:hover{background:var(--g700)}
     .notif-clear-btn{width:100%;padding:8px;background:#fee2e2;border:none;border-radius:10px;color:#dc2626;font-size:.78rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;margin-top:6px;transition:.2s}
@@ -238,14 +329,14 @@
     .notif-badge.show{display:flex}
 
     /* ── Range Selector & Export ── */
-    .range-btns{display:flex;gap:3px;background:#f1f5f9;border-radius:8px;padding:3px}
-    .range-btn{padding:5px 12px;border:none;background:transparent;border-radius:6px;font-size:.73rem;font-weight:600;color:#64748b;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;white-space:nowrap}
-    .range-btn.active{background:#fff;color:#15803d;box-shadow:0 1px 3px rgba(0,0,0,.12)}
-    .export-btn{background:var(--g100);border:1px solid var(--g300);border-radius:8px;color:var(--g700);padding:5px 11px;font-size:.73rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;white-space:nowrap}
+    .range-btns{display:flex;gap:3px;background:var(--surface-2);border-radius:8px;padding:3px}
+    .range-btn{padding:5px 12px;border:none;background:transparent;border-radius:6px;font-size:.73rem;font-weight:600;color:var(--muted);cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;white-space:nowrap}
+    .range-btn.active{background:var(--mode-active-bg);color:var(--accent-text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+    .export-btn{background:var(--accent-soft);border:1px solid var(--border);border-radius:8px;color:var(--accent-text);padding:5px 11px;font-size:.73rem;font-weight:600;cursor:pointer;font-family:'Prompt',sans-serif;transition:.2s;white-space:nowrap}
     .export-btn:hover{background:var(--g200)}
     /* ── Alert History ── */
-    .alert-hist-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:0 2px 8px rgba(20,83,45,.06)}
-    .alert-hist-item{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--g100)}
+    .alert-hist-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow-sm)}
+    .alert-hist-item{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-soft)}
     .alert-hist-item:last-child{border-bottom:none;padding-bottom:0}
     .alert-hist-icon{font-size:1.1rem;flex-shrink:0;margin-top:1px}
     .alert-hist-msg{font-size:.81rem;font-weight:500;color:var(--text);line-height:1.4}
@@ -255,18 +346,18 @@
     /* ── Sensor Detail Bottom Sheet ── */
     .detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;opacity:0;pointer-events:none;transition:opacity .3s}
     .detail-overlay.open{opacity:1;pointer-events:all}
-    .detail-sheet{position:fixed;bottom:0;left:0;right:0;background:#fff;border-radius:24px 24px 0 0;z-index:501;max-height:88vh;overflow-y:auto;transform:translateY(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);padding-bottom:max(env(safe-area-inset-bottom),16px)}
+    .detail-sheet{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-radius:24px 24px 0 0;z-index:501;max-height:88vh;overflow-y:auto;transform:translateY(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);padding-bottom:max(env(safe-area-inset-bottom),16px)}
     .detail-sheet.open{transform:translateY(0)}
-    .detail-handle{width:36px;height:4px;background:#e2e8f0;border-radius:999px;margin:12px auto 0}
+    .detail-handle{width:36px;height:4px;background:var(--border);border-radius:999px;margin:12px auto 0}
     .detail-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px 4px}
     .detail-sensor-name{font-size:1rem;font-weight:700;color:var(--text)}
-    .detail-close{background:var(--g100);border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;color:var(--sub);flex-shrink:0}
+    .detail-close{background:var(--accent-soft);border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;color:var(--sub);flex-shrink:0}
     .detail-current{text-align:center;padding:10px 20px 16px}
     .detail-val{font-size:3.2rem;font-weight:700;line-height:1}
     .detail-unit-lbl{font-size:1.1rem;font-weight:500;color:var(--muted)}
     .detail-trend{font-size:.82rem;margin-top:8px;color:var(--sub)}
-    .detail-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;margin:0 20px 20px;background:var(--g200);border-radius:14px;overflow:hidden}
-    .stat-item{background:#fff;text-align:center;padding:12px 8px}
+    .detail-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;margin:0 20px 20px;background:var(--border);border-radius:14px;overflow:hidden}
+    .stat-item{background:var(--card);text-align:center;padding:12px 8px}
     .stat-item:first-child{border-radius:14px 0 0 14px}
     .stat-item:last-child{border-radius:0 14px 14px 0}
     .stat-label{font-size:.62rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
@@ -275,19 +366,16 @@
     .detail-chart-title{font-size:.78rem;font-weight:600;color:var(--sub);margin-bottom:10px}
     .detail-chart-canvas-wrap{position:relative;height:190px}
     #detailLoadingMsg{text-align:center;padding:40px 0;color:var(--muted);font-size:.82rem}
-    .sensor-card{cursor:pointer}
 
     /* ── Bottom Nav ── */
-    .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:calc(60px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:#fff;border-top:1px solid var(--border);z-index:200;box-shadow:0 -4px 20px rgba(20,83,45,.1)}
+    .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;height:calc(60px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--card);border-top:1px solid var(--border);z-index:200;box-shadow:0 -4px 20px rgba(20,83,45,.1)}
     .bnav-inner{display:flex;height:60px}
     .nav-tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:none;border:none;cursor:pointer;font-family:'Prompt',sans-serif;font-size:.58rem;font-weight:600;color:var(--muted);transition:color .2s;padding:5px 0;-webkit-tap-highlight-color:transparent}
     .nav-tab .ni{font-size:1.25rem;line-height:1;transition:transform .2s}
-    .nav-tab.active{color:var(--g700)}
+    .nav-tab.active{color:var(--accent-text)}
     .nav-tab.active .ni{transform:scale(1.18)}
 
     /* ── RESPONSIVE ── */
-
-    /* Mobile: แสดง Bottom Nav, ซ่อน Tab ที่ไม่ active */
     @media(max-width:767px){
       body{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
       .bottom-nav{display:block}
@@ -296,14 +384,11 @@
       main{padding:12px 10px;gap:0}
       #toast{bottom:calc(76px + env(safe-area-inset-bottom))}
     }
-    /* Desktop: ซ่อน Bottom Nav, แสดง Tab ทั้งหมด */
     @media(min-width:768px){
       .tab-section{display:flex;flex-direction:column;gap:22px}
       .bottom-nav{display:none}
       #toast{bottom:24px;right:24px}
     }
-
-    /* Tablet 768-1023px (iPad portrait / landscape ขนาดเล็ก) */
     @media(min-width:768px) and (max-width:1023px){
       main{padding:14px 12px}
       .relay-grid{grid-template-columns:1fr 1fr}
@@ -312,8 +397,6 @@
       .sensor-grid{grid-template-columns:repeat(2,1fr)}
       .gauge-wrap{width:145px;height:118px}
     }
-
-    /* Desktop 1024px+ */
     @media(min-width:1024px){
       .relay-grid{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
       .setting-fields{grid-template-columns:repeat(3,1fr)}
@@ -324,7 +407,7 @@
     .title-short{display:none}
     .title-long{display:inline}
 
-    /* Mobile < 600px (โทรศัพท์ทั่วไป) */
+    /* Mobile < 600px */
     @media(max-width:599px){
       header{padding:0 10px;height:54px}
       .title-long{display:none}
@@ -334,42 +417,35 @@
       .status-text{display:none}
       .status-pill{padding:5px 8px}
       .user-chip-name{display:none}
-      /* Uptime */
       .uptime-card{padding:12px 16px;border-radius:12px}
       .uptime-card h3{font-size:.62rem;margin-bottom:2px}
       .uptime-card .val{font-size:1.15rem}
       .uptime-r{display:none}
-      /* Sensor section header */
       .sh-title{font-size:.92rem}
       .sh-sub{font-size:.76rem}
-      /* Sensor cards */
       .sensor-grid{grid-template-columns:1fr 1fr;gap:10px}
       .sensor-label{font-size:.76rem}
       .sensor-badge{font-size:.64rem;padding:2px 8px}
       .sensor-status{font-size:.74rem}
       .gauge-wrap{width:132px;height:108px}
-      /* Relay */
       .relay-card{padding:13px;gap:9px}
       .relay-top{gap:8px}
       .relay-name{font-size:.84rem}
       .relay-ch{font-size:.64rem}
       .relay-icon{width:34px;height:34px;font-size:1.05rem}
-      /* Settings */
       .setting-fields{display:flex;flex-direction:column;gap:10px}
-      /* Chart */
       .chart-wrap{height:200px}
       .chart-toolbar{flex-direction:column;align-items:stretch;gap:7px}
       .chart-toolbar > div:last-child{justify-content:flex-end}
       .range-btn{flex:1;padding:6px 4px;text-align:center;font-size:.76rem}
-      /* Detail sheet */
       .detail-chart-canvas-wrap{height:155px}
       .detail-val{font-size:2.6rem}
-      /* Nav tabs */
       .nav-tab span:not(.ni){font-size:.65rem}
       .nav-tab .ni{font-size:1.35rem}
+      .sys-chips{grid-template-columns:1fr 1fr}
     }
 
-    /* Very small phone < 375px (iPhone SE) */
+    /* Very small phone < 375px */
     @media(max-width:374px){
       header{height:50px}
       .hl h1{font-size:.88rem}
@@ -377,6 +453,7 @@
       .gauge-wrap{width:118px;height:96px}
       .sensor-label{font-size:.7rem}
       .status-pill{display:none}
+      .sys-chips{grid-template-columns:1fr}
     }
   </style>
 </head>
@@ -418,8 +495,9 @@
     </div>
   </div>
   <div class="hr">
+    <button class="icon-btn" id="themeToggle" onclick="toggleTheme()" title="สลับโหมดสว่าง/มืด">🌙</button>
     <div class="bell-wrap">
-      <button class="bell-btn" id="bellBtn" onclick="openNotifPanel()" title="การแจ้งเตือน">🔔</button>
+      <button class="icon-btn bell-btn" id="bellBtn" onclick="openNotifPanel()" title="การแจ้งเตือน">🔔</button>
       <div class="notif-badge" id="notifBadge">0</div>
     </div>
     <button class="logout-btn user-chip" onclick="doLogout()" title="ออกจากระบบ">
@@ -433,6 +511,7 @@
 </header>
 
 <div id="alertBanner">⚠️ <span id="alertText"></span></div>
+<div id="healthBanner" class="sysbanner"></div>
 
 <main>
 
@@ -447,6 +526,22 @@
       <div class="uptime-r">
         <div class="ustat"><span class="ustat-l">Firmware</span><span class="ustat-v" id="firmwareVer">—</span></div>
         <div class="ustat"><span class="ustat-l">อัปเดตล่าสุด</span><span class="ustat-v" id="lastUpdateTime">—</span></div>
+      </div>
+    </div>
+
+    <!-- ── System Status Chips ── -->
+    <div class="sys-chips">
+      <div class="sys-chip" id="chipDevice">
+        <span class="sys-ico">📡</span>
+        <div class="sys-info"><div class="sys-k">อุปกรณ์ ESP32</div><div class="sys-v" id="chipDeviceVal">—</div></div>
+      </div>
+      <button class="sys-chip" id="chipBuzzer" onclick="toggleBuzzer()" title="แตะเพื่อเปิด/ปิดเสียงเตือน">
+        <span class="sys-ico">🔔</span>
+        <div class="sys-info"><div class="sys-k">Buzzer เสียงเตือน</div><div class="sys-v" id="chipBuzzerVal">—</div></div>
+      </button>
+      <div class="sys-chip" id="chipTelegram">
+        <span class="sys-ico">✈️</span>
+        <div class="sys-info"><div class="sys-k">Telegram แจ้งเตือน</div><div class="sys-v" id="chipTelegramVal">—</div></div>
       </div>
     </div>
 
@@ -626,7 +721,7 @@
           </div>
         </div>
         <div class="chart-legend" style="margin-bottom:10px;margin-top:4px">
-          <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>อุณหภูมิอากาศ (°C)</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>อุณหภูมิอากาศ (°C)</div>
           <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>ความชื้นอากาศ (%)</div>
           <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div>อุณหภูมิน้ำ (°C)</div>
         </div>
@@ -741,7 +836,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v1.2.0 · Blynk IoT Level · พัฒนาโดย Tonkla (IT Intern) · บริษัท ปุ๋ยไวกิ้ง จำกัด · มิถุนายน 2569</footer>
+<footer>🌿 SmartFarm v1.3.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · มิถุนายน 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -861,6 +956,35 @@ function togglePw() {
   inp.type = inp.type === 'password' ? 'text' : 'password';
 }
 
+// ── Theme (Dark / Light) ──────────────────────────────
+function currentTheme() { return document.documentElement.getAttribute('data-theme') || 'light'; }
+
+function applyThemeIcon() {
+  const b = document.getElementById('themeToggle');
+  if (b) b.textContent = currentTheme() === 'dark' ? '☀️' : '🌙';
+}
+
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  try { localStorage.setItem('sfTheme', next); } catch(e) {}
+  applyThemeIcon();
+  // วาดกราฟใหม่ให้สี grid/tick เข้ากับธีม
+  if (historyChart && chartRawData) {
+    renderChart(chartRawData.labels, chartRawData.tData, chartRawData.hData, chartRawData.wData, currentRange === '24h');
+  }
+  showToast(next === 'dark' ? '🌙 โหมดกลางคืน' : '☀️ โหมดกลางวัน');
+}
+
+function chartColors() {
+  const dark = currentTheme() === 'dark';
+  return {
+    grid: dark ? 'rgba(120,200,150,.14)' : 'rgba(120,190,150,.35)',
+    tick: dark ? '#9ccdb4' : '#4b7a5e',
+    hum:  dark ? '#7fb3ff' : '#3b82f6',
+  };
+}
+
 // ── Tab Nav ───────────────────────────────────────────
 function showTab(name) {
   document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
@@ -884,13 +1008,35 @@ function buildGauge(value, min, max, color, unit) {
   const dv  = value != null ? (Number.isInteger(value) ? String(value) : value.toFixed(1)) : '—';
   const [lx,ly] = pt(START), [rx,ry] = pt(START + SWEEP);
   return `<svg viewBox="0 0 160 130" xmlns="http://www.w3.org/2000/svg">
-    <path d="${arc(START,START+SWEEP)}" stroke="#e2e8f0" stroke-width="11" fill="none" stroke-linecap="round"/>
+    <path d="${arc(START,START+SWEEP)}" style="stroke:var(--track)" stroke-width="11" fill="none" stroke-linecap="round"/>
     ${value!=null?`<path d="${arc(START,end)}" stroke="${color}" stroke-width="11" fill="none" stroke-linecap="round"/>`:''}
-    <text x="${cx}" y="${cy+10}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="28" font-weight="700" fill="${value!=null?color:'#94a3b8'}">${dv}</text>
-    <text x="${cx}" y="${cy+27}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="13" fill="#94a3b8">${unit}</text>
-    <text x="${lx.toFixed(0)}" y="${(ly+14).toFixed(0)}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="11" fill="#94a3b8">${min}</text>
-    <text x="${rx.toFixed(0)}" y="${(ry+14).toFixed(0)}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="11" fill="#94a3b8">${max}</text>
+    <text x="${cx}" y="${cy+10}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="28" font-weight="700" style="fill:${value!=null?color:'var(--muted)'}">${dv}</text>
+    <text x="${cx}" y="${cy+27}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="13" style="fill:var(--muted)">${unit}</text>
+    <text x="${lx.toFixed(0)}" y="${(ly+14).toFixed(0)}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="11" style="fill:var(--muted)">${min}</text>
+    <text x="${rx.toFixed(0)}" y="${(ry+14).toFixed(0)}" text-anchor="middle" font-family="Prompt,sans-serif" font-size="11" style="fill:var(--muted)">${max}</text>
   </svg>`;
+}
+
+// ── Loading Skeleton ──────────────────────────────────
+const GAUGE_INIT = [
+  ['airTempGauge',   0, 50, '#16a34a', '°C'],
+  ['airHumGauge',    0, 100,'#2563eb', '%'],
+  ['waterTempGauge', 0, 50, '#0f766e', '°C'],
+  ['soilGauge',      0, 100,'#d97706', '%'],
+];
+let sensorsEverLoaded = false;
+
+function showSensorSkeletons() {
+  GAUGE_INIT.forEach(([id]) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<div class="skeleton skel-gauge"></div>';
+  });
+}
+function fillEmptyGauges() {
+  GAUGE_INIT.forEach(([id,mn,mx,col,unit]) => {
+    const el = document.getElementById(id);
+    if (el && el.querySelector('.skeleton')) el.innerHTML = buildGauge(null, mn, mx, col, unit);
+  });
 }
 
 // ── Offline Detection ─────────────────────────────────
@@ -899,7 +1045,7 @@ setInterval(() => {
   if (!lastSensorTs) return;
   if (Date.now() - lastSensorTs > 120000) {
     setOnlineState(false);
-    showAlertBanner('ESP32 ไม่ส่งข้อมูลมานานกว่า 2 นาที — อุปกรณ์อาจออฟไลน์');
+    updateHealth();   // healthBanner แสดงสถานะออฟไลน์ให้แล้ว
     sendNotif('SmartFarm ⚠️', 'ESP32 ไม่ส่งข้อมูลมานานกว่า 2 นาที — ตรวจสอบอุปกรณ์');
   }
 }, 60000);
@@ -910,6 +1056,7 @@ function startListeners() {
   db.ref('/smartfarm/sensors').on('value', snap => {
     const d = snap.val(); if (!d) return;
     lastSensorTs = Date.now();
+    sensorsEverLoaded = true;
     const ts = new Date().toLocaleTimeString('th-TH', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     document.getElementById('lastUpdateTime').textContent = ts;
 
@@ -960,18 +1107,37 @@ function startListeners() {
       document.getElementById('uptimeDisplay').textContent = h>0 ? `${h}ชม. ${m}นาที ${s}วิ` : `${m}นาที ${s}วิ`;
     }
 
-    checkAlerts(t, rh);
-  });
+    // เซ็นเซอร์อากาศขัดข้อง (firmware แจ้ง sensor_ok=false) → ไม่เชื่อค่า 0 ที่ push มา
+    // กัน alert หลอก "ความชื้น 0% วิกฤต" ตอน DHT พัง
+    if (sysStatus.sensor_ok === false) {
+      setBadge('airTempBadge','badge-danger','ขัดข้อง'); setText('airTempStatus','🔧 เซ็นเซอร์อากาศขัดข้อง');
+      setBadge('airHumBadge', 'badge-danger','ขัดข้อง'); setText('airHumStatus','🔧 เซ็นเซอร์อากาศขัดข้อง');
+      checkAlerts(null, null);
+    } else {
+      checkAlerts(t, rh);
+    }
+    updateHealth();
+  }, err => onListenerError('sensors', err));
 
   db.ref('/smartfarm/status').on('value', snap => {
     const d = snap.val(); if (!d) return;
     setOnlineState(d.online === true);
+    sysStatus = {
+      online:      d.online === true,
+      sensor_ok:   d.sensor_ok   !== false,   // ถ้าไม่มี field = ถือว่าปกติ (firmware เก่า)
+      water_ok:    d.water_ok    !== false,
+      failsafe:    d.failsafe    === true,
+      pump_locked: d.pump_locked === true,
+      time_ok:     d.time_ok     !== false,
+      rssi:        d.wifi_rssi,
+    };
     updateRelayUI('ch1', d.ch1_pump);
     updateRelayUI('ch2', d.ch2_fan_out);
     updateRelayUI('ch3', d.ch3_fan_in);
     updateRelayUI('ch4', d.ch4_spare);
     if (d.firmware) document.getElementById('firmwareVer').textContent = 'v' + d.firmware;
-  });
+    updateHealth();
+  }, err => onListenerError('status', err));
 
   db.ref('/smartfarm/control').on('value', snap => {
     const d = snap.val(); if (!d) return;
@@ -1002,6 +1168,9 @@ function startListeners() {
         document.getElementById('preset-custom')?.classList.add('active-preset');
       }
     }
+    // Buzzer enable state (ถ้าไม่มีค่า = เปิดอยู่ เพราะ firmware เดิม beep เสมอ)
+    updateBuzzerChip(d.buzzer_enabled === false ? false : true);
+
     const chMap = {ch1_pump:'ch1', ch2_fan_out:'ch2', ch3_fan_in:'ch3', ch4_spare:'ch4'};
     for (const [key, id] of Object.entries(chMap)) {
       if (!d[key]) continue;
@@ -1015,6 +1184,11 @@ function startListeners() {
     }
   });
 
+  // Telegram alert indicator (Phase 2 — มีข้อมูลเมื่อ firmware/cloud function ส่ง)
+  db.ref('/smartfarm/alerts/telegram').on('value', snap => {
+    updateTelegramChip(snap.val());
+  });
+
   db.ref('/smartfarm/alert_history').orderByChild('timestamp').limitToLast(30).on('value', snap => {
     const rows = []; snap.forEach(c => rows.unshift(c.val())); renderAlertHistory(rows);
   });
@@ -1023,7 +1197,113 @@ function startListeners() {
     const rows = [];
     snap.forEach(c => rows.unshift(c.val()));
     renderLog(rows);
+  }, err => onListenerError('action_log', err));
+
+  // ตรวจการเชื่อมต่อ Firebase ของ "เครื่องที่เปิด dashboard" (เน็ตหลุด)
+  db.ref('.info/connected').on('value', s => {
+    connectedToFb = (s.val() === true);
+    updateHealth();
   });
+
+  // Data retention — กัน alert_history / action_log โตไม่จำกัด (storage บวม)
+  pruneCollection('/smartfarm/alert_history', 50);
+  pruneCollection('/smartfarm/action_log', 50);
+}
+
+// ── Worst-case Health Monitor ─────────────────────────
+let sysStatus = {};
+let connectedToFb = true;
+
+function onListenerError(name, err) {
+  console.error('Firebase listener error:', name, err);
+  showToast('⚠️ อ่านข้อมูล ' + name + ' ไม่ได้: ' + (err?.code || err?.message || 'error'));
+}
+
+function updateHealth() {
+  const ageMs  = lastSensorTs ? (Date.now() - lastSensorTs) : Infinity;
+  const ageSec = Math.floor(ageMs / 1000);
+  const ageMin = Math.floor(ageMs / 60000);
+  let sev = null, msg = '';
+
+  if (!connectedToFb) {
+    sev = 'warn'; msg = '🌐 เครื่องนี้ไม่ได้เชื่อมต่ออินเทอร์เน็ต — ข้อมูลอาจไม่อัปเดต';
+  } else if (sysStatus.failsafe) {
+    sev = 'crit'; msg = '🚨 โหมดฉุกเฉิน: Sensor อากาศพัง — ระบบเปิดพัดลม + ปิดปั๊มอัตโนมัติ · ตรวจสอบ DHT22';
+  } else if (lastSensorTs && ageMs > 120000) {
+    sev = 'crit'; msg = `📡 ESP32 ออฟไลน์ — ไม่มีข้อมูลใหม่ ${ageMin} นาที · ตรวจสอบไฟ/WiFi`;
+  } else if (sysStatus.sensor_ok === false) {
+    sev = 'warn'; msg = '⚠️ Sensor อากาศอ่านค่าไม่ได้ชั่วคราว — กำลังลองใหม่';
+  } else if (lastSensorTs && ageMs > 90000) {
+    sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
+  } else if (sysStatus.pump_locked) {
+    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown) หลังเดินครบ 5 นาที — จะกลับมาทำงานเอง';
+  } else if (sysStatus.water_ok === false) {
+    sev = 'info'; msg = '🌊 Sensor อุณหภูมิน้ำ (DS18B20) อ่านไม่ได้ — ตรวจสอบสาย';
+  } else if (sysStatus.time_ok === false) {
+    sev = 'info'; msg = '🕐 นาฬิกา ESP32 ยังไม่ sync — ตารางเวลา (schedule) อาจคลาดเคลื่อน';
+  }
+
+  const b = document.getElementById('healthBanner');
+  if (!b) return;
+  if (sev) { b.className = 'sysbanner show sev-' + sev; b.textContent = msg; }
+  else     { b.className = 'sysbanner'; b.textContent = ''; }
+}
+setInterval(updateHealth, 3000);
+
+// ลบ entry เก่าเกิน keep รายการล่าสุด (กัน DB บวม)
+function pruneCollection(path, keep) {
+  db.ref(path).orderByChild('timestamp').once('value').then(snap => {
+    const keys = []; snap.forEach(c => { keys.push(c.key); });
+    if (keys.length > keep) {
+      const updates = {};
+      keys.slice(0, keys.length - keep).forEach(k => { updates[k] = null; });
+      db.ref(path).update(updates).catch(e => console.warn('prune', path, e));
+    }
+  }).catch(e => console.warn('prune read', path, e));
+}
+
+// ── System Status Chips ───────────────────────────────
+let buzzerEnabled = true;
+
+function updateBuzzerChip(enabled) {
+  buzzerEnabled = enabled;
+  const chip = document.getElementById('chipBuzzer');
+  const val  = document.getElementById('chipBuzzerVal');
+  if (!val || !chip) return;
+  if (enabled) { val.textContent = '🔔 เปิดเสียงเตือน'; chip.classList.add('chip-on'); chip.classList.remove('chip-off'); }
+  else         { val.textContent = '🔇 ปิดเสียง';      chip.classList.add('chip-off'); chip.classList.remove('chip-on'); }
+}
+
+function toggleBuzzer() {
+  const next = !buzzerEnabled;
+  db.ref('/smartfarm/control/buzzer_enabled').set(next).then(() => {
+    logAction(`Buzzer → ${next ? 'เปิดเสียงเตือน' : 'ปิดเสียง'}`);
+    showToast(next ? '🔔 เปิดเสียงเตือนแล้ว' : '🔇 ปิดเสียงเตือนแล้ว');
+  });
+}
+
+function updateTelegramChip(obj) {
+  const chip = document.getElementById('chipTelegram');
+  const val  = document.getElementById('chipTelegramVal');
+  if (!val || !chip) return;
+  if (obj && obj.last_sent) {
+    val.textContent = 'ส่ง ' + relTime(obj.last_sent);
+    chip.classList.add('chip-on'); chip.classList.remove('chip-off');
+  } else if (obj && obj.enabled) {
+    val.textContent = 'พร้อมใช้งาน';
+    chip.classList.add('chip-on'); chip.classList.remove('chip-off');
+  } else {
+    val.textContent = 'ยังไม่ตั้งค่า';
+    chip.classList.add('chip-off'); chip.classList.remove('chip-on');
+  }
+}
+
+function relTime(ms) {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return 'เมื่อสักครู่';
+  const m = Math.floor(s / 60); if (m < 60) return m + ' นาทีที่แล้ว';
+  const h = Math.floor(m / 60); if (h < 24) return h + ' ชม.ที่แล้ว';
+  const d = Math.floor(h / 24); return d + ' วันที่แล้ว';
 }
 
 // ── Relay Control ─────────────────────────────────────
@@ -1199,10 +1479,11 @@ function renderChart(labels, tData, hData, wData, forceShowDots=false) {
   const pr = forceShowDots ? 3 : (isManyPoints ? 0 : 3);
   // 24h mode: show all 24 hour labels; 7d/30d: limit to fewer for readability
   const maxTicks = labels.length <= 24 ? labels.length : 10;
+  const cc = chartColors();
   historyChart = new Chart(document.getElementById('historyChart').getContext('2d'), {
     type: 'line',
     data: { labels, datasets: [
-      {label:'อุณหภูมิอากาศ (°C)', data:tData, borderColor:'#22c55e', backgroundColor:'rgba(34,197,94,.08)',  borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
+      {label:'อุณหภูมิอากาศ (°C)', data:tData, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.08)',  borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
       {label:'ความชื้นอากาศ (%)',   data:hData, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,.06)', borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yHum'},
       {label:'อุณหภูมิน้ำ (°C)',    data:wData, borderColor:'#14b8a6', backgroundColor:'rgba(20,184,166,.06)', borderWidth:2, pointRadius:pr, pointHoverRadius:5, tension:.35, fill:false, spanGaps:true, yAxisID:'yTemp'},
     ]},
@@ -1215,9 +1496,9 @@ function renderChart(labels, tData, hData, wData, forceShowDots=false) {
           callbacks:{label:c=>c.raw==null?`${c.dataset.label}: —`:`${c.dataset.label}: ${c.raw}`}},
       },
       scales:{
-        x:{grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'},maxRotation:0,maxTicksLimit:maxTicks}},
-        yTemp:{type:'linear',position:'left', title:{display:true,text:'°C',   color:'#4b7a5e',font:{size:11,family:'Prompt'}},grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'}},suggestedMin:20,suggestedMax:45},
-        yHum: {type:'linear',position:'right',title:{display:true,text:'% RH',color:'#3b82f6',font:{size:11,family:'Prompt'}},grid:{drawOnChartArea:false},        ticks:{color:'#3b82f6',font:{size:11,family:'Prompt'}},min:0,max:100},
+        x:{grid:{color:cc.grid},ticks:{color:cc.tick,font:{size:11,family:'Prompt'},maxRotation:0,maxTicksLimit:maxTicks}},
+        yTemp:{type:'linear',position:'left', title:{display:true,text:'°C',   color:cc.tick,font:{size:11,family:'Prompt'}},grid:{color:cc.grid},ticks:{color:cc.tick,font:{size:11,family:'Prompt'}},suggestedMin:20,suggestedMax:45},
+        yHum: {type:'linear',position:'right',title:{display:true,text:'% RH',color:cc.hum,font:{size:11,family:'Prompt'}},grid:{drawOnChartArea:false},        ticks:{color:cc.hum,font:{size:11,family:'Prompt'}},min:0,max:100},
       },
     },
   });
@@ -1287,20 +1568,30 @@ function renderNotifPanel() {
 }
 
 function openNotifPanel() {
+  // เปิด panel ก่อนเสมอ (ต้องอยู่ก่อน Notification check)
+  document.getElementById('notifOverlay').classList.add('open');
+  document.getElementById('notifPanel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+
   // mark all as seen
   lastSeenAlertTs = Date.now();
   localStorage.setItem('sfLastSeenAlert', String(lastSeenAlertTs));
   document.getElementById('notifBadge').classList.remove('show');
 
-  // อัปเดต enable button
+  // อัปเดต enable button (safe — บาง browser ไม่มี Notification API)
   const btn = document.getElementById('notifEnableBtn');
-  if (Notification.permission === 'granted') { btn.textContent = '✅ เปิดการแจ้งเตือน Push แล้ว'; btn.disabled = true; btn.style.opacity='.6'; }
-  else { btn.textContent = '🔔 เปิดการแจ้งเตือน Push'; btn.disabled = false; btn.style.opacity=''; }
+  if (!notifSupported()) {
+    btn.textContent = '🍎 iOS: Add to Home Screen เพื่อรับ Push';
+    btn.disabled = true; btn.style.opacity = '.6';
+  } else if (Notification.permission === 'granted') {
+    btn.textContent = '✅ เปิดการแจ้งเตือน Push แล้ว';
+    btn.disabled = true; btn.style.opacity = '.6';
+  } else {
+    btn.textContent = '🔔 เปิดการแจ้งเตือน Push';
+    btn.disabled = false; btn.style.opacity = '';
+  }
 
   renderNotifPanel();
-  document.getElementById('notifOverlay').classList.add('open');
-  document.getElementById('notifPanel').classList.add('open');
-  document.body.style.overflow = 'hidden';
 }
 
 function closeNotifPanel() {
@@ -1318,6 +1609,10 @@ function clearAlertHistory() {
 function setOnlineState(online) {
   document.getElementById('statusDot').className   = 'dot ' + (online ? 'online' : 'offline');
   document.getElementById('statusText').textContent = online ? 'Online' : 'Offline';
+  const dv = document.getElementById('chipDeviceVal');
+  const dc = document.getElementById('chipDevice');
+  if (dv) dv.textContent = online ? '🟢 ออนไลน์' : '🔴 ออฟไลน์';
+  if (dc) { dc.classList.toggle('chip-on', online); dc.classList.toggle('chip-off', !online); }
 }
 
 function showAlertBanner(msg) {
@@ -1361,15 +1656,17 @@ function showToast(msg) {
 }
 
 // ── Notifications ─────────────────────────────────────
+function notifSupported() { return typeof Notification !== 'undefined'; }
+
 async function requestNotifPermission() {
-  if (!('Notification' in window)) { showToast('⚠️ เบราว์เซอร์ไม่รองรับ Notification'); return; }
+  if (!notifSupported()) { showToast('⚠️ iOS: เพิ่มลง Home Screen เพื่อรับ Push'); return; }
   const p = await Notification.requestPermission();
   if (p === 'granted') { document.getElementById('bellBtn').classList.add('granted'); showToast('🔔 เปิดการแจ้งเตือนแล้ว'); }
   else showToast('🔕 ไม่ได้รับสิทธิ์การแจ้งเตือน');
 }
 
 function sendNotif(title, body) {
-  if (Notification.permission !== 'granted') return;
+  if (!notifSupported() || Notification.permission !== 'granted') return;
   const key = 'sfn_' + title, last = +(sessionStorage.getItem(key)||0);
   if (Date.now() - last < 300000) return;
   sessionStorage.setItem(key, String(Date.now()));
@@ -1470,6 +1767,7 @@ async function loadDetailChart(key, cfg) {
     document.getElementById('detailMax').textContent = cnt ? maxV.toFixed(1)+cfg.unit : '—';
 
     loadEl.style.display = 'none'; canvas.style.display = 'block';
+    const cc = chartColors();
 
     detailChart = new Chart(canvas.getContext('2d'), {
       type:'line',
@@ -1482,13 +1780,13 @@ async function loadDetailChart(key, cfg) {
         responsive:true, maintainAspectRatio:false,
         interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{display:true,position:'bottom',labels:{boxWidth:10,font:{size:11,family:'Prompt'},color:'#4b7a5e',padding:12}},
+          legend:{display:true,position:'bottom',labels:{boxWidth:10,font:{size:11,family:'Prompt'},color:cc.tick,padding:12}},
           tooltip:{backgroundColor:'#14532d',titleColor:'#86efac',bodyColor:'#dcfce7',padding:9,cornerRadius:8,
             callbacks:{label:c=>c.raw==null?`${c.dataset.label}: —`:`${c.dataset.label}: ${c.raw}${cfg.unit}`}},
         },
         scales:{
-          x:{grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:10,family:'Prompt'},maxTicksLimit:8,maxRotation:0}},
-          y:{grid:{color:'rgba(187,247,208,.4)'},ticks:{color:'#4b7a5e',font:{size:11,family:'Prompt'}},grace:'5%'},
+          x:{grid:{color:cc.grid},ticks:{color:cc.tick,font:{size:10,family:'Prompt'},maxTicksLimit:8,maxRotation:0}},
+          y:{grid:{color:cc.grid},ticks:{color:cc.tick,font:{size:11,family:'Prompt'}},grace:'5%'},
         },
       },
     });
@@ -1500,11 +1798,11 @@ async function loadDetailChart(key, cfg) {
 
 // ── Init ──────────────────────────────────────────────
 (function init() {
-  ['airTempGauge','airHumGauge','waterTempGauge','soilGauge'].forEach((id,i) => {
-    const [mn,mx,col,unit] = [[0,50,'#16a34a','°C'],[0,100,'#2563eb','%'],[0,50,'#0f766e','°C'],[0,100,'#d97706','%']][i];
-    document.getElementById(id).innerHTML = buildGauge(null, mn, mx, col, unit);
-  });
-  if (Notification.permission === 'granted') document.getElementById('bellBtn').classList.add('granted');
+  applyThemeIcon();
+  showSensorSkeletons();
+  // ถ้าไม่มีข้อมูลภายใน 8 วิ → เลิก shimmer แสดง gauge ว่าง
+  setTimeout(() => { if (!sensorsEverLoaded) fillEmptyGauges(); }, 8000);
+  if (notifSupported() && Notification.permission === 'granted') document.getElementById('bellBtn').classList.add('granted');
 })();
 
 // ── Service Worker ────────────────────────────────────

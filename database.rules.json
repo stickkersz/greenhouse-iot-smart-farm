@@ -3,11 +3,31 @@
     "smartfarm": {
       "sensors": {
         ".read":  "auth != null && auth.token.email != null",
-        ".write": "auth != null"
+        ".write": "auth != null",
+        "air_temp":          { ".validate": "newData.isNumber()" },
+        "air_humidity":      { ".validate": "newData.isNumber()" },
+        "water_temp":        { ".validate": "newData.isNumber()" },
+        "soil_moisture_raw": { ".validate": "newData.isNumber()" },
+        "soil_moisture_pct": { ".validate": "newData.isNumber()" },
+        "uptime_sec":        { ".validate": "newData.isNumber()" },
+        "$other":            { ".validate": false }
       },
       "status": {
         ".read":  "auth != null && auth.token.email != null",
-        ".write": "auth != null"
+        ".write": "auth != null",
+        "online":      { ".validate": "newData.isBoolean()" },
+        "ch1_pump":    { ".validate": "newData.isBoolean()" },
+        "ch2_fan_out": { ".validate": "newData.isBoolean()" },
+        "ch3_fan_in":  { ".validate": "newData.isBoolean()" },
+        "ch4_spare":   { ".validate": "newData.isBoolean()" },
+        "sensor_ok":   { ".validate": "newData.isBoolean()" },
+        "water_ok":    { ".validate": "newData.isBoolean()" },
+        "failsafe":    { ".validate": "newData.isBoolean()" },
+        "pump_locked": { ".validate": "newData.isBoolean()" },
+        "time_ok":     { ".validate": "newData.isBoolean()" },
+        "firmware":    { ".validate": "newData.isString() && newData.val().length < 16" },
+        "wifi_rssi":   { ".validate": "newData.isNumber()" },
+        "$other":      { ".validate": false }
       },
       "control": {
         ".read":  "auth != null",
@@ -19,13 +39,16 @@
       },
       "alert_history": {
         ".read":  "auth != null && auth.token.email != null",
-        ".write": "auth != null && auth.token.email != null"
+        ".write": "auth != null && auth.token.email != null",
+        "$entry": {
+          ".validate": "!newData.exists() || newData.hasChildren(['msg', 'timestamp'])"
+        }
       },
       "action_log": {
         ".read":  "auth != null && auth.token.email != null",
         ".write": "auth != null && auth.token.email != null",
         "$entry": {
-          ".validate": "newData.hasChildren(['action', 'user', 'timestamp'])"
+          ".validate": "!newData.exists() || newData.hasChildren(['action', 'user', 'timestamp'])"
         }
       }
     },

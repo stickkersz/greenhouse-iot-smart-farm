@@ -1,5 +1,5 @@
-// SmartFarm Service Worker v1.2
-const CACHE = 'smartfarm-v1.2';
+// SmartFarm Service Worker v1.3
+const CACHE = 'smartfarm-v1.3';
 const PRECACHE = ['/index.html', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', e => {
@@ -17,10 +17,28 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
-  );
+  const req = e.request;
+  if (req.method !== 'GET') return;
+
+  // HTML/navigation → network-first: ได้ dashboard เวอร์ชันใหม่เสมอเมื่อออนไลน์,
+  // fallback ไป cache เฉพาะตอนออฟไลน์
+  const isHTML = req.mode === 'navigate' ||
+    (req.headers.get('accept') || '').includes('text/html');
+  if (isHTML) {
+    e.respondWith(
+      fetch(req)
+        .then(res => {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put('/index.html', copy));
+          return res;
+        })
+        .catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // ไฟล์อื่น (icon/manifest) → cache-first
+  e.respondWith(caches.match(req).then(cached => cached || fetch(req)));
 });
 
 // Push notification (for future FCM integration)
