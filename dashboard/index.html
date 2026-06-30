@@ -542,10 +542,10 @@
         <span class="sys-ico">🔔</span>
         <div class="sys-info"><div class="sys-k">Buzzer เสียงเตือน</div><div class="sys-v" id="chipBuzzerVal">—</div></div>
       </button>
-      <div class="sys-chip" id="chipTelegram">
+      <button class="sys-chip" id="chipTelegram" onclick="toggleTelegram()" title="แตะเพื่อเปิด/ปิดแจ้งเตือน Telegram">
         <span class="sys-ico">✈️</span>
         <div class="sys-info"><div class="sys-k">Telegram แจ้งเตือน</div><div class="sys-v" id="chipTelegramVal">—</div></div>
-      </div>
+      </button>
     </div>
 
     <div>
@@ -578,14 +578,6 @@
           <div class="gauge-wrap" id="waterTempGauge"></div>
           <div class="sensor-status" id="waterTempStatus">⏳ รอรับข้อมูล...</div>
         </div>
-        <div class="sensor-card amber" onclick="openSensorDetail('soil')">
-          <div class="sensor-top">
-            <span class="sensor-label">🌱 ความชื้นดิน</span>
-            <span class="sensor-badge badge-offline" id="soilBadge">รอข้อมูล</span>
-          </div>
-          <div class="gauge-wrap" id="soilGauge"></div>
-          <div class="sensor-status" id="soilStatus">⏳ รอรับข้อมูล...</div>
-        </div>
       </div>
     </div>
 
@@ -600,52 +592,27 @@
       </div>
       <div class="relay-grid">
 
-        <div class="relay-card" id="relayCard_ch1">
+        <div class="relay-card" id="relayCard_ch4">
           <div class="relay-top">
-            <div class="relay-icon" id="relayIcon_ch1">💧</div>
-            <div class="relay-info"><div class="relay-name">ปั๊มน้ำ</div><div class="relay-ch">CH1 · GPIO26</div></div>
-            <label class="toggle"><input type="checkbox" id="toggle_ch1" disabled onchange="setRelay('ch1_pump',this.checked)"><span class="slider"></span></label>
-            <div class="relay-badge s-off" id="relayBadge_ch1">OFF</div>
+            <div class="relay-icon" id="relayIcon_ch4">💧</div>
+            <div class="relay-info"><div class="relay-name">ปั๊มน้ำ</div><div class="relay-ch">CH4 · GPIO25 · ความชื้น</div></div>
+            <label class="toggle"><input type="checkbox" id="toggle_ch4" disabled onchange="setRelay('ch4_spare',this.checked)"><span class="slider"></span></label>
+            <div class="relay-badge s-off" id="relayBadge_ch4">OFF</div>
           </div>
           <div class="mode-row">
-            <button class="mode-btn active" onclick="setMode('ch1_pump','auto',this)">🤖 AUTO</button>
-            <button class="mode-btn" onclick="setMode('ch1_pump','manual',this)">✋ MANUAL</button>
+            <button class="mode-btn active" onclick="setMode('ch4_spare','auto',this)">🤖 AUTO</button>
+            <button class="mode-btn" onclick="setMode('ch4_spare','manual',this)">✋ MANUAL</button>
           </div>
           <details class="schedule-wrap">
             <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
             <div class="schedule-body">
-              <label class="sched-en"><input type="checkbox" id="schedEn_ch1"><span>เปิดใช้งานตัวตั้งเวลา</span></label>
+              <label class="sched-en"><input type="checkbox" id="schedEn_ch4"><span>เปิดใช้งานตัวตั้งเวลา</span></label>
               <div class="sched-times">
-                <div class="sched-time"><span>เวลาเปิด</span><input type="time" id="schedOn_ch1" value="07:00"></div>
-                <div class="sched-time"><span>เวลาปิด</span><input type="time" id="schedOff_ch1" value="18:00"></div>
+                <div class="sched-time"><span>เวลาเปิด</span><input type="time" id="schedOn_ch4" value="07:00"></div>
+                <div class="sched-time"><span>เวลาปิด</span><input type="time" id="schedOff_ch4" value="18:00"></div>
               </div>
-              <button class="sched-save" onclick="saveSchedule('ch1_pump','ch1')">💾 บันทึกตาราง</button>
-              <div class="sched-status" id="schedStatus_ch1"></div>
-            </div>
-          </details>
-        </div>
-
-        <div class="relay-card" id="relayCard_ch2">
-          <div class="relay-top">
-            <div class="relay-icon" id="relayIcon_ch2">🌬️</div>
-            <div class="relay-info"><div class="relay-name">พัดลม OUT</div><div class="relay-ch">CH2 · GPIO27 · ระบายออก</div></div>
-            <label class="toggle"><input type="checkbox" id="toggle_ch2" disabled onchange="setRelay('ch2_fan_out',this.checked)"><span class="slider"></span></label>
-            <div class="relay-badge s-off" id="relayBadge_ch2">OFF</div>
-          </div>
-          <div class="mode-row">
-            <button class="mode-btn active" onclick="setMode('ch2_fan_out','auto',this)">🤖 AUTO</button>
-            <button class="mode-btn" onclick="setMode('ch2_fan_out','manual',this)">✋ MANUAL</button>
-          </div>
-          <details class="schedule-wrap">
-            <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
-            <div class="schedule-body">
-              <label class="sched-en"><input type="checkbox" id="schedEn_ch2"><span>เปิดใช้งานตัวตั้งเวลา</span></label>
-              <div class="sched-times">
-                <div class="sched-time"><span>เวลาเปิด</span><input type="time" id="schedOn_ch2" value="07:00"></div>
-                <div class="sched-time"><span>เวลาปิด</span><input type="time" id="schedOff_ch2" value="18:00"></div>
-              </div>
-              <button class="sched-save" onclick="saveSchedule('ch2_fan_out','ch2')">💾 บันทึกตาราง</button>
-              <div class="sched-status" id="schedStatus_ch2"></div>
+              <button class="sched-save" onclick="saveSchedule('ch4_spare','ch4')">💾 บันทึกตาราง</button>
+              <div class="sched-status" id="schedStatus_ch4"></div>
             </div>
           </details>
         </div>
@@ -653,7 +620,7 @@
         <div class="relay-card" id="relayCard_ch3">
           <div class="relay-top">
             <div class="relay-icon" id="relayIcon_ch3">💨</div>
-            <div class="relay-info"><div class="relay-name">พัดลม IN</div><div class="relay-ch">CH3 · GPIO14 · ดึงเข้า</div></div>
+            <div class="relay-info"><div class="relay-name">พัดลม</div><div class="relay-ch">CH3 · GPIO14 · ดูดเข้า 220V</div></div>
             <label class="toggle"><input type="checkbox" id="toggle_ch3" disabled onchange="setRelay('ch3_fan_in',this.checked)"><span class="slider"></span></label>
             <div class="relay-badge s-off" id="relayBadge_ch3">OFF</div>
           </div>
@@ -675,27 +642,27 @@
           </details>
         </div>
 
-        <div class="relay-card" id="relayCard_ch4">
+        <div class="relay-card" id="relayCard_ch1">
           <div class="relay-top">
-            <div class="relay-icon" id="relayIcon_ch4">⚡</div>
-            <div class="relay-info"><div class="relay-name">สำรอง</div><div class="relay-ch">CH4 · GPIO25</div></div>
-            <label class="toggle"><input type="checkbox" id="toggle_ch4" onchange="setRelay('ch4_spare',this.checked)"><span class="slider"></span></label>
-            <div class="relay-badge s-off" id="relayBadge_ch4">OFF</div>
+            <div class="relay-icon" id="relayIcon_ch1">⚡</div>
+            <div class="relay-info"><div class="relay-name">สำรอง</div><div class="relay-ch">CH1 · GPIO26</div></div>
+            <label class="toggle"><input type="checkbox" id="toggle_ch1" onchange="setRelay('ch1_pump',this.checked)"><span class="slider"></span></label>
+            <div class="relay-badge s-off" id="relayBadge_ch1">OFF</div>
           </div>
           <div class="mode-row">
-            <button class="mode-btn" onclick="setMode('ch4_spare','auto',this)">🤖 AUTO</button>
-            <button class="mode-btn active" onclick="setMode('ch4_spare','manual',this)">✋ MANUAL</button>
+            <button class="mode-btn" onclick="setMode('ch1_pump','auto',this)">🤖 AUTO</button>
+            <button class="mode-btn active" onclick="setMode('ch1_pump','manual',this)">✋ MANUAL</button>
           </div>
           <details class="schedule-wrap">
             <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
             <div class="schedule-body">
-              <label class="sched-en"><input type="checkbox" id="schedEn_ch4"><span>เปิดใช้งานตัวตั้งเวลา</span></label>
+              <label class="sched-en"><input type="checkbox" id="schedEn_ch1"><span>เปิดใช้งานตัวตั้งเวลา</span></label>
               <div class="sched-times">
-                <div class="sched-time"><span>เวลาเปิด</span><input type="time" id="schedOn_ch4" value="07:00"></div>
-                <div class="sched-time"><span>เวลาปิด</span><input type="time" id="schedOff_ch4" value="18:00"></div>
+                <div class="sched-time"><span>เวลาเปิด</span><input type="time" id="schedOn_ch1" value="07:00"></div>
+                <div class="sched-time"><span>เวลาปิด</span><input type="time" id="schedOff_ch1" value="18:00"></div>
               </div>
-              <button class="sched-save" onclick="saveSchedule('ch4_spare','ch4')">💾 บันทึกตาราง</button>
-              <div class="sched-status" id="schedStatus_ch4"></div>
+              <button class="sched-save" onclick="saveSchedule('ch1_pump','ch1')">💾 บันทึกตาราง</button>
+              <div class="sched-status" id="schedStatus_ch1"></div>
             </div>
           </details>
         </div>
@@ -773,26 +740,26 @@
         <span class="setting-section-label">🔌 Channel ควบคุมอะไร</span>
         <div class="ch-assign-grid">
           <div class="ch-assign-item">
-            <span class="ch-num">CH1</span>
+            <span class="ch-num">CH4</span>
             <div><div class="ch-desc">💧 ปั๊มน้ำ</div><div class="ch-ctrl">เปิดเมื่อความชื้นต่ำ</div></div>
           </div>
           <div class="ch-assign-item">
-            <span class="ch-num">CH2</span>
-            <div><div class="ch-desc">🌬️ พัดลม OUT</div><div class="ch-ctrl">เปิดเมื่ออุณหภูมิสูง</div></div>
-          </div>
-          <div class="ch-assign-item">
             <span class="ch-num">CH3</span>
-            <div><div class="ch-desc">💨 พัดลม IN</div><div class="ch-ctrl">เปิดเมื่ออุณหภูมิสูง</div></div>
+            <div><div class="ch-desc">💨 พัดลม 220V (ดูดเข้า)</div><div class="ch-ctrl">เปิดเมื่ออุณหภูมิสูง</div></div>
           </div>
           <div class="ch-assign-item">
-            <span class="ch-num spare">CH4</span>
+            <span class="ch-num spare">CH1</span>
             <div><div class="ch-desc">⚡ สำรอง</div><div class="ch-ctrl">Manual / Schedule only</div></div>
+          </div>
+          <div class="ch-assign-item">
+            <span class="ch-num spare">CH2</span>
+            <div><div class="ch-desc">— ไม่ได้ใช้</div><div class="ch-ctrl">GPIO27 · ว่าง</div></div>
           </div>
         </div>
 
         <!-- Temperature Control -->
         <div class="setting-group">
-          <div class="setting-group-title">🌡️ ควบคุมอุณหภูมิ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH2 + CH3 พัดลม)</span></div>
+          <div class="setting-group-title">🌡️ ควบคุมอุณหภูมิ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH3 พัดลม)</span></div>
           <div class="setting-row">
             <div>
               <label>🌡️ เปิดพัดลมเมื่อ ≥</label>
@@ -811,7 +778,7 @@
 
         <!-- Humidity Control -->
         <div class="setting-group">
-          <div class="setting-group-title">💧 ควบคุมความชื้นอากาศ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH1 ปั๊มน้ำ)</span></div>
+          <div class="setting-group-title">💧 ควบคุมความชื้นอากาศ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH4 ปั๊มน้ำ)</span></div>
           <div class="setting-row">
             <div>
               <label>💧 เปิดปั๊มน้ำเมื่อ ≤</label>
@@ -839,7 +806,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v1.3.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · มิถุนายน 2569</footer>
+<footer>🌿 SmartFarm v1.4.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · มิถุนายน 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1025,7 +992,6 @@ const GAUGE_INIT = [
   ['airTempGauge',   0, 50, '#16a34a', '°C'],
   ['airHumGauge',    0, 100,'#2563eb', '%'],
   ['waterTempGauge', 0, 50, '#0f766e', '°C'],
-  ['soilGauge',      0, 100,'#d97706', '%'],
 ];
 let sensorsEverLoaded = false;
 
@@ -1067,7 +1033,6 @@ function startListeners() {
     if (d.air_temp       != null) { sensorLive.airTemp_prev    = sensorLive.airTemp;    sensorLive.airTemp    = d.air_temp; }
     if (d.air_humidity   != null) { sensorLive.airHum_prev     = sensorLive.airHum;     sensorLive.airHum     = d.air_humidity; }
     if (d.water_temp     != null) { sensorLive.waterTemp_prev  = sensorLive.waterTemp;  sensorLive.waterTemp  = d.water_temp; }
-    if (d.soil_moisture_pct != null) { sensorLive.soil_prev    = sensorLive.soil;       sensorLive.soil       = d.soil_moisture_pct; }
 
     const t = d.air_temp;
     if (t != null) {
@@ -1088,20 +1053,15 @@ function startListeners() {
     }
 
     const wt = d.water_temp;
-    if (wt != null) {
+    if (sysStatus.water_ok === false) {
+      // DS18B20 อ่านไม่ได้ — ไม่โชว์ค่าเก่าหลอกตา
+      setBadge('waterTempBadge','badge-offline','ไม่พร้อม');
+      setText('waterTempStatus','🌊 เซ็นเซอร์น้ำไม่พร้อม — ตรวจสอบสาย/Pull-up');
+    } else if (wt != null) {
       document.getElementById('waterTempGauge').innerHTML = buildGauge(wt, 0, 50, '#0f766e', '°C');
       if      (wt > 35) { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus','🔴 น้ำร้อนเกินไป'); }
       else if (wt > 28) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น'); }
       else              { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
-    }
-
-    const soil = d.soil_moisture_pct;
-    if (soil != null) {
-      document.getElementById('soilGauge').innerHTML = buildGauge(soil, 0, 100, '#d97706', '%');
-      if      (soil < 30) { setBadge('soilBadge','badge-danger','แห้ง'); setText('soilStatus','🔴 ดินแห้งมาก'); }
-      else if (soil < 50) { setBadge('soilBadge','badge-warn','ต่ำ');    setText('soilStatus','🟡 ความชื้นดินต่ำ'); }
-      else if (soil > 80) { setBadge('soilBadge','badge-warn','ชื้น');   setText('soilStatus','💧 ดินชื้นมาก'); }
-      else                { setBadge('soilBadge','badge-ok','ปกติ');     setText('soilStatus','🟢 ความชื้นดินเหมาะสม'); }
     }
 
     if (d.uptime_sec != null) {
@@ -1134,10 +1094,10 @@ function startListeners() {
       time_ok:     d.time_ok     !== false,
       rssi:        d.wifi_rssi,
     };
-    updateRelayUI('ch1', d.ch1_pump);
-    updateRelayUI('ch2', d.ch2_fan_out);
-    updateRelayUI('ch3', d.ch3_fan_in);
-    updateRelayUI('ch4', d.ch4_spare);
+    updateRelayUI('ch4', d.ch4_spare);   // ปั๊มน้ำ
+    updateRelayUI('ch3', d.ch3_fan_in);  // พัดลม
+    updateRelayUI('ch1', d.ch1_pump);    // สำรอง
+    // CH2 ไม่ได้ใช้ — ไม่แสดงใน dashboard
     if (d.firmware) document.getElementById('firmwareVer').textContent = 'v' + d.firmware;
     updateHealth();
   }, err => onListenerError('status', err));
@@ -1173,8 +1133,11 @@ function startListeners() {
     }
     // Buzzer enable state (ถ้าไม่มีค่า = เปิดอยู่ เพราะ firmware เดิม beep เสมอ)
     updateBuzzerChip(d.buzzer_enabled === false ? false : true);
+    // Telegram enable state (ถ้าไม่มีค่า = ปิด)
+    telegramEnabled = d.telegram_enabled === true;
+    renderTelegramChip();
 
-    const chMap = {ch1_pump:'ch1', ch2_fan_out:'ch2', ch3_fan_in:'ch3', ch4_spare:'ch4'};
+    const chMap = {ch4_spare:'ch4', ch3_fan_in:'ch3', ch1_pump:'ch1'};   // ปั๊มน้ำ (CH4) + พัดลม (CH3) + สำรอง (CH1)
     for (const [key, id] of Object.entries(chMap)) {
       if (!d[key]) continue;
       const mode = d[key].mode || 'auto';
@@ -1187,9 +1150,11 @@ function startListeners() {
     }
   });
 
-  // Telegram alert indicator (Phase 2 — มีข้อมูลเมื่อ firmware/cloud function ส่ง)
+  // Telegram — เวลาส่งล่าสุด (ESP32 เขียน /smartfarm/alerts/telegram/last_sent เมื่อส่งสำเร็จ)
   db.ref('/smartfarm/alerts/telegram').on('value', snap => {
-    updateTelegramChip(snap.val());
+    const o = snap.val();
+    telegramLastSent = (o && o.last_sent) ? o.last_sent : null;
+    renderTelegramChip();
   });
 
   db.ref('/smartfarm/alert_history').orderByChild('timestamp').limitToLast(30).on('value', snap => {
@@ -1285,20 +1250,31 @@ function toggleBuzzer() {
   });
 }
 
-function updateTelegramChip(obj) {
+let telegramEnabled  = false;
+let telegramLastSent = null;
+
+function renderTelegramChip() {
   const chip = document.getElementById('chipTelegram');
   const val  = document.getElementById('chipTelegramVal');
   if (!val || !chip) return;
-  if (obj && obj.last_sent) {
-    val.textContent = 'ส่ง ' + relTime(obj.last_sent);
-    chip.classList.add('chip-on'); chip.classList.remove('chip-off');
-  } else if (obj && obj.enabled) {
-    val.textContent = 'พร้อมใช้งาน';
+  if (!telegramEnabled) {
+    val.textContent = 'ปิดอยู่ (แตะเปิด)';
+    chip.classList.add('chip-off'); chip.classList.remove('chip-on');
+  } else if (telegramLastSent) {
+    val.textContent = 'ส่งล่าสุด ' + relTime(telegramLastSent);
     chip.classList.add('chip-on'); chip.classList.remove('chip-off');
   } else {
-    val.textContent = 'ยังไม่ตั้งค่า';
-    chip.classList.add('chip-off'); chip.classList.remove('chip-on');
+    val.textContent = 'เปิดอยู่ · พร้อมส่ง';
+    chip.classList.add('chip-on'); chip.classList.remove('chip-off');
   }
+}
+
+function toggleTelegram() {
+  const next = !telegramEnabled;
+  db.ref('/smartfarm/control/telegram_enabled').set(next).then(() => {
+    logAction(`Telegram แจ้งเตือน → ${next ? 'เปิด' : 'ปิด'}`);
+    showToast(next ? '✈️ เปิดแจ้งเตือน Telegram — ESP32 จะส่งข้อความยืนยัน' : '🔕 ปิดแจ้งเตือน Telegram แล้ว');
+  });
 }
 
 function relTime(ms) {
@@ -1310,7 +1286,7 @@ function relTime(ms) {
 }
 
 // ── Relay Control ─────────────────────────────────────
-const CH_LABELS = {ch1_pump:'ปั๊มน้ำ (CH1)', ch2_fan_out:'พัดลม OUT (CH2)', ch3_fan_in:'พัดลม IN (CH3)', ch4_spare:'สำรอง (CH4)'};
+const CH_LABELS = {ch4_spare:'ปั๊มน้ำ (CH4)', ch3_fan_in:'พัดลม (CH3)', ch1_pump:'สำรอง (CH1)'};
 
 function setRelay(channel, state) {
   db.ref('/smartfarm/control/' + channel).update({manual_state: state});
@@ -1734,7 +1710,6 @@ const SENSOR_CFG = {
   airTemp:   {label:'🌡️ อุณหภูมิอากาศ', unit:'°C', color:'#16a34a', logAvg:'air_temp_avg',      logMin:'air_temp_min',      logMax:'air_temp_max'},
   airHum:    {label:'💧 ความชื้นอากาศ',  unit:'%',  color:'#2563eb', logAvg:'air_humidity_avg',   logMin:'air_humidity_min',   logMax:'air_humidity_max'},
   waterTemp: {label:'🌊 อุณหภูมิน้ำ',    unit:'°C', color:'#0f766e', logAvg:'water_temp_avg',     logMin:'water_temp_min',     logMax:'water_temp_max'},
-  soil:      {label:'🌱 ความชื้นดิน',    unit:'%',  color:'#d97706', logAvg:'soil_pct_avg',       logMin:'soil_pct_min',       logMax:'soil_pct_max'},
 };
 
 function openSensorDetail(key) {

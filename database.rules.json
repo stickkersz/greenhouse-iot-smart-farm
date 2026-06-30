@@ -7,8 +7,6 @@
         "air_temp":          { ".validate": "newData.isNumber()" },
         "air_humidity":      { ".validate": "newData.isNumber()" },
         "water_temp":        { ".validate": "newData.isNumber()" },
-        "soil_moisture_raw": { ".validate": "newData.isNumber()" },
-        "soil_moisture_pct": { ".validate": "newData.isNumber()" },
         "uptime_sec":        { ".validate": "newData.isNumber()" },
         "$other":            { ".validate": false }
       },

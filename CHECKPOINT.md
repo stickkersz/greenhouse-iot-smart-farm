@@ -1,8 +1,8 @@
-# Greenhouse IoT Smart Farm — Checkpoint v1.3.0
+# Greenhouse IoT Smart Farm — Checkpoint v1.4.0
 
-**Date:** 2026-06-23 (วันจันทร์)  
+**Date:** 2026-06-29 (อัปเดต v1.4.0)  
 **Status:** ✅ Production Ready — Tested at Company  
-**Version:** 1.3.0  
+**Version:** 1.4.0  
 **GitHub:** https://github.com/stickkersz/greenhouse-iot-smart-farm (private)  
 **Deployed:** https://greenhouse-iot-smart-farm.web.app  
 **Last Commit:** `f98160e feat: redesign settings + dynamic alert thresholds + presets`
@@ -14,7 +14,7 @@
 | Feature | Status | หมายเหตุ |
 |---------|--------|---------|
 | ESP32 connect WiFi (floor-1-2-2.4G) | ✅ | WiFiMulti auto-connect |
-| Sensor data live (30s interval) | ✅ | air_temp, humidity, water_temp, soil |
+| Sensor data live (30s interval) | ✅ | air_temp, humidity, water_temp |
 | Relay control — Manual mode | ✅ | CH1–CH4 click ได้ยินเสียง relay |
 | Dashboard action log | ✅ | บันทึก user + time ทุก action |
 | Chart 24h มีข้อมูล | ✅ | Live injection + hourly logs |
@@ -81,7 +81,7 @@
 ```
 /smartfarm/
   sensors/
-    air_temp, air_humidity, water_temp, soil_moisture_pct
+    air_temp, air_humidity, water_temp
     uptime_sec, firmware_ver
   status/
     online, ch1_pump, ch2_fan_out, ch3_fan_in, ch4_spare, firmware
@@ -101,7 +101,6 @@
     air_temp_avg/min/max
     air_humidity_avg/min/max
     water_temp_avg/min/max
-    soil_pct_avg/min/max
     sample_count
 ```
 
@@ -135,15 +134,14 @@ logs:          read=email, write=anon
 
 | Channel | GPIO | อุปกรณ์ | ควบคุมด้วย |
 |---------|------|---------|-----------|
-| CH1 | 26 | ปั๊มน้ำ 24V | Humidity (auto) |
-| CH2 | 27 | พัดลม Shutter OUT | Temperature (auto) |
-| CH3 | 14 | พัดลม Shutter IN | Temperature (auto) |
-| CH4 | 25 | สำรอง | Manual / Schedule only |
+| CH1 | 26 | สำรอง | Manual / Schedule only |
+| CH2 | 27 | — ไม่ได้ใช้ | - |
+| CH3 | 14 | พัดลม 220V (ดูดเข้า) | Temperature (auto) |
+| CH4 | 25 | ปั๊มน้ำ 24V | Humidity (auto) |
 
 **Sensors:**
 - DHT22 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว รอ SHT35)
-- DS18B20 (GPIO4) — อุณหภูมิน้ำ
-- Capacitive Soil Moisture (GPIO34) — ความชื้นดิน
+- DS18B20 (GPIO4) — อุณหภูมิน้ำ (ต้องมี Pull-up 4.7kΩ ที่ DATA-VCC)
 
 **WiFiMulti:**
 - `floor-1-2-2.4G` — บริษัท (ชั้น 1-2)
@@ -227,8 +225,8 @@ logs:          read=email, write=anon
 
 ### Software
 - [ ] Dark Mode toggle
-- [ ] Email alerts (Firebase Cloud Functions)
-- [ ] Soil moisture alert threshold ใน Settings
+- [x] Telegram alerts (ESP32 ยิง Bot API ตรง — ใช้ได้บน Spark free) ✅
+- [ ] Email alerts (Firebase Cloud Functions — ต้อง Blaze)
 - [ ] Multiple zones support
 - [ ] Weekly/monthly report PDF
 

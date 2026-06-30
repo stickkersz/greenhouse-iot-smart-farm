@@ -2,18 +2,21 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 1.3.0
+  Version: 1.4.0
+  Changelog v1.4.0:
+    - Relay remap: CH4=ปั๊มน้ำ, CH3=พัดลม 220V, CH1=สำรอง (CH2 ไม่ใช้)
+    - DS18B20 hardening: กรองค่า -127/85°C + อ่านซ้ำ (รองรับสายยาว 4m)
+    - Telegram Alert: ESP32 ยิง Bot API ตรง + cooldown 5 นาที/ชนิด
 
   Hardware:
     - ESP32 DevKit V1
     - DHT22 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ
     - DS18B20 Waterproof (GPIO4)   — อุณหภูมิน้ำ
-    - Capacitive Soil Moisture (GPIO34) — ความชื้นดิน
-    - Relay 4CH Active-LOW:
-        CH1 GPIO26 — ปั๊มน้ำ 24V
-        CH2 GPIO27 — พัดลม Shutter OUT (โรงเรือน)
-        CH3 GPIO14 — พัดลม Shutter IN (โรงเรือน)
-        CH4 GPIO25 — สำรอง
+    - Relay 4CH Active-LOW (การเดินสายจริง 2026-06-26):
+        CH1 GPIO26 — สำรอง (manual/schedule only)
+        CH2 GPIO27 — ไม่ได้ใช้
+        CH3 GPIO14 — พัดลม 220V AC (ดูดเข้า) — คุมด้วยอุณหภูมิ
+        CH4 GPIO25 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety
 
   Libraries (Arduino IDE → Manage Libraries):
     - Firebase ESP32 Client by Mobizt
@@ -34,12 +37,31 @@ WiFiMulti wifiMulti;
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
 #include <esp_task_wdt.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include "config.h"
 
 // เผื่อ config.h เก่าไม่มี define นี้ — relay เป็น active-LOW (LOW=เปิด, HIGH=ปิด)
 #ifndef RELAY_ACTIVE_LOW
 #define RELAY_ACTIVE_LOW true
 #endif
+
+// เผื่อ config.h เก่าไม่มี Telegram — ปล่อยว่าง = ฟีเจอร์ปิด (ไม่ส่ง)
+#ifndef TELEGRAM_BOT_TOKEN
+#define TELEGRAM_BOT_TOKEN ""
+#endif
+#ifndef TELEGRAM_CHAT_ID
+#define TELEGRAM_CHAT_ID ""
+#endif
+
+// ── Role → Channel mapping (การเดินสายจริง 2026-06-26) ──
+//   index ใน array control: 0=ch1  1=ch2  2=ch3  3=ch4
+//   CH3 (GPIO14) = พัดลม (ดูดเข้า) — คุมด้วยอุณหภูมิ
+//   CH4 (GPIO25) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety
+//   CH1 (GPIO26) = สำรอง — manual/schedule เท่านั้น (ไม่มี auto)
+//   CH2 = ไม่ได้ใช้ (ซ่อนใน dashboard) — ค้าง OFF เสมอ
+#define IDX_FAN   2   // ch3_fan_in  → พัดลม
+#define IDX_PUMP  3   // ch4_spare   → ปั๊มน้ำ
 
 // ── LCD I2C (16x2, address 0x27) ─────────────────────
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -59,18 +81,16 @@ DHT dht22(PIN_DHT11, DHT22);
 float airTemp     = 0.0;
 float airHumidity = 0.0;
 float waterTemp   = 0.0;
-int   soilRaw     = 0;
-int   soilPct     = 0;
 
 // ── Relay State (actual hardware state) ───────────────
-bool ch1_pump   = false;
-bool ch2_fanOut = false;
-bool ch3_fanIn  = false;
-bool ch4_spare  = false;
+bool ch1_pump   = false;   // CH1 = สำรอง (manual)
+bool ch2_fanOut = false;   // CH2 ไม่ได้ใช้
+bool ch3_fanIn  = false;   // CH3 = พัดลม (ดูดเข้า)
+bool ch4_spare  = false;   // CH4 = ปั๊มน้ำ
 
 // ── Control State จาก Firebase (volatile = RTOS-safe) ─
-// ch index: 0=ch1_pump  1=ch2_fan_out  2=ch3_fan_in  3=ch4_spare
-volatile bool  ch_isAuto[4] = {true,  true,  true,  false};
+// ch index: 0=ch1(unused) 1=ch2(unused) 2=ch3_fan 3=ch4_pump
+volatile bool  ch_isAuto[4] = {false, false, true,  true};
 volatile bool  ch_manual[4] = {false, false, false, false};
 volatile float thresh_temp_on  = TEMP_ON;
 volatile float thresh_temp_off = TEMP_OFF;
@@ -78,9 +98,11 @@ volatile float thresh_hum_min  = HUMIDITY_MIN;
 volatile float thresh_temp_alert = 38.0;  // เกณฑ์แจ้งเตือน/buzzer (sync กับ dashboard)
 volatile float thresh_hum_alert  = 40.0;
 volatile bool  buzzerEnabled   = true;   // ปิด/เปิดเสียงเตือนจาก dashboard
+volatile bool  telegramEnabled = false;  // ปิด/เปิดแจ้งเตือน Telegram จาก dashboard
+bool telegramWasEnabled = false;         // จับ transition ปิด→เปิด (ส่งข้อความยืนยัน)
 
 // ── Schedule State ────────────────────────────────────
-// ch index: 0=ch1_pump  1=ch2_fan_out  2=ch3_fan_in  3=ch4_spare
+// ch index: 0=ch1(unused) 1=ch2(unused) 2=ch3_fan 3=ch4_pump
 volatile bool ch_schedEnabled[4] = {false, false, false, false};
 char ch_schedOn[4][6]  = {"07:00","07:00","07:00","07:00"};
 char ch_schedOff[4][6] = {"18:00","18:00","18:00","18:00"};
@@ -89,8 +111,8 @@ char ch_schedOff[4][6] = {"18:00","18:00","18:00","18:00"};
 float h_sumAT = 0, h_maxAT = -99, h_minAT = 99;
 float h_sumAH = 0, h_maxAH = -1,  h_minAH = 101;
 float h_sumWT = 0, h_maxWT = -99, h_minWT = 99;
-float h_sumSP = 0, h_maxSP = -1,  h_minSP = 101;
-int   h_count = 0;
+int   h_count   = 0;   // จำนวน sample อากาศ
+int   h_countWT = 0;   // จำนวน sample น้ำที่อ่านได้ (แยกต่างหาก — DS18B20 สายยาวอาจอ่านพลาดบางครั้ง)
 
 // ── Timing ────────────────────────────────────────────
 unsigned long lastSensorTime = 0;
@@ -106,8 +128,15 @@ unsigned long lastNtpSync    = 0;
 #define FAILSAFE_REALERT_MS  (10UL*60*1000)    // ใน failsafe ดัง buzzer เตือนซ้ำทุก 10 นาที
 #define DHT_TEMP_MIN        -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
 #define DHT_TEMP_MAX         70.0
+// DS18B20: ช่วงอุณหภูมิน้ำสมเหตุผล — นอกช่วงนี้ = ค่าเสีย (-127 สายหลุด / 85.0 reset อ่านไม่ทัน / noise จากสายยาว)
+#define DS_WATER_MIN        -20.0
+#define DS_WATER_MAX         80.0              // น้ำในฟาร์มไม่เกินนี้ → 85.0 (sentinel) ถูกตัดออกอัตโนมัติ
+#define DS_READ_RETRY        2                 // อ่าน DS18B20 ซ้ำได้กี่ครั้งถ้าค่าเสีย (สายยาว 4m รบกวน)
 #define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม.
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
+#define TG_COOLDOWN_MS       (5UL*60*1000)     // กันสแปม — แจ้ง Telegram ต่อชนิดได้ทุก 5 นาที
+enum { TG_HIGH_TEMP=0, TG_LOW_HUM, TG_HIGH_WATER, TG_SENSOR_FAULT, TG_PUMP_CUTOFF, TG_TYPES };
+unsigned long tgCooldown[TG_TYPES] = {0};      // เวลาพ้น cooldown ของแต่ละชนิด
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
 unsigned long lastFailsafeBeep = 0;            // เวลาที่ buzzer เตือน failsafe ครั้งล่าสุด
@@ -135,11 +164,13 @@ void buzzerBeep(int times, int onMs = 200, int offMs = 150);
 void checkFailsafe();
 void pumpSafetyCheck();
 bool timeValid();
+void sendTelegram(const String& msg);
+void notifyTelegram(int type, const String& msg);
 
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v1.3.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v1.4.0 ===");
 
   // Relay: ปิดทั้งหมดก่อน (boot-safe) — active-LOW → HIGH = ปิด
   const int relayPins[] = {PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4};
@@ -151,10 +182,19 @@ void setup() {
   digitalWrite(PIN_BUZZER, HIGH); delay(100); digitalWrite(PIN_BUZZER, LOW);
   Serial.println("Buzzer Ready");
 
+  // I2C scanner — debug LCD: print address ที่เจอจริง (ถ้าไม่เจอ 0x27 อาจเป็น 0x3F หรือสายหลุด)
+  Wire.begin();
+  int i2cFound = 0;
+  for (byte a = 1; a < 127; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) { Serial.printf("[I2C] พบอุปกรณ์ที่ 0x%02X\n", a); i2cFound++; }
+  }
+  if (i2cFound == 0) Serial.println("[I2C] ไม่พบอุปกรณ์เลย — เช็คสาย SDA(21)/SCL(22)/VCC/GND");
+
   // LCD
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("SmartFarm v1.3.0");
+  lcd.setCursor(0, 0); lcd.print("SmartFarm v1.4.0");
   lcd.setCursor(0, 1); lcd.print("Starting...");
   Serial.println("LCD Ready");
 
@@ -201,6 +241,7 @@ void setup() {
   // โหลด control state ครั้งแรก
   loadControlFromFirebase();
   applyManualControl();
+  telegramWasEnabled = telegramEnabled;   // กันส่งข้อความ "เปิดแล้ว" ทุกครั้งที่ ESP32 รีบูต
 
   // Watchdog — reboot อัตโนมัติถ้า loop ค้าง (worst-case: ESP32 แฮงค์/SSL ค้าง)
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -248,6 +289,11 @@ void loop() {
   if (now - lastControlPoll >= CONTROL_POLL_MS && Firebase.ready() && (millis() - lastPushTime >= 2000)) {
     lastControlPoll = now;
     loadControlFromFirebase();
+    // เพิ่งกดเปิด Telegram จาก dashboard → ส่งข้อความยืนยันให้รู้ว่าเชื่อมต่อได้
+    if (telegramEnabled && !telegramWasEnabled) {
+      sendTelegram("✅ <b>SmartFarm ปุ๋ยไวกิ้ง</b>\nเปิดการแจ้งเตือน Telegram แล้ว\nระบบพร้อมส่งเตือนเมื่อมีเหตุผิดปกติ");
+    }
+    telegramWasEnabled = telegramEnabled;
     if (!failsafeActive) {
       bool changed = applyManualControl();
       if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
@@ -311,6 +357,7 @@ void loadControlFromFirebase() {
   if (json.get(d, "thresholds/temp_alert"))     thresh_temp_alert = d.floatValue;
   if (json.get(d, "thresholds/humidity_alert")) thresh_hum_alert  = d.floatValue;
   if (json.get(d, "buzzer_enabled"))         buzzerEnabled  = d.boolValue;
+  if (json.get(d, "telegram_enabled"))       telegramEnabled = d.boolValue;
 
   Serial.println(" OK");
 }
@@ -332,25 +379,36 @@ void readSensors() {
     if (dhtGoodCount < 1000) dhtGoodCount++;
   }
 
-  ds18b20.requestTemperatures();
-  waterTemp = ds18b20.getTempCByIndex(0);
-  waterSensorOk = (waterTemp > -100 && waterTemp < 100);  // -127 = disconnected
+  // DS18B20 (สาย jumper ยาว ~4m ใกล้พัดลม 220V/ปั๊ม → noise สูง) — อ่านซ้ำถ้าได้ค่าเสีย
+  // ค่าเสีย: -127 (สายหลุด/ไม่เจอ device), 85.0 (reset/อ่านไม่ทัน), หรือนอกช่วงจริง
+  float wt = NAN;
+  for (int r = 0; r <= DS_READ_RETRY; r++) {
+    ds18b20.requestTemperatures();
+    wt = ds18b20.getTempCByIndex(0);
+    if (wt >= DS_WATER_MIN && wt <= DS_WATER_MAX) break;   // ได้ค่าดีแล้ว
+  }
+  if (wt >= DS_WATER_MIN && wt <= DS_WATER_MAX) {
+    waterTemp = wt;          // เก็บเฉพาะค่าที่ใช้ได้ (ถ้าอ่านพลาด คงค่าเดิมไว้ ไม่เอาค่าขยะไปแสดง/log/alert)
+    waterSensorOk = true;
+  } else {
+    waterSensorOk = false;
+    Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด)\n", wt);
+  }
 
-  soilRaw = analogRead(PIN_SOIL_MOISTURE);
-  soilPct = map(soilRaw, 3200, 1500, 0, 100);
-  soilPct = constrain(soilPct, 0, 100);
-
-  // สะสมข้อมูลสำหรับ hourly log (ข้ามถ้า sensor ยังอ่านไม่ได้)
+  // สะสมข้อมูลอากาศ สำหรับ hourly log (ข้ามถ้า sensor อากาศยังอ่านไม่ได้)
   if (airTemp > 0 || airHumidity > 0) {
     h_sumAT += airTemp;     h_maxAT = max(h_maxAT, airTemp);     h_minAT = min(h_minAT, airTemp);
     h_sumAH += airHumidity; h_maxAH = max(h_maxAH, airHumidity); h_minAH = min(h_minAH, airHumidity);
-    h_sumWT += waterTemp;   h_maxWT = max(h_maxWT, waterTemp);   h_minWT = min(h_minWT, waterTemp);
-    h_sumSP += soilPct;     h_maxSP = max(h_maxSP, (float)soilPct); h_minSP = min(h_minSP, (float)soilPct);
     h_count++;
   }
+  // น้ำ: สะสมเฉพาะตอนอ่านได้ (กันค่าขยะจากสายยาวทำ avg/max/min เพี้ยน)
+  if (waterSensorOk) {
+    h_sumWT += waterTemp;   h_maxWT = max(h_maxWT, waterTemp);   h_minWT = min(h_minWT, waterTemp);
+    h_countWT++;
+  }
 
-  Serial.printf("[Sensor] AirT:%.1f°C RH:%.1f%% WaterT:%.1f°C Soil:%d%%(raw:%d)\n",
-    airTemp, airHumidity, waterTemp, soilPct, soilRaw);
+  Serial.printf("[Sensor] AirT:%.1f°C RH:%.1f%% WaterT:%.1f°C\n",
+    airTemp, airHumidity, waterTemp);
 }
 
 // ─────────────────────────────────────────────────────
@@ -360,35 +418,26 @@ void autoControl() {
   float toff = thresh_temp_off;
   float hmin = thresh_hum_min;
 
-  // พัดลม (CH2/CH3/CH4): คุมด้วยอุณหภูมิ + hysteresis
+  // พัดลม (CH3): คุมด้วยอุณหภูมิ + hysteresis
   bool fanOpen  = (airTemp >= ton);
   bool fanClose = (airTemp <= toff);
 
-  // ปั๊มน้ำ (CH1): คุมด้วยความชื้นเท่านั้น
+  // ปั๊มน้ำ (CH4): คุมด้วยความชื้นเท่านั้น
   // ถ้า sensor ความชื้นพัง (อ่านได้ 0) → ปิดปั๊มเพื่อความปลอดภัย (กันปั๊มทำงานค้าง)
   bool pumpOpen  = (airHumidity > 0 && airHumidity < hmin);
   bool pumpClose = (airHumidity == 0 || airHumidity >= hmin);
 
   // หมายเหตุ precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
-  // CH1 Pump (ความชื้น) — เปิดได้เฉพาะเมื่อพ้น safety lock (cooldown)
-  if (ch_isAuto[0] && !ch_schedEnabled[0]) {
-    if (pumpOpen  && !ch1_pump && millis() >= pumpLockUntil) { ch1_pump = true;  setRelay(PIN_RELAY_CH1, true);  }
-    if (pumpClose &&  ch1_pump) { ch1_pump = false; setRelay(PIN_RELAY_CH1, false); }
-  }
-  // CH2 Fan Out (อุณหภูมิ)
-  if (ch_isAuto[1] && !ch_schedEnabled[1]) {
-    if (fanOpen  && !ch2_fanOut) { ch2_fanOut = true;  setRelay(PIN_RELAY_CH2, true);  }
-    if (fanClose &&  ch2_fanOut) { ch2_fanOut = false; setRelay(PIN_RELAY_CH2, false); }
-  }
-  // CH3 Fan In (อุณหภูมิ)
-  if (ch_isAuto[2] && !ch_schedEnabled[2]) {
+  // CH3 พัดลม (อุณหภูมิ) — ทำงานเฉพาะตอนอ่านอุณหภูมิได้ (airTemp>0)
+  // ถ้า DHT glitch (airTemp=0) → ค้างสถานะเดิม ไม่สั่งปิดพัดลมผิดๆ (กันพัดลมดับวันร้อน)
+  if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN] && airTemp > 0) {
     if (fanOpen  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
     if (fanClose &&  ch3_fanIn) { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
   }
-  // CH4 Spare (อุณหภูมิ — เผื่อเปิด auto, default = manual)
-  if (ch_isAuto[3] && !ch_schedEnabled[3]) {
-    if (fanOpen  && !ch4_spare) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  }
-    if (fanClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); }
+  // CH4 ปั๊มน้ำ (ความชื้น) — เปิดได้เฉพาะเมื่อพ้น safety lock (cooldown)
+  if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
+    if (pumpOpen  && !ch4_spare && millis() >= pumpLockUntil) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  }
+    if (pumpClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); }
   }
 
   if (fanOpen)  Serial.printf("[AUTO] พัดลมเปิด — T:%.1f≥%.1f\n", airTemp, ton);
@@ -401,28 +450,29 @@ void autoControl() {
 bool applyManualControl() {
   bool changed = false;
   // precedence: ถ้า channel เปิด Schedule อยู่ → checkSchedule คุม (ข้าม manual)
+  // CH1 = สำรอง (manual/schedule) · CH2 ไม่ได้ใช้ (เผื่อ dashboard ส่งค่ามา)
   if (!ch_isAuto[0] && !ch_schedEnabled[0] && (bool)ch_manual[0] != ch1_pump) {
     ch1_pump = ch_manual[0];
     setRelay(PIN_RELAY_CH1, ch1_pump);
-    Serial.printf("[MANUAL] CH1 Pump → %s\n", ch1_pump ? "ON" : "OFF");
+    Serial.printf("[MANUAL] CH1 Spare → %s\n", ch1_pump ? "ON" : "OFF");
     changed = true;
   }
   if (!ch_isAuto[1] && !ch_schedEnabled[1] && (bool)ch_manual[1] != ch2_fanOut) {
     ch2_fanOut = ch_manual[1];
     setRelay(PIN_RELAY_CH2, ch2_fanOut);
-    Serial.printf("[MANUAL] CH2 Fan OUT → %s\n", ch2_fanOut ? "ON" : "OFF");
+    Serial.printf("[MANUAL] CH2 (unused) → %s\n", ch2_fanOut ? "ON" : "OFF");
     changed = true;
   }
-  if (!ch_isAuto[2] && !ch_schedEnabled[2] && (bool)ch_manual[2] != ch3_fanIn) {
-    ch3_fanIn = ch_manual[2];
+  if (!ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN] && (bool)ch_manual[IDX_FAN] != ch3_fanIn) {
+    ch3_fanIn = ch_manual[IDX_FAN];
     setRelay(PIN_RELAY_CH3, ch3_fanIn);
-    Serial.printf("[MANUAL] CH3 Fan IN → %s\n", ch3_fanIn ? "ON" : "OFF");
+    Serial.printf("[MANUAL] CH3 Fan → %s\n", ch3_fanIn ? "ON" : "OFF");
     changed = true;
   }
-  if (!ch_isAuto[3] && !ch_schedEnabled[3] && (bool)ch_manual[3] != ch4_spare) {
-    ch4_spare = ch_manual[3];
+  if (!ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP] && (bool)ch_manual[IDX_PUMP] != ch4_spare) {
+    ch4_spare = ch_manual[IDX_PUMP];
     setRelay(PIN_RELAY_CH4, ch4_spare);
-    Serial.printf("[MANUAL] CH4 Spare → %s\n", ch4_spare ? "ON" : "OFF");
+    Serial.printf("[MANUAL] CH4 Pump → %s\n", ch4_spare ? "ON" : "OFF");
     changed = true;
   }
   return changed;
@@ -452,9 +502,8 @@ void checkFailsafe() {
   if (!failsafeActive && dhtFailCount >= DHT_FAIL_LIMIT) {
     failsafeActive = true;
     lastFailsafeBeep = millis();
-    ch2_fanOut = true;  setRelay(PIN_RELAY_CH2, true);   // เปิดพัดลม OUT
-    ch3_fanIn  = true;  setRelay(PIN_RELAY_CH3, true);   // เปิดพัดลม IN
-    ch1_pump   = false; setRelay(PIN_RELAY_CH1, false);  // ปิดปั๊ม
+    ch3_fanIn  = true;  setRelay(PIN_RELAY_CH3, true);   // เปิดพัดลม (CH3)
+    ch4_spare  = false; setRelay(PIN_RELAY_CH4, false);  // ปิดปั๊ม (CH4)
     pumpOnSince = 0;
     Serial.println("[FAILSAFE] เข้าโหมดฉุกเฉิน — sensor อากาศพัง → เปิดพัดลม + ปิดปั๊ม");
     if (Firebase.ready()) {
@@ -463,6 +512,8 @@ void checkFailsafe() {
         "Sensor อากาศอ่านค่าไม่ได้ — เข้าโหมดฉุกเฉิน (เปิดพัดลม/ปิดปั๊ม) ตรวจสอบ DHT22");
     }
     if (buzzerEnabled) buzzerBeep(5);
+    notifyTelegram(TG_SENSOR_FAULT, "🚨 <b>โหมดฉุกเฉิน (Failsafe)</b>\nSensor อากาศ (DHT22) อ่านค่าไม่ได้\n"
+      "ระบบเปิดพัดลม + ปิดปั๊มอัตโนมัติ\nกรุณาตรวจสอบเซ็นเซอร์ด่วน — SmartFarm ปุ๋ยไวกิ้ง");
     return;
   }
 
@@ -475,9 +526,8 @@ void checkFailsafe() {
 
   // ยังอยู่ใน failsafe: ย้ำสถานะปลอดภัย + ดัง buzzer เตือนซ้ำทุก 10 นาที
   if (failsafeActive) {
-    if (!ch2_fanOut) { ch2_fanOut = true;  setRelay(PIN_RELAY_CH2, true);  }
-    if (!ch3_fanIn)  { ch3_fanIn  = true;  setRelay(PIN_RELAY_CH3, true);  }
-    if ( ch1_pump)   { ch1_pump   = false; setRelay(PIN_RELAY_CH1, false); }
+    if (!ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
+    if ( ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); }
     if (buzzerEnabled && millis() - lastFailsafeBeep >= FAILSAFE_REALERT_MS) {
       lastFailsafeBeep = millis();
       buzzerBeep(5);
@@ -491,13 +541,13 @@ void checkFailsafe() {
 // กันน้ำท่วม / ปั๊มไหม้แห้ง · โหมด manual = คนคุมเอง ไม่ตัดอัตโนมัติ
 void pumpSafetyCheck() {
   unsigned long now = millis();
-  bool automated = ch_isAuto[0] || ch_schedEnabled[0];
+  bool automated = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
 
-  if (ch1_pump && automated) {
+  if (ch4_spare && automated) {
     if (pumpOnSince == 0) {
       pumpOnSince = now;
     } else if (now - pumpOnSince >= PUMP_MAX_RUNTIME_MS) {
-      ch1_pump = false; setRelay(PIN_RELAY_CH1, false);
+      ch4_spare = false; setRelay(PIN_RELAY_CH4, false);
       pumpOnSince   = 0;
       pumpLockUntil = now + PUMP_COOLDOWN_MS;
       Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 5 นาที (พัก 5 นาที)");
@@ -507,6 +557,8 @@ void pumpSafetyCheck() {
           "ตัดปั๊มอัตโนมัติ — ทำงานต่อเนื่องเกิน 5 นาที (พัก 5 นาที) ตรวจสอบระดับน้ำ");
       }
       if (buzzerEnabled) buzzerBeep(2);
+      notifyTelegram(TG_PUMP_CUTOFF, "💧 <b>ตัดปั๊มอัตโนมัติ</b>\nปั๊มทำงานต่อเนื่องเกิน 5 นาที — พัก 5 นาที\n"
+        "กรุณาตรวจสอบระดับน้ำ — SmartFarm ปุ๋ยไวกิ้ง");
     }
   } else {
     pumpOnSince = 0;   // ปั๊มหยุด หรืออยู่โหมด manual → รีเซ็ตตัวจับเวลา
@@ -522,7 +574,7 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "1.3.0");
+  Firebase.setString(fbData, base + "status/firmware",    "1.4.0");
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (dhtFailCount == 0));
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
@@ -537,9 +589,9 @@ void pushToFirebase() {
 
   Firebase.setFloat (fbData, base + "sensors/air_temp",          airTemp);
   Firebase.setFloat (fbData, base + "sensors/air_humidity",      airHumidity);
-  Firebase.setFloat (fbData, base + "sensors/water_temp",        waterTemp);
-  Firebase.setInt   (fbData, base + "sensors/soil_moisture_raw", soilRaw);
-  Firebase.setInt   (fbData, base + "sensors/soil_moisture_pct", soilPct);
+  // น้ำ: push เฉพาะตอนอ่านได้ — กันค่าขยะ 0.0/ค่าเดิม ขึ้นไปหลอกหน้าจอ (dashboard เช็ค water_ok เพื่อโชว์ "—")
+  if (waterSensorOk)
+    Firebase.setFloat (fbData, base + "sensors/water_temp",      waterTemp);
   Firebase.setInt   (fbData, base + "sensors/uptime_sec",        (int)(millis() / 1000));
 
   pushStatus();
@@ -559,6 +611,54 @@ void buzzerBeep(int times, int onMs, int offMs) {
   }
 }
 
+// ─────────────────────────────────────────────────────
+// Telegram — ส่งข้อความเข้า Bot API ตรงผ่าน HTTPS (ไม่ต้องใช้ Cloud Functions → ใช้ได้บน Spark free)
+void sendTelegram(const String& msg) {
+  if (strlen(TELEGRAM_BOT_TOKEN) == 0 || strlen(TELEGRAM_CHAT_ID) == 0) {
+    Serial.println("[TG] ยังไม่ตั้งค่า BOT_TOKEN/CHAT_ID ใน config.h — ข้าม");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) { Serial.println("[TG] ไม่มี WiFi — ข้าม"); return; }
+
+  esp_task_wdt_reset();   // ป้อน watchdog ก่อน — TLS handshake อาจกินเวลาหลายวินาที
+  WiFiClientSecure client;
+  client.setInsecure();                       // ข้าม cert validation (จัดการ root CA บน ESP32 ยุ่งยาก)
+  HTTPClient https;
+  String url = "https://api.telegram.org/bot" + String(TELEGRAM_BOT_TOKEN) + "/sendMessage";
+  if (!https.begin(client, url)) { Serial.println("[TG] begin() fail"); return; }
+  https.addHeader("Content-Type", "application/json");
+  https.setTimeout(8000);
+
+  // escape เฉพาะอักขระที่ทำ JSON พัง — ภาษาไทย (UTF-8) ส่งดิบได้เลย
+  String text = msg;
+  text.replace("\\", "\\\\"); text.replace("\"", "\\\""); text.replace("\n", "\\n");
+  String body = "{\"chat_id\":\"" + String(TELEGRAM_CHAT_ID) +
+                "\",\"text\":\"" + text + "\",\"parse_mode\":\"HTML\"}";
+
+  int code = https.POST(body);
+  if (code == 200) {
+    Serial.println("[TG] ส่งสำเร็จ");
+    // บันทึกเวลาส่งล่าสุด (epoch ms) ให้ dashboard แสดง — เฉพาะเมื่อนาฬิกา sync แล้ว
+    if (Firebase.ready() && timeValid()) {
+      Firebase.setDouble(fbData, "/smartfarm/alerts/telegram/last_sent", (double)time(nullptr) * 1000.0);
+      Firebase.setBool  (fbData, "/smartfarm/alerts/telegram/enabled",   telegramEnabled);
+    }
+  } else {
+    Serial.printf("[TG] ส่งไม่สำเร็จ — HTTP %d\n", code);
+  }
+  https.end();
+}
+
+// แจ้งเตือน Telegram แบบมี cooldown ต่อชนิด (กันสแปมตอนค่าแกว่งรอบ threshold)
+void notifyTelegram(int type, const String& msg) {
+  if (!telegramEnabled) return;
+  if (type >= 0 && type < TG_TYPES) {
+    if (millis() < tgCooldown[type]) return;          // ยังอยู่ใน cooldown ของชนิดนี้
+    tgCooldown[type] = millis() + TG_COOLDOWN_MS;
+  }
+  sendTelegram(msg);
+}
+
 void checkAlerts() {
   // ข้าม alert ถ้า sensor ยังอ่านไม่ได้
   if (airTemp == 0 && airHumidity == 0) {
@@ -574,6 +674,8 @@ void checkAlerts() {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
       "อุณหภูมิสูงเกิน " + String(thresh_temp_alert, 0) + "°C! (" + String(airTemp, 1) + "°C)");
     Serial.println("[ALERT] High Temp: " + String(airTemp, 1) + "°C");
+    notifyTelegram(TG_HIGH_TEMP, "🌡️ <b>อุณหภูมิสูงเกินกำหนด</b>\nวัดได้ " + String(airTemp, 1)
+      + "°C (เกณฑ์ " + String(thresh_temp_alert, 0) + "°C)\n— SmartFarm ปุ๋ยไวกิ้ง");
     hasAlert = true;
   }
   if (airHumidity > 0 && airHumidity < thresh_hum_alert) {
@@ -582,14 +684,18 @@ void checkAlerts() {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
       "ความชื้นต่ำกว่า " + String(thresh_hum_alert, 0) + "%! (" + String(airHumidity, 1) + "%)");
     Serial.println("[ALERT] Low Humidity: " + String(airHumidity, 1) + "%");
+    notifyTelegram(TG_LOW_HUM, "💧 <b>ความชื้นอากาศต่ำ</b>\nวัดได้ " + String(airHumidity, 1)
+      + "% (เกณฑ์ " + String(thresh_hum_alert, 0) + "%)\n— SmartFarm ปุ๋ยไวกิ้ง");
     hasAlert = true;
   }
-  if (waterTemp > 35.0) {
+  if (waterSensorOk && waterTemp > 35.0) {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "high_water_temp");
     Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   waterTemp);
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
       "อุณหภูมิน้ำสูงเกิน 35°C! (" + String(waterTemp, 1) + "°C)");
     Serial.println("[ALERT] High Water Temp: " + String(waterTemp, 1) + "°C");
+    notifyTelegram(TG_HIGH_WATER, "🌊 <b>อุณหภูมิน้ำสูง</b>\nวัดได้ " + String(waterTemp, 1)
+      + "°C (เกณฑ์ 35°C)\n— SmartFarm ปุ๋ยไวกิ้ง");
     hasAlert = true;
   }
 
@@ -615,8 +721,6 @@ void pushHourlyLog() {
 
   float avgAT = h_sumAT / h_count;
   float avgAH = h_sumAH / h_count;
-  float avgWT = h_sumWT / h_count;
-  int   avgSP = (int)(h_sumSP / h_count);
 
   Firebase.setFloat(fbData, path + "/air_temp_avg",     avgAT);
   Firebase.setFloat(fbData, path + "/air_temp_max",     h_maxAT);
@@ -624,25 +728,28 @@ void pushHourlyLog() {
   Firebase.setFloat(fbData, path + "/air_humidity_avg", avgAH);
   Firebase.setFloat(fbData, path + "/air_humidity_max", h_maxAH);
   Firebase.setFloat(fbData, path + "/air_humidity_min", h_minAH);
-  Firebase.setFloat(fbData, path + "/water_temp_avg",   avgWT);
-  Firebase.setFloat(fbData, path + "/water_temp_max",   h_maxWT);
-  Firebase.setFloat(fbData, path + "/water_temp_min",   h_minWT);
-  Firebase.setInt  (fbData, path + "/soil_pct_avg",     avgSP);
-  Firebase.setInt  (fbData, path + "/soil_pct_max",     (int)h_maxSP);
-  Firebase.setInt  (fbData, path + "/soil_pct_min",     (int)h_minSP);
   Firebase.setInt  (fbData, path + "/sample_count",     h_count);
 
-  Serial.printf("[Log] Hourly → %s | T:%.1f°C RH:%.1f%% WT:%.1f°C Soil:%d%% (n=%d)\n",
-    path.c_str(), avgAT, avgAH, avgWT, avgSP, h_count);
+  // น้ำ: เขียนเฉพาะเมื่อมี sample ที่อ่านได้ (กันค่าขยะ/ช่องว่างจากสายยาว)
+  float avgWT = (h_countWT > 0) ? (h_sumWT / h_countWT) : 0;
+  if (h_countWT > 0) {
+    Firebase.setFloat(fbData, path + "/water_temp_avg",   avgWT);
+    Firebase.setFloat(fbData, path + "/water_temp_max",   h_maxWT);
+    Firebase.setFloat(fbData, path + "/water_temp_min",   h_minWT);
+  }
+
+  Serial.printf("[Log] Hourly → %s | T:%.1f°C RH:%.1f%% WT:%.1f°C (n=%d, nWT=%d)\n",
+    path.c_str(), avgAT, avgAH, avgWT, h_count, h_countWT);
 
   resetAccumulators();
 }
 
 void resetAccumulators() {
-  h_sumAT = h_sumAH = h_sumWT = h_sumSP = 0;
-  h_maxAT = h_maxAH = h_maxWT = h_maxSP = -999;
-  h_minAT = h_minAH = h_minWT = h_minSP =  999;
+  h_sumAT = h_sumAH = h_sumWT = 0;
+  h_maxAT = h_maxAH = h_maxWT = -999;
+  h_minAT = h_minAH = h_minWT =  999;
   h_count = 0;
+  h_countWT = 0;
 }
 
 // ─────────────────────────────────────────────────────
@@ -693,8 +800,8 @@ void checkSchedule() {
       shouldBeOn = (now >= onT || now < offT);
     }
 
-    // ปั๊ม (CH1) เคารพ safety lock — ห้ามเปิดระหว่าง cooldown
-    if (i == 0 && shouldBeOn && millis() < pumpLockUntil) continue;
+    // ปั๊ม (CH4) เคารพ safety lock — ห้ามเปิดระหว่าง cooldown
+    if (i == IDX_PUMP && shouldBeOn && millis() < pumpLockUntil) continue;
 
     if (shouldBeOn != *states[i]) {
       *states[i] = shouldBeOn;
@@ -706,11 +813,10 @@ void checkSchedule() {
 }
 
 // ─────────────────────────────────────────────────────
-// LCD — สลับ 4 หน้า ทุก 5 วินาที
+// LCD — สลับ 3 หน้า ทุก 5 วินาที
 // หน้า 0: อุณหภูมิ + ความชื้นอากาศ
-// หน้า 1: อุณหภูมิน้ำ + ความชื้นดิน
-// หน้า 2: สถานะ Pump + Fan Out
-// หน้า 3: สถานะ Fan In + Spare
+// หน้า 1: อุณหภูมิน้ำ + WiFi RSSI
+// หน้า 2: สถานะ Pump (CH4) + Fan (CH3)
 void updateLCD() {
   lcd.clear();
   char buf1[17], buf2[17];
@@ -724,28 +830,22 @@ void updateLCD() {
       break;
 
     case 1:
-      snprintf(buf1, sizeof(buf1), "Water: %.1f%cC", waterTemp, 0xDF);
-      snprintf(buf2, sizeof(buf2), "Soil: %d%%", soilPct);
+      if (waterSensorOk) snprintf(buf1, sizeof(buf1), "Water: %.1f%cC", waterTemp, 0xDF);
+      else               snprintf(buf1, sizeof(buf1), "Water: -- (err)");
+      snprintf(buf2, sizeof(buf2), "WiFi: %ddBm", WiFi.RSSI());
       lcd.setCursor(0, 0); lcd.print(buf1);
       lcd.setCursor(0, 1); lcd.print(buf2);
       break;
 
     case 2:
-      snprintf(buf1, sizeof(buf1), "Pump: %s", ch1_pump   ? "ON" : "OFF");
-      snprintf(buf2, sizeof(buf2), "Fan Out: %s", ch2_fanOut ? "ON" : "OFF");
-      lcd.setCursor(0, 0); lcd.print(buf1);
-      lcd.setCursor(0, 1); lcd.print(buf2);
-      break;
-
-    case 3:
-      snprintf(buf1, sizeof(buf1), "Fan In: %s", ch3_fanIn ? "ON" : "OFF");
-      snprintf(buf2, sizeof(buf2), "Spare: %s",  ch4_spare ? "ON" : "OFF");
+      snprintf(buf1, sizeof(buf1), "Pump: %s", ch4_spare ? "ON" : "OFF");
+      snprintf(buf2, sizeof(buf2), "Fan: %s",  ch3_fanIn ? "ON" : "OFF");
       lcd.setCursor(0, 0); lcd.print(buf1);
       lcd.setCursor(0, 1); lcd.print(buf2);
       break;
   }
 
-  lcdPage = (lcdPage + 1) % 4;  // วนหน้า 0→1→2→3→0
+  lcdPage = (lcdPage + 1) % 3;  // วนหน้า 0→1→2→0
 }
 
 // คืนค่า path สำหรับ hourly log เช่น "/logs/2026-06-19/14"

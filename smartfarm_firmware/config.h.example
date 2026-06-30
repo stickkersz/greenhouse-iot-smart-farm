@@ -13,16 +13,22 @@ static const WifiCred wifiNetworks[] = {
 #define FIREBASE_HOST    "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app"
 #define FIREBASE_API_KEY "YOUR_FIREBASE_API_KEY"
 
+// ===== Telegram Bot (แจ้งเตือนเข้ามือถือ) — ปล่อยว่าง = ปิดฟีเจอร์ =====
+//   1) @BotFather → /newbot → ได้ TOKEN
+//   2) @userinfobot → ได้ CHAT_ID
+//   3) กด /start ในบอทก่อน 1 ครั้ง
+#define TELEGRAM_BOT_TOKEN ""
+#define TELEGRAM_CHAT_ID   ""
+
 // ===== Pin Mapping =====
 #define PIN_DS18B20       4
-#define PIN_SOIL_MOISTURE 34
 #define PIN_DHT11        32
 #define PIN_BUZZER       33
 
-#define PIN_RELAY_CH1    26
-#define PIN_RELAY_CH2    27
-#define PIN_RELAY_CH3    14
-#define PIN_RELAY_CH4    25
+#define PIN_RELAY_CH1    26   // สำรอง (manual/schedule)
+#define PIN_RELAY_CH2    27   // ไม่ได้ใช้
+#define PIN_RELAY_CH3    14   // พัดลม 220V AC (ดูดเข้า)
+#define PIN_RELAY_CH4    25   // ปั๊มน้ำ 24V DC
 
 // โมดูล Relay active-LOW: LOW=เปิด, HIGH=ปิด (ถ้าโมดูลกลับด้าน เปลี่ยนเป็น false)
 #define RELAY_ACTIVE_LOW  true
