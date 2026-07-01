@@ -47,8 +47,9 @@
 |---|---|---|
 | ESP32 DevKit V1 **(30-pin)** | ✅ ใช้งาน | WiFi 2.4GHz เท่านั้น, เสียบ Expansion Board ได้พอดี |
 | ESP32 Expansion Board HW-777 | ✅ ใช้งาน | SVG = Signal-VCC-GND ต่อ pin ตรงๆ ไม่ต้องสาย Jumper |
-| S-25-5 PSU (5V / 5A) | ✅ ใช้งาน | จ่ายไฟ ESP32 + Relay + Fan 5V via Expansion Board |
-| S-120-12 PSU (12V / 10A) | ✅ ใช้งาน | จ่ายไฟ Boost Converter → ปั๊ม 24V |
+| S-25-5 PSU (5V / 5A) | ❌ ไม่ได้ใช้แล้ว | เปลี่ยนมาใช้ XL4015 Step-Down แทน |
+| S-120-12 PSU (12V / 10A) | ✅ ใช้งาน | จ่ายไฟทั้งระบบ DC: XL4015 + Boost Converter |
+| XL4015 Step-Down | ✅ ใช้งาน **(หลัก)** | 12V → 5V จ่าย ESP32 + Relay + Fan 5V + Buzzer + LCD |
 | Boost Converter (XL6009/XL4016) | ✅ มีแล้ว (ตัวใหม่) | 12V → 24V สำหรับปั๊มน้ำ (ตัวเก่าพังเพราะ Short) |
 | Relay Module 4CH (5V) | ✅ ทำงาน | Active-LOW (LOW=เปิด, HIGH=ปิด) |
 | DHT22 | ✅ ทำงาน **(ถาวร)** | GPIO32 — วัดอุณหภูมิ + ความชื้นอากาศ |
@@ -59,7 +60,6 @@
 | Fan Module 5V | ⚠️ มีปัญหา | ระบายความร้อนกล่อง — ยังไม่หมุน (ตรวจ JUMP jumper) |
 | ปั๊มน้ำ DC 24V | 🛒 ต้องซื้อ | แนะนำ: ไดอะแฟรม 24V, 2–3 bar, 5–10 L/min |
 | PWM Speed Controller CW008 | ✅ มีแล้ว | IN+/IN−/OUT+/OUT− สำหรับควบคุมความเร็วปั๊ม |
-| XL4015 Step-Down | ✅ มีแล้ว | 12V → 5V (backup) |
 
 > ❌ **SHT35 ยกเลิกแล้ว** — ไม่ซื้อ ใช้ DHT22 ถาวร (SHT35 ถูกลบออกจาก firmware ทั้งหมดแล้ว)
 
@@ -292,8 +292,8 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 ## 11. Power Distribution
 
 ```
-220V AC ─┬─ S-25-5 (5V/5A)  ─── Expansion Board → ESP32, Relay, Fan 5V
-          └─ S-120-12 (12V/10A) ─ Boost Converter → 24V ─── ปั๊มน้ำ DC
+220V AC ──── S-120-12 (12V/10A) ─┬─ XL4015 Step-Down → 5V ─── Expansion Board → ESP32, Relay, Fan 5V, LCD, Buzzer
+                                  └─ Boost Converter → 24V ──── ปั๊มน้ำ DC
 ```
 
 **Wire Gauge:**

@@ -33,6 +33,10 @@ static const WifiCred wifiNetworks[] = {
 // โมดูล Relay active-LOW: LOW=เปิด, HIGH=ปิด (ถ้าโมดูลกลับด้าน เปลี่ยนเป็น false)
 #define RELAY_ACTIVE_LOW  true
 
+// โมดูล Buzzer 3 ขา (S/VCC/GND) active-LOW เหมือน relay: LOW=ดัง, HIGH=เงียบ
+// (ถ้าเสียบแล้วดังตลอดเวลา = โมดูลจริงเป็น active-HIGH ให้เปลี่ยนเป็น false)
+#define BUZZER_ACTIVE_LOW true
+
 // ===== Auto Control Thresholds =====
 #define TEMP_ON       35.0
 #define TEMP_OFF      32.0

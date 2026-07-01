@@ -46,6 +46,12 @@ WiFiMulti wifiMulti;
 #define RELAY_ACTIVE_LOW true
 #endif
 
+// เผื่อ config.h เก่าไม่มี define นี้ — buzzer module 3 ขา (S/VCC/GND) มักเป็น active-LOW เหมือน relay
+// (LOW=ดัง, HIGH=เงียบ) ถ้าใช้ buzzer แบบอื่นแล้วเงียบตลอด/ดังกลับด้าน ให้เปลี่ยนเป็น false ใน config.h
+#ifndef BUZZER_ACTIVE_LOW
+#define BUZZER_ACTIVE_LOW true
+#endif
+
 // เผื่อ config.h เก่าไม่มี Telegram — ปล่อยว่าง = ฟีเจอร์ปิด (ไม่ส่ง)
 #ifndef TELEGRAM_BOT_TOKEN
 #define TELEGRAM_BOT_TOKEN ""
@@ -176,10 +182,10 @@ void setup() {
   const int relayPins[] = {PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4};
   for (int p : relayPins) { pinMode(p, OUTPUT); digitalWrite(p, RELAY_ACTIVE_LOW ? HIGH : LOW); }
 
-  // Buzzer
+  // Buzzer — boot-safe: ตั้งเป็น "เงียบ" ก่อน แล้วทดสอบดังสั้นๆ 1 ครั้ง แล้วกลับไปเงียบ
   pinMode(PIN_BUZZER, OUTPUT);
-  digitalWrite(PIN_BUZZER, LOW);
-  digitalWrite(PIN_BUZZER, HIGH); delay(100); digitalWrite(PIN_BUZZER, LOW);
+  digitalWrite(PIN_BUZZER, BUZZER_ACTIVE_LOW ? HIGH : LOW);   // เงียบ
+  buzzerBeep(1, 100, 0);                                       // ทดสอบดัง 100ms แล้วกลับเงียบ
   Serial.println("Buzzer Ready");
 
   // I2C scanner — debug LCD: print address ที่เจอจริง (ถ้าไม่เจอ 0x27 อาจเป็น 0x3F หรือสายหลุด)
@@ -604,10 +610,13 @@ void pushToFirebase() {
 }
 
 // ─────────────────────────────────────────────────────
+// รองรับทั้ง active-HIGH และ active-LOW buzzer module (ตั้งค่าที่ BUZZER_ACTIVE_LOW)
 void buzzerBeep(int times, int onMs, int offMs) {
+  const int ON  = BUZZER_ACTIVE_LOW ? LOW  : HIGH;
+  const int OFF = BUZZER_ACTIVE_LOW ? HIGH : LOW;
   for (int i = 0; i < times; i++) {
-    digitalWrite(PIN_BUZZER, HIGH); delay(onMs);
-    digitalWrite(PIN_BUZZER, LOW);  if (i < times-1) delay(offMs);
+    digitalWrite(PIN_BUZZER, ON);  delay(onMs);
+    digitalWrite(PIN_BUZZER, OFF); if (i < times-1) delay(offMs);
   }
 }
 
