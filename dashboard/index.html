@@ -1411,7 +1411,14 @@ let chartRawData = null;
 const THAI_MONTHS = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 
 function padZ(n) { return String(n).padStart(2,'0'); }
-function fmtDate(d) { return `${d.getFullYear()}-${padZ(d.getMonth()+1)}-${padZ(d.getDate())}`; }
+// เวลาไทย (UTC+7) fix ตายตัว — ไม่ขึ้นกับ timezone ของเบราว์เซอร์ (firmware log ตามเวลาไทย)
+// เคล็ด: เลื่อน epoch +7 ชม. แล้วอ่านด้วย getUTC* → ได้ wall-clock ไทยเสมอ
+const TH_OFFSET_MS = 7 * 3600000;
+function thParts(d) { return new Date(d.getTime() + TH_OFFSET_MS); }
+function fmtDate(d) { const t = thParts(d); return `${t.getUTCFullYear()}-${padZ(t.getUTCMonth()+1)}-${padZ(t.getUTCDate())}`; }
+function thHour(d)  { return padZ(thParts(d).getUTCHours()); }
+function thDay(d)   { return thParts(d).getUTCDate(); }
+function thMonth(d) { return thParts(d).getUTCMonth(); }
 
 function setRange(range) {
   currentRange = range;
@@ -1438,9 +1445,8 @@ async function loadHistoryChart() {
       const today = fmtDate(now), yesterday = fmtDate(new Date(now - 86400000));
       const [sT,sY] = await Promise.all([db.ref(`/logs/${today}`).once('value'), db.ref(`/logs/${yesterday}`).once('value')]);
       const td=sT.val()||{}, yd=sY.val()||{};
-      const curHr = padZ(now.getHours());
       for (let i=23; i>=0; i--) {
-        const d=new Date(now-i*3600000), ds=fmtDate(d), hr=padZ(d.getHours());
+        const d=new Date(now-i*3600000), ds=fmtDate(d), hr=thHour(d);
         let e=(ds===today?td:yd)[hr]||null;
         // ถ้าชั่วโมงปัจจุบันยังไม่มี log → ใช้ค่า live sensor แทน
         if (!e && i===0 && sensorLive.airTemp!=null) {
@@ -1456,12 +1462,17 @@ async function loadHistoryChart() {
       const snaps = await Promise.all(dates.map(d => db.ref(`/logs/${fmtDate(d)}`).once('value')));
       dates.forEach((d, idx) => {
         const dayData = snaps[idx].val()||{};
-        let tS=0,hS=0,wS=0,cnt=0;
-        Object.values(dayData).forEach(e => { if(e?.air_temp_avg!=null){tS+=e.air_temp_avg;hS+=(e.air_humidity_avg||0);wS+=(e.water_temp_avg||0);cnt++;} });
-        const lbl = days===7 ? `${d.getDate()} ${THAI_MONTHS[d.getMonth()]}` : `${d.getDate()}/${d.getMonth()+1}`;
+        let tS=0,hS=0,wS=0,cnt=0,wCnt=0;
+        Object.values(dayData).forEach(e => {
+          if (e?.air_temp_avg   != null) { tS+=e.air_temp_avg; hS+=(e.air_humidity_avg||0); cnt++; }
+          if (e?.water_temp_avg != null) { wS+=e.water_temp_avg; wCnt++; }   // นับน้ำแยก — บางชั่วโมง DS18B20 อาจไม่มีค่า
+        });
+        const lbl = days===7 ? `${thDay(d)} ${THAI_MONTHS[thMonth(d)]}` : `${thDay(d)}/${thMonth(d)+1}`;
         labels.push(lbl);
-        if (cnt) { hasData=true; tData.push(+(tS/cnt).toFixed(1)); hData.push(+(hS/cnt).toFixed(1)); wData.push(+(wS/cnt).toFixed(1)); }
-        else      { tData.push(null); hData.push(null); wData.push(null); }
+        if (cnt || wCnt) hasData = true;
+        tData.push(cnt  ? +(tS/cnt).toFixed(1)  : null);
+        hData.push(cnt  ? +(hS/cnt).toFixed(1)  : null);
+        wData.push(wCnt ? +(wS/wCnt).toFixed(1) : null);
       });
     }
 
@@ -1765,7 +1776,7 @@ async function loadDetailChart(key, cfg) {
 
     for (let i=23; i>=0; i--) {
       const d  = new Date(now - i*3600000);
-      const ds = fmtDate(d), hr = padZ(d.getHours());
+      const ds = fmtDate(d), hr = thHour(d);
       const e  = (ds===today ? td : yd)[hr] || null;
       labels.push(hr+':00');
       const avg = e?.[cfg.logAvg] ?? null;
