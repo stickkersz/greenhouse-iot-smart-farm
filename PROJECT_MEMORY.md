@@ -52,7 +52,7 @@
 | XL4015 Step-Down | ✅ ใช้งาน **(หลัก)** | 12V → 5V จ่าย ESP32 + Relay + Fan 5V + Buzzer + LCD |
 | Boost Converter (XL6009/XL4016) | ✅ มีแล้ว (ตัวใหม่) | 12V → 24V สำหรับปั๊มน้ำ (ตัวเก่าพังเพราะ Short) |
 | Relay Module 4CH (5V) | ✅ ทำงาน | Active-LOW (LOW=เปิด, HIGH=ปิด) |
-| DHT22 | ✅ ทำงาน **(ถาวร)** | GPIO32 — วัดอุณหภูมิ + ความชื้นอากาศ |
+| DHT22 | ✅ ทำงาน **(ถาวร)** | GPIO18 — วัดอุณหภูมิ + ความชื้นอากาศ (ย้ายจาก GPIO32 ให้ไกล relay กัน noise, 2026-07-02) |
 | DS18B20 Waterproof | ✅ ทำงาน | GPIO4 — วัดอุณหภูมิน้ำ, **ต้องมี Pull-up 4.7kΩ** (DATA-VCC) |
 | LCD I2C 16x2 | ✅ มีแล้ว | Address 0x27, SDA=GPIO21, SCL=GPIO22, **ต้องการไฟ 5V** |
 | Buzzer Module (Active) | ✅ ทำงาน | GPIO33 (GND–I/O–VCC), เสียงเตือนแจ้งเตือน |

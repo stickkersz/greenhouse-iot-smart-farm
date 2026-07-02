@@ -22,7 +22,7 @@ static const WifiCred wifiNetworks[] = {
 
 // ===== Pin Mapping =====
 #define PIN_DS18B20       4
-#define PIN_DHT11        32
+#define PIN_DHT11        18   // ให้ห่างจากกลุ่ม relay (14,25,26,27) มากที่สุดเท่าที่ทำได้ กัน noise
 #define PIN_BUZZER       33
 
 #define PIN_RELAY_CH1    26   // สำรอง (manual/schedule)

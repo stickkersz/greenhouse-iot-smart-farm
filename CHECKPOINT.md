@@ -140,7 +140,7 @@ logs:          read=email, write=anon
 | CH4 | 25 | ปั๊มน้ำ 24V | Humidity (auto) |
 
 **Sensors:**
-- DHT22 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ (ชั่วคราว รอ SHT35)
+- DHT22 (GPIO18) — อุณหภูมิ + ความชื้นอากาศ (ถาวร ไม่ใช้ SHT35 แล้ว — ย้ายจาก GPIO32 ให้ไกล relay กัน noise)
 - DS18B20 (GPIO4) — อุณหภูมิน้ำ (ต้องมี Pull-up 4.7kΩ ที่ DATA-VCC)
 
 **WiFiMulti:**

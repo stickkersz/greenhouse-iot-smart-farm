@@ -10,7 +10,7 @@
 
   Hardware:
     - ESP32 DevKit V1
-    - DHT22 (GPIO32) — อุณหภูมิ + ความชื้นอากาศ
+    - DHT22 (GPIO18) — อุณหภูมิ + ความชื้นอากาศ (ย้ายจาก GPIO32 ให้ไกลกลุ่ม relay กัน noise)
     - DS18B20 Waterproof (GPIO4)   — อุณหภูมิน้ำ
     - Relay 4CH Active-LOW (การเดินสายจริง 2026-06-26):
         CH1 GPIO26 — สำรอง (manual/schedule only)
@@ -157,6 +157,11 @@ unsigned long lastNtpSync    = 0;
 #define DHT_REINIT_EVERY     3                 // ลอง dht22.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด (ไม่ใช่ครั้งเดียว)
 #define FAILSAFE_MAX_MS      (5UL*60*1000)     // อยู่ failsafe นานเกินนี้แล้ว DHT ยังไม่ฟื้น → ESP.restart() กู้ตัวเอง
 #define FB_DEAD_MS           (5UL*60*1000)     // Firebase ไม่พร้อมนานเกินนี้ → ESP.restart() กู้ WiFi/Firebase
+// Heartbeat LED (GPIO2 — ตรงกับ LED บนบอร์ด ESP32 DevKit V1 ส่วนใหญ่) — กระพริบ = loop() ยังรันอยู่
+// ถ้าเจอ "ค้าง" อีก ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ
+// โดยไม่ trip watchdog) · หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
+#define PIN_STATUS_LED        2
+#define HEARTBEAT_BLINK_MS    500
 #define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม.
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 #define TG_COOLDOWN_MS       (5UL*60*1000)     // กันสแปม — แจ้ง Telegram ต่อชนิดได้ทุก 5 นาที
@@ -203,6 +208,10 @@ void setup() {
   Serial.begin(115200);
   Serial.println("\n=== Greenhouse IoT Smart Farm v1.4.0 ===");
 
+  // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  digitalWrite(PIN_STATUS_LED, LOW);
+
   // Relay: ปิดทั้งหมดก่อน (boot-safe) — active-LOW → HIGH = ปิด
   const int relayPins[] = {PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4};
   for (int p : relayPins) { pinMode(p, OUTPUT); digitalWrite(p, RELAY_ACTIVE_LOW ? HIGH : LOW); }
@@ -218,6 +227,7 @@ void setup() {
   // (I2C write ไป address ที่ไม่มีอุปกรณ์จะเงียบ ไม่ error) ทำให้ backlight ติด (จัมเปอร์ไฟตรง)
   // แต่ตัวอักษรไม่ขึ้นเลย — เป็นสาเหตุที่พบบ่อยที่สุดของอาการนี้
   Wire.begin();
+  Wire.setClock(50000);   // ลดจาก default 100kHz — I2C ช้าลงแต่ทนต่อ noise บนบอร์ดที่มี relay/ปั๊มได้มากขึ้น
   uint8_t lcdAddr = 0;
   for (byte a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
@@ -343,10 +353,10 @@ void loop() {
       sendTelegram("✅ <b>SmartFarm ปุ๋ยไวกิ้ง</b>\nเปิดการแจ้งเตือน Telegram แล้ว\nระบบพร้อมส่งเตือนเมื่อมีเหตุผิดปกติ");
     }
     telegramWasEnabled = telegramEnabled;
-    if (!failsafeActive) {
-      bool changed = applyManualControl();
-      if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
-    }
+    // เรียกเสมอแม้อยู่ใน failsafe — ผู้ใช้ต้องสั่ง manual ได้ตลอดเวลา (ไม่ล็อกคนออกจากระบบตัวเอง)
+    // applyManualControl() แก้เฉพาะช่องที่ user สลับเป็น manual แล้วเท่านั้น ปลอดภัยเรียกได้เสมอ
+    bool changed = applyManualControl();
+    if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
   }
 
   // ทุก 1 ชั่วโมง: push hourly log แล้ว reset accumulator
@@ -361,11 +371,11 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED) syncNTP();
   }
 
-  // ทุก 60 วินาที: ตรวจสอบตารางเวลา (schedule)
+  // ทุก 60 วินาที: ตรวจสอบตารางเวลา (schedule) — เรียกเสมอ เหตุผลเดียวกับ applyManualControl()
   static unsigned long lastSchedTime = 0;
   if (now - lastSchedTime >= 60000) {
     lastSchedTime = now;
-    if (!failsafeActive) checkSchedule();
+    checkSchedule();
   }
 
   // ทุก 5 วินาที: สลับหน้า LCD
@@ -373,6 +383,16 @@ void loop() {
   if (now - lastLCDTime >= 5000) {
     lastLCDTime = now;
     updateLCD();
+  }
+
+  // Heartbeat LED — กระพริบทุก HEARTBEAT_BLINK_MS พิสูจน์ว่า loop() ยังวนอยู่จริง
+  // (ใช้ debug ตอนระบบ "ค้าง": กระพริบต่อ = loop ไม่ตาย, ปัญหาอยู่ที่จุดอื่น / ดับสนิท = loop ตายจริง)
+  static unsigned long lastBlinkTime = 0;
+  static bool ledState = false;
+  if (now - lastBlinkTime >= HEARTBEAT_BLINK_MS) {
+    lastBlinkTime = now;
+    ledState = !ledState;
+    digitalWrite(PIN_STATUS_LED, ledState);
   }
 }
 
@@ -587,17 +607,22 @@ bool timeValid() {
 // ─────────────────────────────────────────────────────
 // FAILSAFE — sensor อากาศพัง (อ่านพลาดติดกัน DHT_FAIL_LIMIT ครั้ง)
 // worst-case: ตัดสินใจ auto ไม่ได้ → ระบายอากาศไว้ก่อน + ปิดปั๊มกันน้ำท่วม
+//
+// สำคัญ: failsafe บังคับ safe-state "เฉพาะช่องที่ยังอยู่โหมด auto จริง" (auto และไม่ได้ถูก schedule
+// ครอบอยู่) เท่านั้น — ถ้าผู้ใช้สลับช่องไหนเป็น manual เอง (ตัดสินใจเองหลังเห็น alert) failsafe จะ
+// "ไม่บังคับทับ" ช่องนั้นอีก ผู้ใช้ต้องสั่งเองได้เสมอ ไม่ถูกล็อกออกจากระบบตัวเองแม้อยู่ในภาวะฉุกเฉิน
 void checkFailsafe() {
+  bool fanUnderAuto  = ch_isAuto[IDX_FAN]  && !ch_schedEnabled[IDX_FAN];
+  bool pumpUnderAuto = ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP];
+
   // เข้า failsafe: อ่านพลาดติดกัน DHT_FAIL_LIMIT ครั้ง
   if (!failsafeActive && dhtFailCount >= DHT_FAIL_LIMIT) {
     failsafeActive = true;
     failsafeSince = millis();
     lastFailsafeBeep = millis();
-    ch3_fanIn  = true;  setRelay(PIN_RELAY_CH3, true);   // เปิดพัดลม (CH3)
-    ch4_spare  = false; setRelay(PIN_RELAY_CH4, false);  // ปิดปั๊ม (CH4)
-    lastPumpSwitchTime = millis();
-    pumpOnSince = 0;
-    Serial.println("[FAILSAFE] เข้าโหมดฉุกเฉิน — sensor อากาศพัง → เปิดพัดลม + ปิดปั๊ม");
+    if (fanUnderAuto  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }   // เปิดพัดลม (CH3)
+    if (pumpUnderAuto &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); pumpOnSince = 0; }  // ปิดปั๊ม (CH4)
+    Serial.println("[FAILSAFE] เข้าโหมดฉุกเฉิน — sensor อากาศพัง → เปิดพัดลม + ปิดปั๊ม (เฉพาะช่อง auto)");
     if (Firebase.ready()) {
       Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "sensor_fault");
       Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
@@ -605,7 +630,8 @@ void checkFailsafe() {
     }
     if (buzzerEnabled) buzzerBeep(5);
     notifyTelegram(TG_SENSOR_FAULT, "🚨 <b>โหมดฉุกเฉิน (Failsafe)</b>\nSensor อากาศ (DHT22) อ่านค่าไม่ได้\n"
-      "ระบบเปิดพัดลม + ปิดปั๊มอัตโนมัติ\nกรุณาตรวจสอบเซ็นเซอร์ด่วน — SmartFarm ปุ๋ยไวกิ้ง");
+      "ระบบเปิดพัดลม + ปิดปั๊มอัตโนมัติ (เฉพาะช่องที่เป็น auto — สลับเป็น manual เพื่อคุมเองได้)\n"
+      "กรุณาตรวจสอบเซ็นเซอร์ด่วน — SmartFarm ปุ๋ยไวกิ้ง");
     return;
   }
 
@@ -617,10 +643,10 @@ void checkFailsafe() {
     return;
   }
 
-  // ยังอยู่ใน failsafe: ย้ำสถานะปลอดภัย + ดัง buzzer เตือนซ้ำทุก 10 นาที
+  // ยังอยู่ใน failsafe: ย้ำสถานะปลอดภัยเฉพาะช่อง auto + ดัง buzzer เตือนซ้ำทุก 10 นาที
   if (failsafeActive) {
-    if (!ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
-    if ( ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); }
+    if (fanUnderAuto  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
+    if (pumpUnderAuto &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); }
     if (buzzerEnabled && millis() - lastFailsafeBeep >= FAILSAFE_REALERT_MS) {
       lastFailsafeBeep = millis();
       buzzerBeep(5);
@@ -925,6 +951,16 @@ void checkSchedule() {
 // หน้า 2: สถานะ Pump (CH4) + Fan (CH3)
 void updateLCD() {
   if (!lcd) return;   // ไม่เจอ LCD ตอนบูต (address ผิด/สายหลุด) — ข้ามแทนที่จะ crash
+
+  // LCD ไม่มีทางอ่านค่ากลับมาเช็คว่าเพี้ยนไหม (ไม่เหมือน DHT/DS18B20 ที่ validate ค่าได้)
+  // ถ้า I2C โดน noise จาก relay/ปั๊มรบกวนกลางทาง ตัวควบคุมจออาจ "ค้าง" สถานะภายในเพี้ยน
+  // (เช่น cursor/DDRAMผิดตำแหน่ง) จนตัวอักษรกลายเป็นขยะถาวร — re-init เป็นระยะเชิงป้องกันไว้ก่อน
+  static uint8_t lcdCycles = 0;
+  if (++lcdCycles >= 6) {   // ทุก ~30 วิ (updateLCD ทุก 5 วิ) — re-init ล้างสถานะเพี้ยนที่อาจสะสม
+    lcdCycles = 0;
+    lcd->init();
+  }
+
   lcd->clear();
   char buf1[17], buf2[17];
 
