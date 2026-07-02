@@ -151,6 +151,12 @@ unsigned long lastNtpSync    = 0;
 #define DS_WATER_MIN        -20.0
 #define DS_WATER_MAX         80.0              // น้ำในฟาร์มไม่เกินนี้ → 85.0 (sentinel) ถูกตัดออกอัตโนมัติ
 #define DS_READ_RETRY        2                 // อ่าน DS18B20 ซ้ำได้กี่ครั้งถ้าค่าเสีย (สายยาว 4m รบกวน)
+// DHT22 อยู่ใกล้ relay/สาย pump บน expansion board มาก — noise ตอน pump switch ทำอ่านพลาด
+#define PUMP_SWITCH_QUIET_MS  3000             // เว้น 3 วิหลังปั๊มสวิตช์ ก่อนอ่าน DHT22 รอบถัดไป (รอ noise transient สงบ)
+// ── Recovery layer (กู้คืนตัวเองแทนที่จะค้างถาวร) ──
+#define DHT_REINIT_EVERY     3                 // ลอง dht22.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด (ไม่ใช่ครั้งเดียว)
+#define FAILSAFE_MAX_MS      (5UL*60*1000)     // อยู่ failsafe นานเกินนี้แล้ว DHT ยังไม่ฟื้น → ESP.restart() กู้ตัวเอง
+#define FB_DEAD_MS           (5UL*60*1000)     // Firebase ไม่พร้อมนานเกินนี้ → ESP.restart() กู้ WiFi/Firebase
 #define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม.
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 #define TG_COOLDOWN_MS       (5UL*60*1000)     // กันสแปม — แจ้ง Telegram ต่อชนิดได้ทุก 5 นาที
@@ -158,6 +164,9 @@ enum { TG_HIGH_TEMP=0, TG_LOW_HUM, TG_HIGH_WATER, TG_SENSOR_FAULT, TG_PUMP_CUTOF
 unsigned long tgCooldown[TG_TYPES] = {0};      // เวลาพ้น cooldown ของแต่ละชนิด
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
+unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน DHT22
+unsigned long failsafeSince      = 0;          // เวลาที่เข้า failsafe (0 = ไม่ได้อยู่ failsafe) — ใช้ timeout → restart
+unsigned long lastFirebaseOkTime = 0;          // เวลาที่ Firebase พร้อม/push สำเร็จล่าสุด — ใช้ connectivity watchdog
 unsigned long lastFailsafeBeep = 0;            // เวลาที่ buzzer เตือน failsafe ครั้งล่าสุด
 int  dhtFailCount  = 0;                        // นับ DHT อ่านพลาดติดกัน (เข้า failsafe)
 int  dhtGoodCount  = 0;                        // นับ DHT อ่านดีติดกัน (ออก failsafe)
@@ -285,6 +294,8 @@ void setup() {
   esp_task_wdt_add(NULL);
   Serial.printf("Watchdog Ready (%ds)\n", WDT_TIMEOUT_S);
 
+  lastFirebaseOkTime = millis();   // เริ่มนับ connectivity watchdog จากตอนนี้ (กัน restart ทันทีตอนบูต)
+
   Serial.println("=== Setup Complete ===\n");
 }
 
@@ -305,6 +316,7 @@ void loop() {
       pushToFirebase();
       checkAlerts();
       lastPushTime = millis();
+      lastFirebaseOkTime = millis();   // push สำเร็จ (Firebase พร้อม) — รีเซ็ต connectivity watchdog
     } else {
       Serial.println("[Firebase] Not ready — skip push");
     }
@@ -312,6 +324,14 @@ void loop() {
 
   // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 5 นาทีในโหมดอัตโนมัติ)
   pumpSafetyCheck();
+
+  // Connectivity watchdog — Firebase ไม่พร้อมนานเกิน FB_DEAD_MS → restart กู้ WiFi/Firebase
+  // (watchdog ปกติจับได้แค่ loop ค้าง ไม่จับ "loop วนอยู่แต่เน็ตตายเงียบ" — อันนี้อุดช่องโหว่นั้น)
+  if (millis() - lastFirebaseOkTime >= FB_DEAD_MS) {
+    Serial.println("[RECOVERY] Firebase ไม่พร้อมนานเกินกำหนด → ESP.restart() กู้การเชื่อมต่อ");
+    delay(300);
+    ESP.restart();
+  }
 
   // poll คำสั่งควบคุมทุก CONTROL_POLL_MS (1.5 วิ) — รอ 2 วิหลัง push กัน SSL ชน
   static unsigned long lastControlPoll = 0;
@@ -396,31 +416,38 @@ void loadControlFromFirebase() {
 
 // ─────────────────────────────────────────────────────
 void readSensors() {
-  airTemp     = dht22.readTemperature();
-  airHumidity = dht22.readHumidity();
-  // ถือว่าพังถ้า NaN หรือค่านอกช่วงสมเหตุผล (จับ sensor ส่งค่าขยะ ไม่ใช่แค่ NaN)
-  bool dhtBad = isnan(airTemp) || isnan(airHumidity)
-             || airTemp < DHT_TEMP_MIN || airTemp > DHT_TEMP_MAX
-             || airHumidity < 0 || airHumidity > 100;
-  if (dhtBad) {
-    Serial.println("[DHT22] อ่านค่าผิดปกติ (NaN หรือ นอกช่วง)");
-    airTemp = 0; airHumidity = 0;
-    dhtFailCount++; dhtGoodCount = 0;
-    // DHT22 ไวต่อ noise บนไฟเลี้ยงมาก (เช่น ตอน relay ตัดโหลดมอเตอร์/พัดลม) — พอโดน noise
-    // มักจะ "ค้าง" อ่านไม่ได้ตลอดจนกว่าจะรีเซ็ตไฟ ลอง re-init driver ให้เองตรงนี้
-    // แทนที่จะรอ full power cycle จากคน (พลาดครบ limit พอดี = จังหวะเดียวกับเข้า failsafe)
-    if (dhtFailCount == DHT_FAIL_LIMIT) {
-      Serial.println("[DHT22] พลาดติดกันครบ limit — ลอง re-init sensor");
-      dht22.begin();
-    }
+  // DHT22 อยู่ใกล้ relay/สายปั๊มบน expansion board มาก — ปั๊มสวิตช์ทำให้เกิด noise transient
+  // รบกวน timing ของ DHT22 ได้ทันที เว้นช่วง PUMP_SWITCH_QUIET_MS ก่อนลองอ่าน กันอ่านชนจังหวะ noise
+  bool inPumpQuietWindow = (lastPumpSwitchTime != 0)
+                         && (millis() - lastPumpSwitchTime < PUMP_SWITCH_QUIET_MS);
+  if (inPumpQuietWindow) {
+    Serial.println("[DHT22] ข้ามรอบนี้ — ปั๊มเพิ่งสวิตช์ รอ noise transient สงบก่อน (ใช้ค่าเดิม)");
   } else {
-    dhtFailCount = 0;
-    if (dhtGoodCount < 1000) dhtGoodCount++;
-    // เก็บเฉพาะค่าดีเข้า control-averaging buffer (กัน autoControl() ตัดสินใจจากค่าเพี้ยน)
-    ctrlBufAT[ctrlBufIdx] = airTemp;
-    ctrlBufAH[ctrlBufIdx] = airHumidity;
-    ctrlBufIdx = (ctrlBufIdx + 1) % CTRL_AVG_N;
-    if (ctrlBufATCount < CTRL_AVG_N) ctrlBufATCount++;
+    airTemp     = dht22.readTemperature();
+    airHumidity = dht22.readHumidity();
+    // ถือว่าพังถ้า NaN หรือค่านอกช่วงสมเหตุผล (จับ sensor ส่งค่าขยะ ไม่ใช่แค่ NaN)
+    bool dhtBad = isnan(airTemp) || isnan(airHumidity)
+               || airTemp < DHT_TEMP_MIN || airTemp > DHT_TEMP_MAX
+               || airHumidity < 0 || airHumidity > 100;
+    if (dhtBad) {
+      Serial.println("[DHT22] อ่านค่าผิดปกติ (NaN หรือ นอกช่วง)");
+      airTemp = 0; airHumidity = 0;
+      dhtFailCount++; dhtGoodCount = 0;
+      // DHT22 โดน noise แล้วมัก "ค้าง" อ่านไม่ได้จนกว่าจะรีเซ็ตไฟ — ลอง re-init driver เอง
+      // ลองซ้ำทุกๆ DHT_REINIT_EVERY ครั้งที่พลาด (ไม่ใช่ครั้งเดียวแล้วยอมแพ้) เผื่อฟื้นได้โดยไม่ต้อง power cycle
+      if (dhtFailCount % DHT_REINIT_EVERY == 0) {
+        Serial.printf("[DHT22] พลาดสะสม %d ครั้ง — ลอง re-init sensor\n", dhtFailCount);
+        dht22.begin();
+      }
+    } else {
+      dhtFailCount = 0;
+      if (dhtGoodCount < 1000) dhtGoodCount++;
+      // เก็บเฉพาะค่าดีเข้า control-averaging buffer (กัน autoControl() ตัดสินใจจากค่าเพี้ยน)
+      ctrlBufAT[ctrlBufIdx] = airTemp;
+      ctrlBufAH[ctrlBufIdx] = airHumidity;
+      ctrlBufIdx = (ctrlBufIdx + 1) % CTRL_AVG_N;
+      if (ctrlBufATCount < CTRL_AVG_N) ctrlBufATCount++;
+    }
   }
 
   // DS18B20 (สาย jumper ยาว ~4m ใกล้พัดลม 220V/ปั๊ม → noise สูง) — อ่านซ้ำถ้าได้ค่าเสีย
@@ -443,8 +470,9 @@ void readSensors() {
     Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด)\n", wt);
   }
 
-  // สะสมข้อมูลอากาศ สำหรับ hourly log (ข้ามถ้า sensor อากาศยังอ่านไม่ได้)
-  if (airTemp > 0 || airHumidity > 0) {
+  // สะสมข้อมูลอากาศ สำหรับ hourly log — ข้ามถ้า sensor อ่านไม่ได้ หรือรอบนี้ข้าม DHT ไปเพราะ pump quiet window
+  // (กันเอาค่าเก่าจากรอบก่อนมานับซ้ำ ทำ hourly average เพี้ยน)
+  if (!inPumpQuietWindow && (airTemp > 0 || airHumidity > 0)) {
     h_sumAT += airTemp;     h_maxAT = max(h_maxAT, airTemp);     h_minAT = min(h_minAT, airTemp);
     h_sumAH += airHumidity; h_maxAH = max(h_maxAH, airHumidity); h_minAH = min(h_minAH, airHumidity);
     h_count++;
@@ -497,8 +525,8 @@ void autoControl() {
   }
   // CH4 ปั๊มน้ำ — เปิดได้เฉพาะเมื่อพ้น safety lock (cooldown)
   if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP] && ctrlBufATCount > 0) {
-    if (pumpOpen  && !ch4_spare && millis() >= pumpLockUntil) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  }
-    if (pumpClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); }
+    if (pumpOpen  && !ch4_spare && millis() >= pumpLockUntil) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis(); }
+    if (pumpClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); }
   }
 
   if (fanOpen)  Serial.printf("[AUTO] พัดลมเปิด — AvgT:%.1f≥%.1f หรือ AvgWT:%.1f≥%.1f\n", avgAT, ton, avgWT, wton);
@@ -533,6 +561,7 @@ bool applyManualControl() {
   if (!ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP] && (bool)ch_manual[IDX_PUMP] != ch4_spare) {
     ch4_spare = ch_manual[IDX_PUMP];
     setRelay(PIN_RELAY_CH4, ch4_spare);
+    lastPumpSwitchTime = millis();
     Serial.printf("[MANUAL] CH4 Pump → %s\n", ch4_spare ? "ON" : "OFF");
     changed = true;
   }
@@ -562,9 +591,11 @@ void checkFailsafe() {
   // เข้า failsafe: อ่านพลาดติดกัน DHT_FAIL_LIMIT ครั้ง
   if (!failsafeActive && dhtFailCount >= DHT_FAIL_LIMIT) {
     failsafeActive = true;
+    failsafeSince = millis();
     lastFailsafeBeep = millis();
     ch3_fanIn  = true;  setRelay(PIN_RELAY_CH3, true);   // เปิดพัดลม (CH3)
     ch4_spare  = false; setRelay(PIN_RELAY_CH4, false);  // ปิดปั๊ม (CH4)
+    lastPumpSwitchTime = millis();
     pumpOnSince = 0;
     Serial.println("[FAILSAFE] เข้าโหมดฉุกเฉิน — sensor อากาศพัง → เปิดพัดลม + ปิดปั๊ม");
     if (Firebase.ready()) {
@@ -581,6 +612,7 @@ void checkFailsafe() {
   // ออกจาก failsafe: ต้องอ่านดีติดกัน DHT_RECOVER_LIMIT ครั้ง (hysteresis — กัน flapping จากสายหลวม)
   if (failsafeActive && dhtGoodCount >= DHT_RECOVER_LIMIT) {
     failsafeActive = false;
+    failsafeSince = 0;
     Serial.println("[FAILSAFE] sensor กลับมาปกติ (อ่านดีติดกัน) → คืนการควบคุมอัตโนมัติ");
     return;
   }
@@ -588,11 +620,19 @@ void checkFailsafe() {
   // ยังอยู่ใน failsafe: ย้ำสถานะปลอดภัย + ดัง buzzer เตือนซ้ำทุก 10 นาที
   if (failsafeActive) {
     if (!ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
-    if ( ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); }
+    if ( ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); }
     if (buzzerEnabled && millis() - lastFailsafeBeep >= FAILSAFE_REALERT_MS) {
       lastFailsafeBeep = millis();
       buzzerBeep(5);
       Serial.println("[FAILSAFE] ยังฉุกเฉินอยู่ — เตือนซ้ำ (sensor ยังไม่กลับมา)");
+    }
+    // RECOVERY: ติด failsafe นานเกิน FAILSAFE_MAX_MS แล้ว DHT ยังไม่ฟื้น → restart กู้ตัวเอง
+    // (เท่ากับ power-cycle ที่คนต้องทำมือ) — หลังบูต ปั๊มปิดอยู่แล้ว noise หาย DHT มักกลับมาปกติ
+    // ถ้ายังพัง จะ re-enter failsafe (พัดลมเปิด = สถานะปลอดภัยอยู่แล้ว) แต่ระบบไม่ค้างตายถาวรอีก
+    if (failsafeSince != 0 && millis() - failsafeSince >= FAILSAFE_MAX_MS) {
+      Serial.println("[RECOVERY] failsafe นานเกินกำหนด — DHT ไม่ฟื้น → ESP.restart() กู้ระบบ");
+      delay(300);   // ให้ Serial flush ก่อน
+      ESP.restart();
     }
   }
 }
@@ -609,6 +649,7 @@ void pumpSafetyCheck() {
       pumpOnSince = now;
     } else if (now - pumpOnSince >= PUMP_MAX_RUNTIME_MS) {
       ch4_spare = false; setRelay(PIN_RELAY_CH4, false);
+      lastPumpSwitchTime = now;
       pumpOnSince   = 0;
       pumpLockUntil = now + PUMP_COOLDOWN_MS;
       Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 5 นาที (พัก 5 นาที)");
@@ -870,6 +911,7 @@ void checkSchedule() {
     if (shouldBeOn != *states[i]) {
       *states[i] = shouldBeOn;
       setRelay(pins[i], shouldBeOn);
+      if (i == IDX_PUMP) lastPumpSwitchTime = millis();
       Serial.printf("[SCHED] CH%d → %s (now:%s on:%s off:%s)\n",
         i+1, shouldBeOn?"ON":"OFF", nowBuf, ch_schedOn[i], ch_schedOff[i]);
     }

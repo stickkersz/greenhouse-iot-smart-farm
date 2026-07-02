@@ -1,11 +1,11 @@
-# Greenhouse IoT Smart Farm — Checkpoint v1.4.0
+# Greenhouse IoT Smart Farm — Checkpoint
 
-**Date:** 2026-06-29 (อัปเดต v1.4.0)  
-**Status:** ✅ Production Ready — Tested at Company  
-**Version:** 1.4.0  
+**Date:** 2026-07-02  
+**Status:** ⚠️ Dashboard deployed + committed — Firmware flash ยังไม่ยืนยัน (ดู Next Steps)  
+**Version:** 1.4.0 (comment ในโค้ด — ยังไม่ bump แม้ผ่าน Auto Control v2 มาแล้ว)  
 **GitHub:** https://github.com/stickkersz/greenhouse-iot-smart-farm (private)  
 **Deployed:** https://greenhouse-iot-smart-farm.web.app  
-**Last Commit:** `f98160e feat: redesign settings + dynamic alert thresholds + presets`
+**Last Commit:** `cc45618 feat: auto control v2 — water-temp fan assist + pump hysteresis + finer precision`
 
 ---
 
@@ -215,28 +215,43 @@ logs:          read=email, write=anon
 
 ---
 
-## 🎯 Next Steps (Phase 2)
+## 🎯 Next Steps (ตรวจสอบล่าสุด 2026-07-02)
+
+### 🔴 ด่วนที่สุด
+- [ ] **Flash firmware ล่าสุดขึ้นบอร์ด** — โค้ด commit ครบแล้ว (buzzer active-LOW, LCD auto-detect,
+  DHT22 self-heal, Auto Control v2) แต่ยังไม่ยืนยันว่า flash ขึ้น ESP32 จริงแล้ว
+- [ ] ใส่ Telegram Token/Chat ID จริงใน `config.h` (ตอนนี้ยัง placeholder)
+- [ ] ตัดสินใจ `PUMP_MAX_RUNTIME_MS` — ตอนนี้ 10 นาทีชั่วคราว (ปกติ 5) เพื่อทดสอบ noise/DHT22
 
 ### Hardware
-- [ ] ซื้อ SHT35 แทน DHT22 (แม่นยำกว่า)
-- [ ] ต่อปั๊มน้ำ CH1 จริง
-- [ ] ต่อพัดลม CH2/CH3 จริง
-- [ ] ทดสอบ Auto mode ครบ loop
+- [x] ต่อปั๊มน้ำ CH4 จริง ✅ (2026-07-01, ทำงานปกติ)
+- [x] ต่อพัดลม CH3 220V จริง ✅ (2026-07-01, ทำงานปกติ)
+- [ ] แก้ปัญหาพัดลม 5V ระบายความร้อนกล่องไม่หมุน
+- [ ] ทดสอบ Auto mode ครบ loop กับฮาร์ดแวร์จริงต่อเนื่อง (มีรายงาน false failsafe ทุก ~5 นาที
+  อยู่ระหว่างวินิจฉัย — ดู PROJECT_MEMORY.md หัวข้อ 15)
+- ❌ SHT35 ยกเลิกแล้ว — ใช้ DHT22 ถาวร ไม่ต้องซื้อ
 
 ### Software
-- [ ] Dark Mode toggle
-- [x] Telegram alerts (ESP32 ยิง Bot API ตรง — ใช้ได้บน Spark free) ✅
-- [ ] Email alerts (Firebase Cloud Functions — ต้อง Blaze)
+- [x] Dark Mode toggle ✅ (ทำเสร็จแล้ว)
+- [x] Telegram alerts (ESP32 ยิง Bot API ตรง — ใช้ได้บน Spark free) ✅ โค้ดเสร็จ รอ token จริง
+- [x] Auto Control v2 — พัดลมคุมด้วยน้ำ+อากาศ, ปั๊ม hysteresis, sensor averaging ✅
+- [ ] Email alerts (Firebase Cloud Functions — ต้อง Blaze, ยังไม่จำเป็นเพราะมี Telegram แล้ว)
 - [ ] Multiple zones support
 - [ ] Weekly/monthly report PDF
+
+### ค้างพิจารณา (ไม่เร่งด่วน)
+- [ ] ปุ่มสมัคร account หน้า Login — **แนะนำไม่ทำ** (control write เปิดให้ทุก account คุมฮาร์ดแวร์จริง
+  ถ้าจำเป็นควรทำ invite-only ไม่ใช่ signup สาธารณะ)
+- [ ] Redact WiFi password จาก git history เก่า (ไฟล์ปัจจุบัน redact แล้ว แต่ history เก่ายังมี)
+- [ ] Bump firmware version comment ในโค้ด (ยังเขียน "v1.4.0" ทั้งที่ผ่าน Auto Control v2 มาแล้ว)
 
 ### Maintenance
 - [ ] Monitor Firebase free tier usage
 - [ ] Regular git backup
-- [ ] Test WiFi failover home ↔ company
+- [ ] Test WiFi failover ระหว่างเครือข่าย floor-1-2-2.4G ↔ Lab_F2-2.4G
 
 ---
 
-**Last Updated:** 2026-06-23  
+**Last Updated:** 2026-07-02  
 **Commits:** `f090dd9` → `f98160e`  
 **Tested by:** Tonkla (IT Intern, KMUTT CS Year 2)

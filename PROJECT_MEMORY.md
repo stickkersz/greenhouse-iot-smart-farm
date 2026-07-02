@@ -56,9 +56,9 @@
 | DS18B20 Waterproof | ✅ ทำงาน | GPIO4 — วัดอุณหภูมิน้ำ, **ต้องมี Pull-up 4.7kΩ** (DATA-VCC) |
 | LCD I2C 16x2 | ✅ มีแล้ว | Address 0x27, SDA=GPIO21, SCL=GPIO22, **ต้องการไฟ 5V** |
 | Buzzer Module (Active) | ✅ ทำงาน | GPIO33 (GND–I/O–VCC), เสียงเตือนแจ้งเตือน |
-| Fan 220V AC (พัดลม Shutter 10") | 🛒 ต้องซื้อ × 2 | ระบายอากาศโรงเรือน — ช่างไฟเดินสาย |
-| Fan Module 5V | ⚠️ มีปัญหา | ระบายความร้อนกล่อง — ยังไม่หมุน (ตรวจ JUMP jumper) |
-| ปั๊มน้ำ DC 24V | 🛒 ต้องซื้อ | แนะนำ: ไดอะแฟรม 24V, 2–3 bar, 5–10 L/min |
+| Fan 220V AC (พัดลม ดูดเข้า) | ✅ ต่อจริงแล้ว (2026-07-01) | CH3 — evaporative cooling, ทำงานปกติ |
+| Fan Module 5V | ⚠️ มีปัญหา (ยังไม่ยืนยันแก้) | ระบายความร้อนกล่อง — ยังไม่หมุน (ตรวจ JUMP jumper) |
+| ปั๊มน้ำ DC 24V | ✅ ต่อจริงแล้ว (2026-07-01) | CH4 — ทำงานปกติ |
 | PWM Speed Controller CW008 | ✅ มีแล้ว | IN+/IN−/OUT+/OUT− สำหรับควบคุมความเร็วปั๊ม |
 
 > ❌ **SHT35 ยกเลิกแล้ว** — ไม่ซื้อ ใช้ DHT22 ถาวร (SHT35 ถูกลบออกจาก firmware ทั้งหมดแล้ว)
@@ -179,7 +179,7 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
 
 ---
 
-## 8. Firmware v1.4.0 — จุดสำคัญ
+## 8. Firmware — จุดสำคัญ (โค้ดล่าสุดใน repo — ⚠️ ยังไม่ยืนยันว่า flash ขึ้นบอร์ดจริงแล้ว ดูหัวข้อ 15)
 
 ### Firebase Auth
 ```cpp
@@ -209,41 +209,67 @@ volatile bool ch_isAuto[4] = {false, false, true, true};  // CH3/CH4 = auto
 #define IDX_PUMP 3   // ch4_spare  → ปั๊มน้ำ (ความชื้น + pump safety)
 ```
 
-### Thresholds (default values)
+### Thresholds (default values — ทั้งหมดปรับได้จาก Dashboard Settings, step 0.1)
 ```
-TEMP_ON       = 35.0°C   เปิดพัดลม+ปั๊ม (auto)
-TEMP_OFF      = 32.0°C   ปิดพัดลม+ปั๊ม (auto)
-HUMIDITY_MIN  = 60.0%    เปิดปั๊มถ้าต่ำกว่า (auto)
+TEMP_ON        = 35.0°C   เปิดพัดลม CH3 (auto) — หรือ water_temp_on ก็เปิดได้
+TEMP_OFF       = 32.0°C   ปิดพัดลม CH3 — ต้องอากาศ "และ" น้ำเย็นพอทั้งคู่ถึงปิด
+water_temp_on  = 30.0°C   พัดลมช่วยเปิดเมื่อน้ำร้อน (evaporative cooling)
+water_temp_off = 27.0°C   ยกเลิกเงื่อนไขน้ำเมื่อน้ำเย็นพอ
+HUMIDITY_MIN   = 60.0%    เปิดปั๊ม CH4 ถ้าต่ำกว่า (auto)
+humidity_max   = 75.0%    ปิดปั๊ม CH4 (hysteresis คู่กับ humidity_min กันปั๊มกระพริบ)
 thresh_temp_alert = 38.0°C   → Buzzer + Telegram
 thresh_hum_alert  = 40.0%    → Buzzer + Telegram
 ```
 
+### Auto Control v2 — Water-assisted Fan + Pump Hysteresis + Sensor Averaging (เพิ่ม 2026-07-02)
+```cpp
+// พัดลม (CH3): เปิดถ้าอากาศร้อน "หรือ" น้ำร้อน (worst-case wins)
+//              ปิดต้องอากาศเย็น "และ" น้ำเย็นพอ (หรือไม่มีน้ำให้เช็ค — fallback อากาศอย่างเดียว)
+bool fanOpen  = (avgAT >= ton)  || (haveWater && avgWT >= wton);
+bool fanClose = (avgAT <= toff) && (!haveWater || avgWT <= wtoff);
+// ปั๊ม (CH4): hysteresis จริง กันกระพริบใกล้ threshold เดียว
+bool pumpOpen  = (avgAH > 0 && avgAH < hmin);
+bool pumpClose = (avgAH == 0 || avgAH >= hmax);
+// avgAT/avgAH/avgWT = ค่าเฉลี่ย 3 รอบล่าสุด (90 วิ, CTRL_AVG_N) — กัน relay สั่งจาก glitch ครั้งเดียว
+// buffer แยกต่างหากจาก hourly-log accumulator (h_sumAT ฯลฯ) โดยสิ้นเชิง
+```
+
 ### Pump Safety
 ```cpp
-#define PUMP_MAX_RUNTIME_MS  (5UL*60*1000)  // เดินต่อเนื่องได้สูงสุด 5 นาที
-#define PUMP_COOLDOWN_MS     (5UL*60*1000)  // พักปั๊ม 5 นาที หลังตัด
+#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)  // ⚠️ ตอนนี้ 10 นาที (ปกติ 5) — ปรับชั่วคราวเพื่อทดสอบ
+                                              // สมมติฐาน "pump cutoff ทำ noise กวน DHT22 → false failsafe"
+                                              // ยังไม่ได้ผลทดสอบกลับมา — ต้องตัดสินใจ: กลับเป็น 5 หรือคงไว้
+#define PUMP_COOLDOWN_MS     (5UL*60*1000)   // พักปั๊ม 5 นาที หลังตัด
 ```
 
-### LCD I2C (3 Pages, สลับทุก 5 วิ)
-```
-Page 0: Air:XX.X°C   / Hum:XX.X%
-Page 1: Wat:XX.X°C   / WiFi:XXdBm
-Page 2: P:ON Fo:OFF  / Fi:ON Sp:OFF  (สถานะ Relay)
-```
-
-### Buzzer
+### LCD I2C (auto-detect address, 3 Pages, สลับทุก 5 วิ) — เพิ่ม 2026-07-02
 ```cpp
-void buzzerBeep(int times, int onMs=200, int offMs=150);
-// Boot: beep 1 ครั้ง
+// เดิม hardcode 0x27 ตายตัว — ถ้าโมดูลจริงเป็น 0x3F เขียนไปแล้วไม่มีใครตอบ (เงียบ ไม่ error)
+// backlight ติดได้เพราะบางโมดูลจัมเปอร์ไฟตรง แต่ตัวอักษรไม่ขึ้นเลย — สาเหตุที่พบบ่อยสุด
+// แก้เป็น scan หา 0x27/0x3F ตอนบูต แล้วค่อยสร้าง LiquidCrystal_I2C* lcd แบบ pointer
+// updateLCD() มี guard if (!lcd) return; กัน crash ถ้าไม่เจอจอ (สายหลุด/address อื่น)
+Page 0: Temp:XX.X°C  / Humidity:XX.X%
+Page 1: Water:XX.X°C (หรือ "-- (err)" ถ้า DS18B20 พัง) / WiFi:XXdBm
+Page 2: Pump:ON/OFF  / Fan:ON/OFF
+```
+
+### Buzzer (active-LOW — เพิ่ม 2026-07-01)
+```cpp
+#define BUZZER_ACTIVE_LOW true   // โมดูล 3 ขา (S/VCC/GND) ส่วนใหญ่เป็น active-LOW เหมือน relay
+                                  // เดิม hardcode active-HIGH → ปลายทางทุก path จบที่ LOW = ดังค้างตลอดเวลา
+void buzzerBeep(int times, int onMs=200, int offMs=150);  // ใช้ ON/OFF ตาม flag แทน hardcode
+// Boot: ตั้งเงียบก่อน → ทดสอบดัง 100ms → กลับเงียบ (ไม่ใช่ดังค้างเหมือนเดิม)
 // Alert: buzzerBeep(3) เมื่ออุณหภูมิ/ความชื้นผิดปกติ (ถ้า buzzerEnabled=true)
 ```
 
-### DS18B20
+### DS18B20 (self-heal DHT22 เพิ่ม 2026-07-01)
 ```cpp
 ds18b20.begin();
 waterTemp = ds18b20.getTempCByIndex(0);
-// กรองค่า -127°C และ 85°C (error values) — อ่านซ้ำอัตโนมัติ
-// External Pull-up 5.1kΩ ระหว่าง VCC กับ DAT (ที่ฝั่ง ESP32)
+// กรองค่า -127°C และ 85°C (error values) — อ่านซ้ำอัตโนมัติ (DS_READ_RETRY=2)
+// ต้องมี Pull-up 4.7-5kΩ ระหว่าง DATA-VCC (ยืนยันแล้วว่าจำเป็น — ทดสอบแล้วใช้ได้)
+// DHT22: พัง 3 ครั้งติด (DHT_FAIL_LIMIT) → ลอง dht22.begin() re-init เอง
+//   (สมมติฐาน: relay ตัดโหลดมอเตอร์ → noise → DHT22 ค้าง ต้องรีเซ็ตไฟถึงจะหาย → ลอง soft-reset ก่อน)
 ```
 
 ### Relay (Active-LOW)
@@ -362,19 +388,37 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
 ---
 
-## 15. สิ่งที่ต้องทำต่อ (TODO)
+## 15. สิ่งที่ต้องทำต่อ (TODO — ตรวจสอบล่าสุด 2026-07-02)
 
-### 🔴 ด่วน — Hardware
-- [ ] ใส่ Telegram Token + Chat ID ใน `config.h` แล้ว upload firmware ใหม่
-- [ ] แก้ปัญหาพัดลม 5V ไม่หมุน (ตรวจ JUMP jumper)
-- [ ] ซื้อ ปั๊มน้ำ DC 24V ไดอะแฟรม 2–3 bar 5–10 L/min (~300–700฿)
-- [ ] ซื้อ Fan Shutter 10" AC 220V × 2 (~1,000–1,600฿) + ให้ช่างไฟเดินสาย
+### 🔴 ด่วนที่สุด — Flash firmware (โค้ด commit แล้วในทุกจุดด้านล่าง แต่ยังไม่ยืนยันว่าขึ้นบอร์ดจริง)
+- [ ] **Flash firmware ล่าสุด** ผ่าน Arduino IDE — รวมการแก้ทั้งหมดนี้ในรอบเดียว:
+  Buzzer active-LOW fix · LCD auto-detect address (0x27/0x3F) · DHT22 self-heal ·
+  Auto Control v2 (พัดลมคุมด้วยน้ำ+อากาศ, ปั๊ม hysteresis, sensor averaging)
+- [ ] **ตัดสินใจเรื่อง PUMP_MAX_RUNTIME_MS** — ตอนนี้ตั้งไว้ 10 นาที (ปกติ 5) เพื่อทดสอบสมมติฐาน
+  noise/DHT22 failsafe — ถ้ายืนยันแล้วว่าไม่ใช่สาเหตุ ควรปรับกลับเป็น 5 นาที (ค่า safety เดิม)
+- [ ] **ใส่ Telegram Token + Chat ID จริง** ใน `config.h` (ตอนนี้ยังเป็น placeholder text อยู่
+  — ฟีเจอร์ Telegram compile ผ่านแต่จะไม่ส่งอะไรจนกว่าจะใส่ token จริง)
 
-### 🟡 Firmware
-- [ ] ทดสอบ Telegram Alert (หลังใส่ token ใน config.h)
+### 🟡 Hardware ที่ยังค้าง
+- [ ] แก้ปัญหาพัดลม 5V (ระบายความร้อนกล่อง IP65) ไม่หมุน — ตรวจ JUMP jumper (ยังไม่ยืนยันว่าแก้แล้ว)
+- [ ] ปั๊มน้ำ (CH4) + พัดลม 220V (CH3) ต่อจริงแล้ว ทำงานปกติ (ยืนยัน 2026-07-01) ✅
 
-### 🟢 Dashboard
-- [ ] Dashboard Redesign (Prompt พร้อมแล้ว — รอส่งให้ Claude Code)
+### 🟢 Software ที่ทำเสร็จแล้วรอบนี้ (2026-06-29 – 2026-07-02)
+- [x] Telegram Alert (โค้ด+dashboard toggle เสร็จ — รอ token จริง)
+- [x] Relay channel remap ตามสายจริง (CH4=ปั๊ม, CH3=พัดลม, CH1=สำรอง)
+- [x] DS18B20 hardening (retry, กรองค่าขยะ) + ยืนยัน pull-up 4.7-5kΩ จำเป็นจริง (ทดสอบแล้ว)
+- [x] ลบระบบ Soil Moisture ทั้งหมด (ไม่ใช้แล้ว)
+- [x] แก้บั๊กกราฟย้อนหลัง (ค่าเฉลี่ยน้ำเพี้ยน + timezone UTC+7 ตายตัว)
+- [x] Buzzer active-LOW fix
+- [x] LCD auto-detect I2C address + DHT22 self-heal
+- [x] Auto Control v2 (น้ำช่วยคุมพัดลม, ปั๊ม hysteresis, sensor averaging)
+- [x] Dashboard redesign (เสร็จไปหลาย session ก่อนแล้ว)
+
+### 🔵 ค้างไว้พิจารณา (ไม่เร่งด่วน)
+- [ ] Login: ยังไม่มีปุ่มสมัคร account — แนะนำไม่ทำ (control write เปิดให้ทุก account ที่ login ได้
+  คุมฮาร์ดแวร์จริง) ถ้าต้องการ ควรทำ invite-only ไม่ใช่ signup สาธารณะ
+- [ ] Redact WiFi password จาก git history เก่า (ยังอยู่ใน commit history แม้ redact จากไฟล์ปัจจุบันแล้ว)
+- [ ] Firmware version comment ในโค้ดยังเขียน "v1.4.0" ทั้งที่ฟีเจอร์ผ่านมาไกลกว่านั้นแล้ว (ยังไม่ bump)
 
 ### 🚀 Deploy
 ```bash
@@ -387,4 +431,4 @@ firebase deploy
 
 ---
 
-*อัปเดตล่าสุด: 2026-06-30 (Firmware v1.4.0)*
+*อัปเดตล่าสุด: 2026-07-02*
