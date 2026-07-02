@@ -222,6 +222,16 @@
     .mode-btn{flex:1;font-size:.68rem;font-weight:600;padding:5px 0;border-radius:6px;border:none;background:transparent;color:var(--muted);cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
     .mode-btn.active{background:var(--mode-active-bg);color:var(--accent-text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 
+    /* ── Global Auto/Manual switch (สลับ CH3+CH4 พร้อมกัน) ── */
+    .global-mode-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
+    .global-mode-label{font-size:.8rem;font-weight:700;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .global-mode-status{font-size:.66rem;font-weight:700;padding:2px 9px;border-radius:99px;background:var(--accent-soft);color:var(--accent-text)}
+    .global-mode-status.mixed{background:#fef3c7;color:#b45309}
+    .global-mode-row{display:flex;gap:8px}
+    .global-mode-btn{flex:1;font-size:.82rem;font-weight:700;padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-2);color:var(--muted);cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
+    .global-mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .global-mode-hint{font-size:.68rem;color:var(--muted);margin-top:9px;line-height:1.4}
+
     /* ── Schedule ── */
     .schedule-wrap{border:1px solid var(--border);border-radius:10px;overflow:hidden}
     .schedule-wrap summary{padding:7px 11px;font-size:.73rem;font-weight:600;color:var(--sub);cursor:pointer;list-style:none;display:flex;align-items:center;gap:5px;user-select:none;transition:background .2s}
@@ -590,6 +600,17 @@
         <div class="sh-icon">🔌</div>
         <div><div class="sh-title">ควบคุมอุปกรณ์</div><div class="sh-sub">Manual = สั่งเองได้ · Auto = ระบบจัดการ · Schedule = ตั้งเวลา</div></div>
       </div>
+
+      <!-- Global mode switch — สลับพัดลม (CH3) + ปั๊มน้ำ (CH4) เป็น Auto/Manual พร้อมกันในคลิกเดียว -->
+      <div class="global-mode-card">
+        <div class="global-mode-label">🎛️ โหมดควบคุมรวม <span class="global-mode-status" id="globalModeStatus">—</span></div>
+        <div class="global-mode-row">
+          <button class="global-mode-btn" id="globalModeBtn_auto" onclick="setGlobalMode('auto')">🤖 AUTO ทั้งหมด</button>
+          <button class="global-mode-btn" id="globalModeBtn_manual" onclick="setGlobalMode('manual')">✋ MANUAL ทั้งหมด</button>
+        </div>
+        <div class="global-mode-hint">สลับพัดลม + ปั๊มน้ำพร้อมกัน — ค่า threshold ที่ตั้งไว้ใน Settings จะกลับมาใช้ทันทีเมื่อสลับกลับ Auto (ไม่ได้ถูกลบ)</div>
+      </div>
+
       <div class="relay-grid">
 
         <div class="relay-card" id="relayCard_ch4">
@@ -1158,9 +1179,11 @@ function startListeners() {
     renderTelegramChip();
 
     const chMap = {ch4_spare:'ch4', ch3_fan_in:'ch3', ch1_pump:'ch1'};   // ปั๊มน้ำ (CH4) + พัดลม (CH3) + สำรอง (CH1)
+    const modesByChannel = {};
     for (const [key, id] of Object.entries(chMap)) {
       if (!d[key]) continue;
       const mode = d[key].mode || 'auto';
+      modesByChannel[key] = mode;
       const toggle = document.getElementById('toggle_' + id);
       if (toggle) toggle.disabled = (mode === 'auto');
       document.getElementById('relayCard_' + id)?.querySelectorAll('.mode-btn').forEach(btn => {
@@ -1168,6 +1191,7 @@ function startListeners() {
       });
       if (d[key].schedule) updateScheduleUI(id, d[key].schedule);
     }
+    updateGlobalModeUI(modesByChannel);   // สะท้อนสถานะรวม (auto/manual/ผสม) ที่ปุ่ม global
   });
 
   // Telegram — เวลาส่งล่าสุด (ESP32 เขียน /smartfarm/alerts/telegram/last_sent เมื่อส่งสำเร็จ)
@@ -1346,6 +1370,39 @@ function setMode(channel, mode, btn) {
   card?.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
   logAction(`${CH_LABELS[channel]||channel} เปลี่ยนเป็น ${mode==='auto'?'AUTO':'MANUAL'}`);
   showToast(mode==='auto' ? '🤖 โหมด AUTO' : '✋ โหมด MANUAL');
+}
+
+// ── Global Mode Switch — สลับพัดลม (CH3) + ปั๊มน้ำ (CH4) เป็น auto/manual พร้อมกัน ──
+// (CH1 สำรอง ไม่รวมด้วย เพราะ firmware ไม่มี auto logic ให้ช่องนี้จริง — manual/schedule เท่านั้น)
+// threshold ใน /smartfarm/control/thresholds ไม่ถูกแตะต้อง — สลับกลับ auto เมื่อไหร่ค่าเดิมใช้ได้ทันที
+const GLOBAL_MODE_CHANNELS = ['ch3_fan_in', 'ch4_spare'];
+
+function setGlobalMode(mode) {
+  const updates = {};
+  GLOBAL_MODE_CHANNELS.forEach(ch => { updates[ch + '/mode'] = mode; });
+  db.ref('/smartfarm/control').update(updates).then(() => {
+    logAction(`โหมดควบคุมรวม → ${mode === 'auto' ? 'AUTO ทั้งหมด (พัดลม+ปั๊ม)' : 'MANUAL ทั้งหมด (พัดลม+ปั๊ม)'}`);
+    showToast(mode === 'auto'
+      ? '🤖 เปลี่ยนเป็น AUTO ทั้งหมด — ระบบใช้ threshold เดิมคุมต่อทันที'
+      : '✋ เปลี่ยนเป็น MANUAL ทั้งหมด — Auto หยุดทำงาน สั่งเองได้จากปุ่มด้านล่าง');
+  });
+}
+
+// เรียกจาก control listener ทุกครั้งที่ mode เปลี่ยน — สะท้อนสถานะรวมให้ปุ่ม global ตรงความจริงเสมอ
+// (auto=เขียวทั้งคู่, manual=เทาทั้งคู่, ผสม=ใช้ per-channel toggle แยกกันมาก่อน)
+function updateGlobalModeUI(modesByChannel) {
+  const modes = GLOBAL_MODE_CHANNELS.map(ch => modesByChannel[ch] || 'auto');
+  const allAuto   = modes.every(m => m === 'auto');
+  const allManual = modes.every(m => m === 'manual');
+  const btnAuto   = document.getElementById('globalModeBtn_auto');
+  const btnManual = document.getElementById('globalModeBtn_manual');
+  const status    = document.getElementById('globalModeStatus');
+  if (!btnAuto || !btnManual || !status) return;
+  btnAuto.classList.toggle('active', allAuto);
+  btnManual.classList.toggle('active', allManual);
+  if (allAuto)        { status.textContent = 'AUTO';   status.classList.remove('mixed'); }
+  else if (allManual) { status.textContent = 'MANUAL'; status.classList.remove('mixed'); }
+  else                { status.textContent = 'ผสม';    status.classList.add('mixed'); }
 }
 
 // ── Schedule ──────────────────────────────────────────
