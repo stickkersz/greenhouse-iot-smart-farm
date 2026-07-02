@@ -69,8 +69,9 @@ WiFiMulti wifiMulti;
 #define IDX_FAN   2   // ch3_fan_in  → พัดลม
 #define IDX_PUMP  3   // ch4_spare   → ปั๊มน้ำ
 
-// ── LCD I2C (16x2, address 0x27) ─────────────────────
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+// ── LCD I2C (16x2) — สร้าง object หลัง auto-detect address ใน setup() ─────
+// (โมดูลส่วนใหญ่เป็น 0x27 แต่บางล็อตเป็น 0x3F — hardcode ผิด address = จอไม่ขึ้นอะไรเลยแม้ backlight ติด)
+LiquidCrystal_I2C* lcd = nullptr;
 uint8_t lcdPage = 0;  // หน้าปัจจุบัน (สลับทุก 5 วิ)
 
 // ── Firebase Objects ──────────────────────────────────
@@ -101,6 +102,9 @@ volatile bool  ch_manual[4] = {false, false, false, false};
 volatile float thresh_temp_on  = TEMP_ON;
 volatile float thresh_temp_off = TEMP_OFF;
 volatile float thresh_hum_min  = HUMIDITY_MIN;
+volatile float thresh_hum_max  = 75.0;    // ปิดปั๊มเมื่อความชื้น ≥ นี้ (hysteresis คู่กับ humidity_min กันปั๊มกระพริบ)
+volatile float thresh_water_temp_on  = 30.0;  // พัดลมช่วยเปิดเมื่อน้ำร้อน (evaporative pad)
+volatile float thresh_water_temp_off = 27.0;  // ยกเลิกเงื่อนไขน้ำเมื่อน้ำเย็นพอ
 volatile float thresh_temp_alert = 38.0;  // เกณฑ์แจ้งเตือน/buzzer (sync กับ dashboard)
 volatile float thresh_hum_alert  = 40.0;
 volatile bool  buzzerEnabled   = true;   // ปิด/เปิดเสียงเตือนจาก dashboard
@@ -120,6 +124,15 @@ float h_sumWT = 0, h_maxWT = -99, h_minWT = 99;
 int   h_count   = 0;   // จำนวน sample อากาศ
 int   h_countWT = 0;   // จำนวน sample น้ำที่อ่านได้ (แยกต่างหาก — DS18B20 สายยาวอาจอ่านพลาดบางครั้ง)
 
+// ── Control-loop Averaging (แยกจาก hourly-log accumulator ด้านบนโดยสิ้นเชิง) ──
+// N=3 ตาม convention เดียวกับ DHT_FAIL_LIMIT/DHT_RECOVER_LIMIT — กัน relay สั่งเปลี่ยนจากค่าเพี้ยนชั่วครู่ครั้งเดียว
+#define CTRL_AVG_N 3
+float ctrlBufAT[CTRL_AVG_N] = {0};   // buffer อุณหภูมิอากาศ (สำหรับตัดสินใจ auto control เท่านั้น)
+float ctrlBufAH[CTRL_AVG_N] = {0};   // buffer ความชื้นอากาศ
+float ctrlBufWT[CTRL_AVG_N] = {0};   // buffer อุณหภูมิน้ำ (เก็บเฉพาะตอน waterSensorOk)
+int   ctrlBufATCount = 0, ctrlBufIdx   = 0;   // อากาศ+ความชื้น sample พร้อมกันเสมอ ใช้ index/count ร่วม
+int   ctrlBufWTCount = 0, ctrlBufWTIdx = 0;   // น้ำแยกต่างหาก เพราะอาจอ่านพลาดบางรอบ
+
 // ── Timing ────────────────────────────────────────────
 unsigned long lastSensorTime = 0;
 unsigned long lastLogTime    = 0;
@@ -127,7 +140,7 @@ unsigned long lastNtpSync    = 0;
 
 // ── Safety / Worst-case Protection (v1.3.0) ───────────
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
-#define PUMP_MAX_RUNTIME_MS  (5UL*60*1000)     // ปั๊มเดินต่อเนื่องได้สูงสุด 5 นาที (auto/schedule)
+#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 10 นาที (auto/schedule) — ชั่วคราวเพื่อทดสอบว่า pump cutoff เป็นตัวการ noise/DHT22 failsafe หรือไม่ (เดิม 5 นาที)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
 #define DHT_FAIL_LIMIT       3                 // DHT อ่านพลาดติดกันกี่ครั้งถึงเข้า failsafe
 #define DHT_RECOVER_LIMIT    3                 // อ่านดีติดกันกี่ครั้งถึงออกจาก failsafe (กัน flapping)
@@ -172,6 +185,9 @@ void pumpSafetyCheck();
 bool timeValid();
 void sendTelegram(const String& msg);
 void notifyTelegram(int type, const String& msg);
+float avgCtrlAT();
+float avgCtrlAH();
+float avgCtrlWT();
 
 // ─────────────────────────────────────────────────────
 void setup() {
@@ -188,21 +204,29 @@ void setup() {
   buzzerBeep(1, 100, 0);                                       // ทดสอบดัง 100ms แล้วกลับเงียบ
   Serial.println("Buzzer Ready");
 
-  // I2C scanner — debug LCD: print address ที่เจอจริง (ถ้าไม่เจอ 0x27 อาจเป็น 0x3F หรือสายหลุด)
+  // I2C scanner — หา address ของ LCD จริง (โมดูลส่วนใหญ่ 0x27 บางล็อต 0x3F)
+  // เดิม hardcode 0x27 ตายตัว — ถ้าโมดูลจริงเป็น 0x3F จะเขียนไปที่ address ที่ไม่มีใครตอบ
+  // (I2C write ไป address ที่ไม่มีอุปกรณ์จะเงียบ ไม่ error) ทำให้ backlight ติด (จัมเปอร์ไฟตรง)
+  // แต่ตัวอักษรไม่ขึ้นเลย — เป็นสาเหตุที่พบบ่อยที่สุดของอาการนี้
   Wire.begin();
-  int i2cFound = 0;
+  uint8_t lcdAddr = 0;
   for (byte a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
-    if (Wire.endTransmission() == 0) { Serial.printf("[I2C] พบอุปกรณ์ที่ 0x%02X\n", a); i2cFound++; }
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("[I2C] พบอุปกรณ์ที่ 0x%02X\n", a);
+      if (lcdAddr == 0 && (a == 0x27 || a == 0x3F)) lcdAddr = a;   // เจอ address LCD ที่รู้จัก
+    }
   }
-  if (i2cFound == 0) Serial.println("[I2C] ไม่พบอุปกรณ์เลย — เช็คสาย SDA(21)/SCL(22)/VCC/GND");
-
-  // LCD
-  lcd.init();
-  lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("SmartFarm v1.4.0");
-  lcd.setCursor(0, 1); lcd.print("Starting...");
-  Serial.println("LCD Ready");
+  if (lcdAddr == 0) {
+    Serial.println("[I2C] ไม่พบ LCD ที่ 0x27/0x3F — เช็คสาย SDA(21)/SCL(22)/VCC/GND หรือ contrast pot");
+  } else {
+    lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
+    lcd->init();
+    lcd->backlight();
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v1.4.0");
+    lcd->setCursor(0, 1); lcd->print("Starting...");
+    Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
+  }
 
   // WiFi (WiFiMulti — ลองทุกเครือข่ายใน config.h อัตโนมัติ)
   for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
@@ -239,8 +263,7 @@ void setup() {
   ds18b20.begin();
   Serial.printf("DS18B20 พบ %d ตัว\n", ds18b20.getDeviceCount());
 
-  // DHT22
-  Wire.begin();
+  // DHT22 (single-wire, ไม่ใช้ I2C — ไม่ต้องเรียก Wire.begin() ซ้ำ)
   dht22.begin();
   Serial.println("DHT22 Ready");
 
@@ -360,6 +383,9 @@ void loadControlFromFirebase() {
   if (json.get(d, "thresholds/temp_on"))     thresh_temp_on  = d.floatValue;
   if (json.get(d, "thresholds/temp_off"))    thresh_temp_off = d.floatValue;
   if (json.get(d, "thresholds/humidity_min")) thresh_hum_min = d.floatValue;
+  if (json.get(d, "thresholds/humidity_max")) thresh_hum_max = d.floatValue;
+  if (json.get(d, "thresholds/water_temp_on"))  thresh_water_temp_on  = d.floatValue;
+  if (json.get(d, "thresholds/water_temp_off")) thresh_water_temp_off = d.floatValue;
   if (json.get(d, "thresholds/temp_alert"))     thresh_temp_alert = d.floatValue;
   if (json.get(d, "thresholds/humidity_alert")) thresh_hum_alert  = d.floatValue;
   if (json.get(d, "buzzer_enabled"))         buzzerEnabled  = d.boolValue;
@@ -380,9 +406,21 @@ void readSensors() {
     Serial.println("[DHT22] อ่านค่าผิดปกติ (NaN หรือ นอกช่วง)");
     airTemp = 0; airHumidity = 0;
     dhtFailCount++; dhtGoodCount = 0;
+    // DHT22 ไวต่อ noise บนไฟเลี้ยงมาก (เช่น ตอน relay ตัดโหลดมอเตอร์/พัดลม) — พอโดน noise
+    // มักจะ "ค้าง" อ่านไม่ได้ตลอดจนกว่าจะรีเซ็ตไฟ ลอง re-init driver ให้เองตรงนี้
+    // แทนที่จะรอ full power cycle จากคน (พลาดครบ limit พอดี = จังหวะเดียวกับเข้า failsafe)
+    if (dhtFailCount == DHT_FAIL_LIMIT) {
+      Serial.println("[DHT22] พลาดติดกันครบ limit — ลอง re-init sensor");
+      dht22.begin();
+    }
   } else {
     dhtFailCount = 0;
     if (dhtGoodCount < 1000) dhtGoodCount++;
+    // เก็บเฉพาะค่าดีเข้า control-averaging buffer (กัน autoControl() ตัดสินใจจากค่าเพี้ยน)
+    ctrlBufAT[ctrlBufIdx] = airTemp;
+    ctrlBufAH[ctrlBufIdx] = airHumidity;
+    ctrlBufIdx = (ctrlBufIdx + 1) % CTRL_AVG_N;
+    if (ctrlBufATCount < CTRL_AVG_N) ctrlBufATCount++;
   }
 
   // DS18B20 (สาย jumper ยาว ~4m ใกล้พัดลม 220V/ปั๊ม → noise สูง) — อ่านซ้ำถ้าได้ค่าเสีย
@@ -396,6 +434,10 @@ void readSensors() {
   if (wt >= DS_WATER_MIN && wt <= DS_WATER_MAX) {
     waterTemp = wt;          // เก็บเฉพาะค่าที่ใช้ได้ (ถ้าอ่านพลาด คงค่าเดิมไว้ ไม่เอาค่าขยะไปแสดง/log/alert)
     waterSensorOk = true;
+    // เก็บเข้า control-averaging buffer แยกจากอากาศ (น้ำอาจอ่านพลาดบางรอบ ไม่ sync กับ air buffer)
+    ctrlBufWT[ctrlBufWTIdx] = waterTemp;
+    ctrlBufWTIdx = (ctrlBufWTIdx + 1) % CTRL_AVG_N;
+    if (ctrlBufWTCount < CTRL_AVG_N) ctrlBufWTCount++;
   } else {
     waterSensorOk = false;
     Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด)\n", wt);
@@ -418,36 +460,49 @@ void readSensors() {
 }
 
 // ─────────────────────────────────────────────────────
-// Auto Control — ใช้ threshold แบบ dynamic จาก Firebase
+// ค่าเฉลี่ยจาก control-averaging buffer — ใช้เฉพาะใน autoControl() (กันตัดสินใจจากค่าเพี้ยนชั่วครู่)
+float avgCtrlAT() { float s=0; for (int i=0;i<ctrlBufATCount;i++) s+=ctrlBufAT[i]; return ctrlBufATCount ? s/ctrlBufATCount : 0; }
+float avgCtrlAH() { float s=0; for (int i=0;i<ctrlBufATCount;i++) s+=ctrlBufAH[i]; return ctrlBufATCount ? s/ctrlBufATCount : 0; }
+float avgCtrlWT() { float s=0; for (int i=0;i<ctrlBufWTCount;i++) s+=ctrlBufWT[i]; return ctrlBufWTCount ? s/ctrlBufWTCount : 0; }
+
+// ─────────────────────────────────────────────────────
+// Auto Control — ใช้ threshold แบบ dynamic จาก Firebase + ค่าเฉลี่ย N=3 รอบ (กัน relay สั่งจากค่าเพี้ยนครั้งเดียว)
 void autoControl() {
-  float ton  = thresh_temp_on;
-  float toff = thresh_temp_off;
-  float hmin = thresh_hum_min;
+  float ton   = thresh_temp_on,        toff  = thresh_temp_off;
+  float wton  = thresh_water_temp_on,  wtoff = thresh_water_temp_off;
+  float hmin  = thresh_hum_min,        hmax  = thresh_hum_max;
 
-  // พัดลม (CH3): คุมด้วยอุณหภูมิ + hysteresis
-  bool fanOpen  = (airTemp >= ton);
-  bool fanClose = (airTemp <= toff);
+  float avgAT = avgCtrlAT();
+  float avgAH = avgCtrlAH();
+  bool  haveWater = (ctrlBufWTCount > 0) && waterSensorOk;
+  float avgWT = haveWater ? avgCtrlWT() : 0;
 
-  // ปั๊มน้ำ (CH4): คุมด้วยความชื้นเท่านั้น
+  // พัดลม (CH3): ระบบระบายความร้อนแบบ evaporative — คุมด้วยอากาศ + น้ำร่วมกัน
+  // เปิด: อากาศร้อน "หรือ" น้ำร้อน (worst-case wins — สัญญาณไหนบอกร้อนก็เปิด ไม่พลาดโอกาสระบาย)
+  // ปิด: อากาศเย็นพอ "และ" น้ำเย็นพอ (หรือไม่มีน้ำให้เช็ค) — ต้องเย็นพร้อมกันถึงปิด
+  bool fanOpen  = (avgAT >= ton)  || (haveWater && avgWT >= wton);
+  bool fanClose = (avgAT <= toff) && (!haveWater || avgWT <= wtoff);
+
+  // ปั๊มน้ำ (CH4): คุมด้วยความชื้น + hysteresis (เปิดต่ำกว่า hmin, ปิดสูงกว่า hmax) กันปั๊มกระพริบใกล้ threshold เดียว
   // ถ้า sensor ความชื้นพัง (อ่านได้ 0) → ปิดปั๊มเพื่อความปลอดภัย (กันปั๊มทำงานค้าง)
-  bool pumpOpen  = (airHumidity > 0 && airHumidity < hmin);
-  bool pumpClose = (airHumidity == 0 || airHumidity >= hmin);
+  bool pumpOpen  = (avgAH > 0 && avgAH < hmin);
+  bool pumpClose = (avgAH == 0 || avgAH >= hmax);
 
   // หมายเหตุ precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
-  // CH3 พัดลม (อุณหภูมิ) — ทำงานเฉพาะตอนอ่านอุณหภูมิได้ (airTemp>0)
-  // ถ้า DHT glitch (airTemp=0) → ค้างสถานะเดิม ไม่สั่งปิดพัดลมผิดๆ (กันพัดลมดับวันร้อน)
-  if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN] && airTemp > 0) {
+  // ทำงานเฉพาะตอนมี sample เฉลี่ยจริง (ctrlBufATCount>0) — กัน glitch ตอนบูตก่อน buffer เต็ม
+  // CH3 พัดลม
+  if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN] && ctrlBufATCount > 0) {
     if (fanOpen  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
     if (fanClose &&  ch3_fanIn) { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
   }
-  // CH4 ปั๊มน้ำ (ความชื้น) — เปิดได้เฉพาะเมื่อพ้น safety lock (cooldown)
-  if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
+  // CH4 ปั๊มน้ำ — เปิดได้เฉพาะเมื่อพ้น safety lock (cooldown)
+  if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP] && ctrlBufATCount > 0) {
     if (pumpOpen  && !ch4_spare && millis() >= pumpLockUntil) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  }
     if (pumpClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); }
   }
 
-  if (fanOpen)  Serial.printf("[AUTO] พัดลมเปิด — T:%.1f≥%.1f\n", airTemp, ton);
-  if (pumpOpen) Serial.printf("[AUTO] ปั๊มเปิด — RH:%.1f<%.1f\n", airHumidity, hmin);
+  if (fanOpen)  Serial.printf("[AUTO] พัดลมเปิด — AvgT:%.1f≥%.1f หรือ AvgWT:%.1f≥%.1f\n", avgAT, ton, avgWT, wton);
+  if (pumpOpen) Serial.printf("[AUTO] ปั๊มเปิด — AvgRH:%.1f<%.1f\n", avgAH, hmin);
 }
 
 // ─────────────────────────────────────────────────────
@@ -827,30 +882,31 @@ void checkSchedule() {
 // หน้า 1: อุณหภูมิน้ำ + WiFi RSSI
 // หน้า 2: สถานะ Pump (CH4) + Fan (CH3)
 void updateLCD() {
-  lcd.clear();
+  if (!lcd) return;   // ไม่เจอ LCD ตอนบูต (address ผิด/สายหลุด) — ข้ามแทนที่จะ crash
+  lcd->clear();
   char buf1[17], buf2[17];
 
   switch (lcdPage) {
     case 0:
       snprintf(buf1, sizeof(buf1), "Temp: %.1f%cC", airTemp, 0xDF);
       snprintf(buf2, sizeof(buf2), "Humidity: %.1f%%", airHumidity);
-      lcd.setCursor(0, 0); lcd.print(buf1);
-      lcd.setCursor(0, 1); lcd.print(buf2);
+      lcd->setCursor(0, 0); lcd->print(buf1);
+      lcd->setCursor(0, 1); lcd->print(buf2);
       break;
 
     case 1:
       if (waterSensorOk) snprintf(buf1, sizeof(buf1), "Water: %.1f%cC", waterTemp, 0xDF);
       else               snprintf(buf1, sizeof(buf1), "Water: -- (err)");
       snprintf(buf2, sizeof(buf2), "WiFi: %ddBm", WiFi.RSSI());
-      lcd.setCursor(0, 0); lcd.print(buf1);
-      lcd.setCursor(0, 1); lcd.print(buf2);
+      lcd->setCursor(0, 0); lcd->print(buf1);
+      lcd->setCursor(0, 1); lcd->print(buf2);
       break;
 
     case 2:
       snprintf(buf1, sizeof(buf1), "Pump: %s", ch4_spare ? "ON" : "OFF");
       snprintf(buf2, sizeof(buf2), "Fan: %s",  ch3_fanIn ? "ON" : "OFF");
-      lcd.setCursor(0, 0); lcd.print(buf1);
-      lcd.setCursor(0, 1); lcd.print(buf2);
+      lcd->setCursor(0, 0); lcd->print(buf1);
+      lcd->setCursor(0, 1); lcd->print(buf2);
       break;
   }
 

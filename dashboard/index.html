@@ -763,16 +763,26 @@
           <div class="setting-row">
             <div>
               <label>🌡️ เปิดพัดลมเมื่อ ≥</label>
-              <div class="si-wrap"><input type="number" id="tempOn" value="35" step="0.5" min="20" max="50"><span class="si-unit">°C</span></div>
+              <div class="si-wrap"><input type="number" id="tempOn" value="35" step="0.1" min="20" max="50"><span class="si-unit">°C</span></div>
             </div>
             <div>
               <label>❄️ ปิดพัดลมเมื่อ ≤</label>
-              <div class="si-wrap"><input type="number" id="tempOff" value="32" step="0.5" min="15" max="45"><span class="si-unit">°C</span></div>
+              <div class="si-wrap"><input type="number" id="tempOff" value="32" step="0.1" min="15" max="45"><span class="si-unit">°C</span></div>
+            </div>
+          </div>
+          <div style="margin-top:10px" class="setting-row">
+            <div>
+              <label>🌊 พัดลมช่วยเปิดเมื่อน้ำ ≥</label>
+              <div class="si-wrap"><input type="number" id="waterTempOn" value="30" step="0.1" min="15" max="45"><span class="si-unit">°C</span></div>
+            </div>
+            <div>
+              <label>🌊 ยกเลิกเงื่อนไขน้ำเมื่อ ≤</label>
+              <div class="si-wrap"><input type="number" id="waterTempOff" value="27" step="0.1" min="10" max="40"><span class="si-unit">°C</span></div>
             </div>
           </div>
           <div style="margin-top:10px" class="alert-field">
             <label>🚨 แจ้งเตือนวิกฤตเมื่อ ≥</label>
-            <div class="si-wrap"><input type="number" id="tempAlert" value="38" step="0.5" min="25" max="60"><span class="si-unit">°C</span></div>
+            <div class="si-wrap"><input type="number" id="tempAlert" value="38" step="0.1" min="25" max="60"><span class="si-unit">°C</span></div>
           </div>
         </div>
 
@@ -782,11 +792,17 @@
           <div class="setting-row">
             <div>
               <label>💧 เปิดปั๊มน้ำเมื่อ ≤</label>
-              <div class="si-wrap"><input type="number" id="humidityMin" value="60" step="1" min="10" max="95"><span class="si-unit">%</span></div>
+              <div class="si-wrap"><input type="number" id="humidityMin" value="60" step="0.1" min="10" max="95"><span class="si-unit">%</span></div>
             </div>
             <div class="alert-field">
               <label>🚨 แจ้งเตือนวิกฤตเมื่อ ≤</label>
-              <div class="si-wrap"><input type="number" id="humidityAlert" value="40" step="1" min="10" max="90"><span class="si-unit">%</span></div>
+              <div class="si-wrap"><input type="number" id="humidityAlert" value="40" step="0.1" min="10" max="90"><span class="si-unit">%</span></div>
+            </div>
+          </div>
+          <div style="margin-top:10px" class="setting-row">
+            <div>
+              <label>💧 ปิดปั๊มน้ำเมื่อ ≥</label>
+              <div class="si-wrap"><input type="number" id="humidityMax" value="75" step="0.1" min="15" max="100"><span class="si-unit">%</span></div>
             </div>
           </div>
         </div>
@@ -1109,6 +1125,9 @@ function startListeners() {
       if (th.temp_on       != null) document.getElementById('tempOn').value        = th.temp_on;
       if (th.temp_off      != null) document.getElementById('tempOff').value       = th.temp_off;
       if (th.humidity_min  != null) document.getElementById('humidityMin').value   = th.humidity_min;
+      if (th.humidity_max  != null) document.getElementById('humidityMax').value   = th.humidity_max;
+      if (th.water_temp_on != null) document.getElementById('waterTempOn').value   = th.water_temp_on;
+      if (th.water_temp_off!= null) document.getElementById('waterTempOff').value  = th.water_temp_off;
       if (th.temp_alert    != null) document.getElementById('tempAlert').value     = th.temp_alert;
       if (th.humidity_alert!= null) document.getElementById('humidityAlert').value = th.humidity_alert;
       // อัปเดต alertThresholds ให้ checkAlerts() ใช้ค่าล่าสุดเสมอ
@@ -1120,6 +1139,7 @@ function startListeners() {
       let matched = false;
       Object.entries(PRESETS).forEach(([k,p]) => {
         if (p.temp_on===th.temp_on && p.temp_off===th.temp_off && p.humidity_min===th.humidity_min
+            && p.humidity_max===th.humidity_max && p.water_temp_on===th.water_temp_on && p.water_temp_off===th.water_temp_off
             && p.temp_alert===th.temp_alert && p.humidity_alert===th.humidity_alert) {
           document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
           document.getElementById('preset-'+k)?.classList.add('active-preset');
@@ -1356,9 +1376,9 @@ function updateScheduleUI(id, s) {
 let alertThresholds = {temp_alert: 38, humidity_alert: 40};
 
 const PRESETS = {
-  summer: {temp_on:33, temp_off:30, humidity_min:70, temp_alert:38, humidity_alert:50, label:'☀️ ฤดูร้อน'},
-  normal: {temp_on:35, temp_off:32, humidity_min:60, temp_alert:40, humidity_alert:40, label:'🌤️ ปกติ'},
-  rainy:  {temp_on:38, temp_off:35, humidity_min:50, temp_alert:42, humidity_alert:35, label:'🌧️ ฤดูฝน'},
+  summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, water_temp_on:29, water_temp_off:26, temp_alert:38, humidity_alert:50, label:'☀️ ฤดูร้อน'},
+  normal: {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, water_temp_on:30, water_temp_off:27, temp_alert:40, humidity_alert:40, label:'🌤️ ปกติ'},
+  rainy:  {temp_on:38, temp_off:35, humidity_min:50, humidity_max:65, water_temp_on:31, water_temp_off:28, temp_alert:42, humidity_alert:35, label:'🌧️ ฤดูฝน'},
 };
 
 function applyPreset(name) {
@@ -1369,6 +1389,9 @@ function applyPreset(name) {
   document.getElementById('tempOn').value        = p.temp_on;
   document.getElementById('tempOff').value       = p.temp_off;
   document.getElementById('humidityMin').value   = p.humidity_min;
+  document.getElementById('humidityMax').value   = p.humidity_max;
+  document.getElementById('waterTempOn').value   = p.water_temp_on;
+  document.getElementById('waterTempOff').value  = p.water_temp_off;
   document.getElementById('tempAlert').value     = p.temp_alert;
   document.getElementById('humidityAlert').value = p.humidity_alert;
   showToast(`✅ โหลด Preset ${p.label}`);
@@ -1378,20 +1401,27 @@ function saveThresholds() {
   const ton   = parseFloat(document.getElementById('tempOn').value);
   const toff  = parseFloat(document.getElementById('tempOff').value);
   const hmin  = parseFloat(document.getElementById('humidityMin').value);
+  const hmax  = parseFloat(document.getElementById('humidityMax').value);
+  const wton  = parseFloat(document.getElementById('waterTempOn').value);
+  const wtoff = parseFloat(document.getElementById('waterTempOff').value);
   const tAlert= parseFloat(document.getElementById('tempAlert').value);
   const hAlert= parseFloat(document.getElementById('humidityAlert').value);
   if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
   if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
   if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
-  const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, temp_alert:tAlert, humidity_alert:hAlert};
+  if (wton <= wtoff){ showToast('⚠️ Water Temp ON ต้องมากกว่า Water Temp OFF'); return; }
+  if (hmax <= hmin) { showToast('⚠️ Humidity Max ต้องมากกว่า Humidity Min'); return; }
+  const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, humidity_max:hmax,
+                water_temp_on:wton, water_temp_off:wtoff, temp_alert:tAlert, humidity_alert:hAlert};
   db.ref('/smartfarm/control/thresholds').set(data).then(() => {
     alertThresholds = {temp_alert: tAlert, humidity_alert: hAlert};
-    logAction(`ตั้งค่า — พัดลมเปิด ${ton}°C ปิด ${toff}°C · ปั๊มเปิด ≤${hmin}% · Alert ${tAlert}°C / ${hAlert}%`);
+    logAction(`ตั้งค่า — พัดลมเปิด ${ton}°C/${wton}°C(น้ำ) ปิด ${toff}°C/${wtoff}°C(น้ำ) · ปั๊มเปิด ≤${hmin}% ปิด ≥${hmax}% · Alert ${tAlert}°C / ${hAlert}%`);
     showToast('✅ บันทึกแล้ว · ESP32 รับค่าใหม่ทันที');
     // ทำให้ preset ไฮไลต์ถ้า match
     let matched = false;
     Object.entries(PRESETS).forEach(([k,p]) => {
-      if (p.temp_on===ton && p.temp_off===toff && p.humidity_min===hmin && p.temp_alert===tAlert && p.humidity_alert===hAlert) {
+      if (p.temp_on===ton && p.temp_off===toff && p.humidity_min===hmin && p.humidity_max===hmax
+          && p.water_temp_on===wton && p.water_temp_off===wtoff && p.temp_alert===tAlert && p.humidity_alert===hAlert) {
         document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
         document.getElementById('preset-'+k)?.classList.add('active-preset');
         matched = true;
