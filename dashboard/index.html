@@ -552,10 +552,6 @@
         <span class="sys-ico">🔔</span>
         <div class="sys-info"><div class="sys-k">Buzzer เสียงเตือน</div><div class="sys-v" id="chipBuzzerVal">—</div></div>
       </button>
-      <button class="sys-chip" id="chipTelegram" onclick="toggleTelegram()" title="แตะเพื่อเปิด/ปิดแจ้งเตือน Telegram">
-        <span class="sys-ico">✈️</span>
-        <div class="sys-info"><div class="sys-k">Telegram แจ้งเตือน</div><div class="sys-v" id="chipTelegramVal">—</div></div>
-      </button>
     </div>
 
     <div>
@@ -1174,9 +1170,6 @@ function startListeners() {
     }
     // Buzzer enable state (ถ้าไม่มีค่า = เปิดอยู่ เพราะ firmware เดิม beep เสมอ)
     updateBuzzerChip(d.buzzer_enabled === false ? false : true);
-    // Telegram enable state (ถ้าไม่มีค่า = ปิด)
-    telegramEnabled = d.telegram_enabled === true;
-    renderTelegramChip();
 
     const chMap = {ch4_spare:'ch4', ch3_fan_in:'ch3', ch1_pump:'ch1'};   // ปั๊มน้ำ (CH4) + พัดลม (CH3) + สำรอง (CH1)
     const modesByChannel = {};
@@ -1192,13 +1185,6 @@ function startListeners() {
       if (d[key].schedule) updateScheduleUI(id, d[key].schedule);
     }
     updateGlobalModeUI(modesByChannel);   // สะท้อนสถานะรวม (auto/manual/ผสม) ที่ปุ่ม global
-  });
-
-  // Telegram — เวลาส่งล่าสุด (ESP32 เขียน /smartfarm/alerts/telegram/last_sent เมื่อส่งสำเร็จ)
-  db.ref('/smartfarm/alerts/telegram').on('value', snap => {
-    const o = snap.val();
-    telegramLastSent = (o && o.last_sent) ? o.last_sent : null;
-    renderTelegramChip();
   });
 
   db.ref('/smartfarm/alert_history').orderByChild('timestamp').limitToLast(30).on('value', snap => {
@@ -1292,41 +1278,6 @@ function toggleBuzzer() {
     logAction(`Buzzer → ${next ? 'เปิดเสียงเตือน' : 'ปิดเสียง'}`);
     showToast(next ? '🔔 เปิดเสียงเตือนแล้ว' : '🔇 ปิดเสียงเตือนแล้ว');
   });
-}
-
-let telegramEnabled  = false;
-let telegramLastSent = null;
-
-function renderTelegramChip() {
-  const chip = document.getElementById('chipTelegram');
-  const val  = document.getElementById('chipTelegramVal');
-  if (!val || !chip) return;
-  if (!telegramEnabled) {
-    val.textContent = 'ปิดอยู่ (แตะเปิด)';
-    chip.classList.add('chip-off'); chip.classList.remove('chip-on');
-  } else if (telegramLastSent) {
-    val.textContent = 'ส่งล่าสุด ' + relTime(telegramLastSent);
-    chip.classList.add('chip-on'); chip.classList.remove('chip-off');
-  } else {
-    val.textContent = 'เปิดอยู่ · พร้อมส่ง';
-    chip.classList.add('chip-on'); chip.classList.remove('chip-off');
-  }
-}
-
-function toggleTelegram() {
-  const next = !telegramEnabled;
-  db.ref('/smartfarm/control/telegram_enabled').set(next).then(() => {
-    logAction(`Telegram แจ้งเตือน → ${next ? 'เปิด' : 'ปิด'}`);
-    showToast(next ? '✈️ เปิดแจ้งเตือน Telegram — ESP32 จะส่งข้อความยืนยัน' : '🔕 ปิดแจ้งเตือน Telegram แล้ว');
-  });
-}
-
-function relTime(ms) {
-  const s = Math.floor((Date.now() - ms) / 1000);
-  if (s < 60) return 'เมื่อสักครู่';
-  const m = Math.floor(s / 60); if (m < 60) return m + ' นาทีที่แล้ว';
-  const h = Math.floor(m / 60); if (h < 24) return h + ' ชม.ที่แล้ว';
-  const d = Math.floor(h / 24); return d + ' วันที่แล้ว';
 }
 
 // ── Relay Control ─────────────────────────────────────
@@ -1623,11 +1574,12 @@ function exportCSV() {
 }
 
 // ── Alert History ──────────────────────────────────────
+// เดิมใช้ sessionStorage กันสแปม — ผูกกับแค่แท็บ/เครื่องเดียว ถ้าเปิด dashboard พร้อมกันหลายเครื่อง
+// แต่ละเครื่องจะไม่เห็น cooldown ของกันและกัน → ดัน entry ซ้ำ เปลี่ยนมาเช็คจาก allAlerts (Firebase
+// จริง ทุกเครื่องเห็นร่วมกัน) แทน กันซ้ำข้ามอุปกรณ์/แท็บได้จริง
 function saveAlertHistory(icon, msg, type) {
-  const key  = 'sfah_' + type;
-  const last = +(sessionStorage.getItem(key)||0);
-  if (Date.now() - last < 300000) return;
-  sessionStorage.setItem(key, String(Date.now()));
+  const recent = allAlerts.find(e => e.type === type);   // allAlerts เรียงใหม่สุดก่อนอยู่แล้ว (ดู renderAlertHistory)
+  if (recent && Date.now() - recent.timestamp < 300000) return;
   db.ref('/smartfarm/alert_history').push({icon, msg, type, timestamp: Date.now()});
 }
 

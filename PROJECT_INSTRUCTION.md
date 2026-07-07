@@ -1,0 +1,149 @@
+# Project Instruction — Greenhouse IoT Smart Farm
+
+## บริบทโปรเจกต์
+คุณกำลังช่วย **Tonkla** (IT Intern, CS Year 2, KMUTT) พัฒนาระบบ Greenhouse IoT Smart Farm ที่ **บริษัท ปุ๋ยไวกิ้ง จำกัด** ระหว่างฝึกงาน มิถุนายน–กรกฎาคม 2569 โปรเจกต์นี้ควบคุมโรงเรือน 460×240×270 cm (3 แถวปลูกผัก) ผ่าน ESP32 + Firebase + Web Dashboard
+
+---
+
+## Hardware ที่ใช้งานอยู่
+
+| อุปกรณ์ | GPIO / รายละเอียด |
+|---|---|
+| ESP32 DevKit V1 **30-pin** บน Expansion Board HW-777 | WiFi 2.4GHz เท่านั้น |
+| DS18B20 Waterproof | GPIO4, Pull-up 5.1kΩ (VCC–DATA) ที่ฝั่ง ESP32 |
+| DHT22 | GPIO18 (Pin1=VCC, Pin2=DATA, Pin3=NC, Pin4=GND) — ย้ายจาก GPIO32 เมื่อ 2026-07-02 ให้ไกลกลุ่ม relay กัน noise (ตัวแปรในโค้ดยังชื่อ `PIN_DHT11` ตามชื่อเดิม แต่ต่อกับ DHT22 จริง) |
+| Buzzer Module (Active) | GPIO33 (GND–I/O–VCC) |
+| LCD I2C 16x2 | SDA=GPIO21, SCL=GPIO22, Address auto-detect 0x27/0x3F ตอนบูต, **ต้องการ 5V** |
+| Relay CH1 | GPIO26 = สำรอง (manual only) |
+| Relay CH2 | GPIO27 = ไม่ใช้ (ซ่อนใน dashboard) |
+| Relay CH3 | GPIO14 = พัดลม 220V AC (auto ตามอุณหภูมิ) |
+| Relay CH4 | GPIO25 = ปั๊มน้ำ 24V DC (auto ตามความชื้น) |
+
+**ระบบจ่ายไฟ:**
+```
+220V AC → S-120-12 PSU (12V/10A) ─┬─ XL4015 Step-Down → 5V → Expansion Board (ESP32/Logic ทั้งหมด)
+                                   └─ Boost Converter (XL6009) → 24V → Relay CH4 → ปั๊มน้ำ
+```
+
+**ข้อห้ามสำคัญ:**
+- GPIO12 ห้ามใช้กับ Relay — เป็น Strapping Pin ทำให้ boot fail
+- LCD I2C ต้องการ 5V ไม่ใช่ 3.3V
+- Relay เป็น Active-LOW: LOW=เปิด, HIGH=ปิด, ใช้ขา NO เสมอ
+- ปิดไฟก่อนต่อ/ถอดสาย Boost Converter และปั๊มเสมอ
+- GPIO34 (ADC1, Input-Only) ว่างอยู่ — เคยจองไว้สำหรับ Capacitive Soil Moisture แต่ยกเลิกแผนถาวรแล้ว (ดู "สิ่งที่ยกเลิกแล้ว")
+
+---
+
+## Firmware v1.4.0
+
+**ไฟล์:** `smartfarm_firmware/smartfarm_firmware.ino` + `config.h`
+
+**Libraries ที่ต้องติดตั้ง:**
+- Firebase ESP32 Client by Mobizt
+- OneWire + DallasTemperature (DS18B20)
+- DHT sensor library by Adafruit (DHT22)
+- LiquidCrystal I2C by Frank de Brabander
+
+**สิ่งที่ยกเลิกแล้ว:** SHT35, Line Notify, Telegram Bot Alert (ถอด 2026-07-03 — ไม่ใช้แล้ว), Capacitive Soil Moisture (ยกเลิกถาวร) — ถูกลบออกจาก firmware/dashboard ทั้งหมดแล้ว
+
+**Auto-Control Thresholds (default, ปรับได้จาก Dashboard Settings):**
+- TEMP_ON = 35°C / TEMP_OFF = 32°C → พัดลม CH3 (หรือ water_temp_on=30°C/water_temp_off=27°C ก็เปิดพัดลมได้เช่นกัน — evaporative cooling ช่วยด้วยอุณหภูมิน้ำ)
+- HUMIDITY_MIN = 60% / humidity_max = 75% → ปั๊ม CH4 (hysteresis กันปั๊มกระพริบ)
+- thresh_temp_alert = 38°C, thresh_hum_alert = 40% → เกณฑ์แจ้งเตือน (buzzer + banner บน dashboard)
+- Pump Safety: เดินต่อเนื่องได้สูงสุด **10 นาที** (ตัดสินใจสุดท้าย 2026-07-07, เดิม 5 นาที), พัก 5 นาที
+
+**LCD:** 3 หน้า สลับทุก 5 วิ (หน้า 0: Air Temp/Hum → หน้า 1: Water Temp/WiFi RSSI → หน้า 2: Pump/Fan Status) — **หมายเหตุ:** ตอนนี้ LCD ไม่ขึ้นจอเลย (I2C scan ไม่เจออุปกรณ์เลย) ยืนยันแล้วไม่ใช่ปัญหาโค้ด ต้องตรวจสาย GND/VCC/SDA/SCL ด้วยมัลติมิเตอร์
+
+**Control:** Polling Firebase `/smartfarm/control` ทุก 1.5 วิ (ไม่ใช้ Stream)
+
+---
+
+## Firebase
+
+```
+URL: https://greenhouse-iot-smart-farm-default-rtdb.asia-southeast1.firebasedatabase.app
+API Key: AIzaSyBZ2ke2Bbx-Nd9zhsZa0QDZUlKRtEbnCWE
+Auth: Anonymous Authentication
+```
+
+**Database paths หลัก:**
+- `/smartfarm/sensors` — ข้อมูล sensor real-time
+- `/smartfarm/status` — สถานะ relay + firmware + health (sensor_ok, water_ok, pump_locked ฯลฯ)
+- `/smartfarm/control` — threshold + mode + schedule
+- `/smartfarm/alerts/last_alert` — alert ล่าสุดจาก firmware (type/value/message)
+- `/smartfarm/alert_history` — ประวัติ alert ฝั่ง dashboard สร้างเอง (client-side check, ไม่ได้มาจาก firmware โดยตรง)
+- `/smartfarm/action_log` — log การสั่งงาน
+- `/logs/YYYY-MM-DD/HH` — hourly avg/max/min
+
+**หมายเหตุ Firebase key ชื่อเก่า:** `ch1_pump`=สำรอง, `ch4_spare`=ปั๊มน้ำ (ชื่อไม่ตรงหน้าที่จริง)
+
+---
+
+## WiFi
+
+```
+- floor-1-2-2.4G   (ชั้น 1-2)    — รหัสใน config.h
+- Lab_F2-2.4G      (Lab ชั้น 2)  — รหัสใน config.h
+```
+ESP32 รองรับ **2.4GHz เท่านั้น**
+
+---
+
+## Web Dashboard
+
+**ไฟล์:** `dashboard/index.html`
+- Real-time sensor + relay toggle + AUTO/MANUAL mode
+- History Chart 24h (Chart.js) จาก `/logs/YYYY-MM-DD/HH`
+- Action Log + ตั้งค่า threshold ผ่าน dashboard
+- Deploy: `firebase deploy` → `greenhouse-iot-smart-farm.web.app`
+
+---
+
+## ปัญหาที่เคยเจอ (สำคัญ)
+
+| อาการ | สาเหตุ | วิธีแก้ |
+|---|---|---|
+| DS18B20 อ่าน -127°C | ต่อสายผิดด้าน | Flat side หันหาตัวเอง: ซ้าย=GND, กลาง=DATA, ขวา=VCC |
+| Boot fail "invalid header" | GPIO12 strapping pin | เปลี่ยน pin Relay |
+| Buzzer ดังตลอด | DHT22 ไม่ต่อ → humidity=0 < 40% | ต่อ DHT22 หรือ check null guard |
+| LCD ไม่ทำงาน | VCC ต่อ 3.3V หรือ wiring ผิด | ต้องใช้ 5V |
+| Port ไม่ขึ้น Arduino IDE (Mac M3) | ไม่มี CH340 driver | ติดตั้งจาก wch-ic.com |
+| Boost Converter พัง | Short ขณะมีไฟ | ปิดไฟก่อนต่อสายเสมอ |
+
+---
+
+## TODO ที่ยังค้างอยู่
+
+ดู PROJECT_MEMORY.md หัวข้อ 15 สำหรับรายการล่าสุด/ละเอียด — สรุปสั้นๆ ณ 2026-07-07:
+- 🔴 ด่วนสุด (hardware): แก้ noise มอเตอร์ปั๊มรบกวน DHT22 — เพิ่ม cap คร่อมมอเตอร์ปั๊ม + RC snubber ที่ relay CH4 + แยกสายไฟกำลัง/สัญญาณให้ห่างกัน
+- ตรวจสาย DHT22 VCC ว่าต่อกลับเข้า power rail ปกติแล้ว (ไม่ใช่ช่อง D19)
+- ตรวจสาย LCD I2C ด้วยมัลติมิเตอร์ — ตอนนี้ไม่ขึ้นจอเลย
+- Revoke Telegram Bot Token เก่าผ่าน @BotFather (เคยหลุดเข้า git history แม้ลบโค้ดออกแล้ว)
+- `firebase deploy` ทุกครั้งที่แก้ `dashboard/index.html` เพื่ออัปเดตเว็บที่ deploy ไว้ (`greenhouse-iot-smart-farm.web.app`)
+
+---
+
+## โครงสร้างไฟล์
+
+```
+/Greenhouse IoT Smart Farm/
+├── smartfarm_firmware/
+│   ├── smartfarm_firmware.ino   (v1.4.0)
+│   └── config.h
+├── dashboard/
+│   ├── index.html
+│   └── index.v1.1.0.backup.html
+├── pinout_v2.md                 ← สรุปการต่อสายล่าสุด (pinout.docx/pdf เป็นเวอร์ชันเก่า ล้าสมัยบางจุด อย่าอ้างอิง)
+├── PROJECT_MEMORY.md            ← ข้อมูลเทคนิคละเอียด
+└── PROJECT_INSTRUCTION.md       ← ไฟล์นี้
+```
+
+---
+
+## แนวทางในการช่วยเหลือ
+
+- ตอบเป็น**ภาษาไทย**เสมอ (ยกเว้น code และ technical term)
+- เมื่อเขียนหรือแก้ไข firmware ให้อ้างอิง pin mapping ข้างต้น
+- ถ้าต้องแก้ไข config.h ให้ระวัง WiFi password (sensitive)
+- เมื่อแนะนำ hardware ให้คำนึงว่าเป็นโรงเรือนขนาดเล็ก ~11m²
+- Relay เป็น Active-LOW เสมอ — ตรวจสอบ logic ให้ถูกต้องทุกครั้ง

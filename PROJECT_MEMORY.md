@@ -1,5 +1,5 @@
 # Greenhouse IoT Smart Farm — Project Memory
-**บริษัทประวิทย์กรุ๊ป ปุ๋ยไวกิ้ง จำกัด**
+**บริษัท ปุ๋ยไวกิ้ง จำกัด**
 จัดทำโดย: Tonkla (IT Intern, CS Year 2, KMUTT) | มิถุนายน–กรกฎาคม 2569
 
 ---
@@ -10,7 +10,7 @@
 /Greenhouse IoT Smart Farm/
 ├── smartfarm_firmware/
 │   ├── smartfarm_firmware.ino   ← Firmware หลัก (v1.4.0)
-│   └── config.h                 ← Pin mapping, WiFi, Firebase, Telegram
+│   └── config.h                 ← Pin mapping, WiFi, Firebase
 ├── dashboard/
 │   ├── index.html               ← Web Dashboard (Green Nature theme)
 │   └── index.v1.1.0.backup.html ← Backup ก่อน redesign
@@ -70,7 +70,7 @@
 ```cpp
 // ── Sensors ───────────────────────────────────────────
 #define PIN_DS18B20       4    // DS18B20 Data (ต้องมี External Pull-up 5.1kΩ)
-#define PIN_DHT11        32    // DHT22 — อุณหภูมิ + ความชื้นอากาศ (ถาวร)
+#define PIN_DHT11        18    // DHT22 — อุณหภูมิ + ความชื้นอากาศ (ถาวร, ย้ายจาก GPIO32 เมื่อ 2026-07-02)
 #define PIN_BUZZER       33    // Buzzer Module (I/O)
 
 // LCD I2C: SDA=GPIO21, SCL=GPIO22 (ESP32 default I2C), Address=0x27
@@ -116,8 +116,8 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
       temp_on         float   (35.0)  ← เปิด auto
       temp_off        float   (32.0)  ← ปิด auto
       humidity_min    float   (60.0)  ← เปิดปั๊ม
-      temp_alert      float   (38.0)  ← ส่งแจ้งเตือน Telegram + Buzzer
-      hum_alert       float   (40.0)  ← ส่งแจ้งเตือน Telegram + Buzzer
+      temp_alert      float   (38.0)  ← ส่งแจ้งเตือน Buzzer
+      hum_alert       float   (40.0)  ← ส่งแจ้งเตือน Buzzer
     ch1_pump/ ch2_fan_out/ ch3_fan_in/ ch4_spare/
       mode            string  "auto"/"manual"
       manual_state    bool
@@ -126,7 +126,6 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
         on_time       string  "HH:MM"
         off_time      string  "HH:MM"
     buzzer_enabled    bool    (true)
-    telegram_enabled  bool    (false — เปิดได้จาก dashboard)
   alerts/
     last_alert/
       type    string
@@ -148,20 +147,16 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
 
 ---
 
-## 6. Telegram Bot
+## 6. Telegram Bot — ถอดออกแล้ว (2026-07-03)
 
-| | ค่า |
-|---|---|
-| Bot Username | @pvglab_bot |
-| Bot Token | `8604786415:AAE9lve4DSVI4JiwlrqCm-TcgDBV5Fpuc0k` |
-| Chat ID | `6849829706` |
-| ใส่ใน config.h | `TELEGRAM_BOT_TOKEN` และ `TELEGRAM_CHAT_ID` |
+ฟีเจอร์ Telegram alert (firmware + dashboard toggle) ถูกถอดออกทั้งหมดตามคำขอผู้ใช้ — ไม่ต้องใช้แล้ว
+ดู [[incremental-testing]] และหัวข้อ 15 (TODO) สำหรับรายละเอียด rollback วันเดียวกัน
 
-> ⚠️ **TODO:** ยังใส่ค่าจริงใน config.h ไม่ได้ (ยังเป็น placeholder "ใส่_BOT_TOKEN_ที่นี่")
-> ✅ Firmware รองรับแล้ว — แค่ใส่ค่าใน config.h แล้ว upload ใหม่
-> Cooldown: แจ้งเตือนซ้ำต่อชนิดได้ทุก 5 นาที
+> 🔴 **Security:** ไฟล์นี้เคยมี Bot Token + Chat ID จริงอยู่ตรงๆ (ก่อนแก้ครั้งนี้) และไฟล์นี้ถูก track
+> ใน git — token หลุดเข้า commit history แล้วแม้จะลบออกจากไฟล์ปัจจุบันแล้วก็ตาม **ควร revoke/สร้าง
+> token ใหม่ผ่าน @BotFather** (/revoke หรือ /token) เพราะ token เก่ายังอยู่ใน git history
 
-> ❌ **Line Notify ยกเลิกแล้ว** — Discontinued ตั้งแต่ 31 มีนาคม 2568 (ใช้ Telegram แทน)
+> ❌ **Line Notify ยกเลิกแล้ว** — Discontinued ตั้งแต่ 31 มีนาคม 2568
 
 ---
 
@@ -197,7 +192,7 @@ if (Firebase.ready()) { pushToFirebase(); }
 void loadControlFromFirebase() {
   FirebaseJson json; FirebaseJsonData d;
   Firebase.getJSON(fbData, "/smartfarm/control", &json);
-  // อ่าน mode/manual_state/schedule/thresholds/buzzer_enabled/telegram_enabled
+  // อ่าน mode/manual_state/schedule/thresholds/buzzer_enabled
 }
 ```
 
@@ -217,8 +212,8 @@ water_temp_on  = 30.0°C   พัดลมช่วยเปิดเมื่�
 water_temp_off = 27.0°C   ยกเลิกเงื่อนไขน้ำเมื่อน้ำเย็นพอ
 HUMIDITY_MIN   = 60.0%    เปิดปั๊ม CH4 ถ้าต่ำกว่า (auto)
 humidity_max   = 75.0%    ปิดปั๊ม CH4 (hysteresis คู่กับ humidity_min กันปั๊มกระพริบ)
-thresh_temp_alert = 38.0°C   → Buzzer + Telegram
-thresh_hum_alert  = 40.0%    → Buzzer + Telegram
+thresh_temp_alert = 38.0°C   → Buzzer
+thresh_hum_alert  = 40.0%    → Buzzer
 ```
 
 ### Auto Control v2 — Water-assisted Fan + Pump Hysteresis + Sensor Averaging (เพิ่ม 2026-07-02)
@@ -236,9 +231,7 @@ bool pumpClose = (avgAH == 0 || avgAH >= hmax);
 
 ### Pump Safety
 ```cpp
-#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)  // ⚠️ ตอนนี้ 10 นาที (ปกติ 5) — ปรับชั่วคราวเพื่อทดสอบ
-                                              // สมมติฐาน "pump cutoff ทำ noise กวน DHT22 → false failsafe"
-                                              // ยังไม่ได้ผลทดสอบกลับมา — ต้องตัดสินใจ: กลับเป็น 5 หรือคงไว้
+#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)  // ปั๊มเดินต่อเนื่องได้สูงสุด 10 นาที (auto/schedule) — ค่าสุดท้าย ตัดสินใจแล้ว 2026-07-07
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)   // พักปั๊ม 5 นาที หลังตัด
 ```
 
@@ -262,14 +255,19 @@ void buzzerBeep(int times, int onMs=200, int offMs=150);  // ใช้ ON/OFF �
 // Alert: buzzerBeep(3) เมื่ออุณหภูมิ/ความชื้นผิดปกติ (ถ้า buzzerEnabled=true)
 ```
 
-### DS18B20 (self-heal DHT22 เพิ่ม 2026-07-01)
+### DS18B20
 ```cpp
 ds18b20.begin();
 waterTemp = ds18b20.getTempCByIndex(0);
 // กรองค่า -127°C และ 85°C (error values) — อ่านซ้ำอัตโนมัติ (DS_READ_RETRY=2)
 // ต้องมี Pull-up 4.7-5kΩ ระหว่าง DATA-VCC (ยืนยันแล้วว่าจำเป็น — ทดสอบแล้วใช้ได้)
-// DHT22: พัง 3 ครั้งติด (DHT_FAIL_LIMIT) → ลอง dht22.begin() re-init เอง
-//   (สมมติฐาน: relay ตัดโหลดมอเตอร์ → noise → DHT22 ค้าง ต้องรีเซ็ตไฟถึงจะหาย → ลอง soft-reset ก่อน)
+```
+
+### DHT22 self-heal (เบา ไม่ผูกกับ emergency mode ใดๆ)
+```cpp
+#define DHT_REINIT_EVERY 3   // อ่านพลาดครบ 3 ครั้ง → ลอง dht22.begin() re-init เฉยๆ (ไม่ restart ไม่สั่ง relay)
+// ระบบ Failsafe (auto เปิดพัดลม/ปิดปั๊มเมื่อ DHT พัง) + Recovery layer (auto ESP.restart() เมื่อ
+// failsafe/Firebase ค้างนาน) ถูก "ถอดออกทั้งหมด" ใน rollback 2026-07-03 — ดูหัวข้อ 15
 ```
 
 ### Relay (Active-LOW)
@@ -383,28 +381,54 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 | Buzzer ดังตลอด | DHT22 ไม่ได้ต่อ → humidity=0 < 40% | ต่อ DHT22 หรือ check `if (airTemp==0 && airHumidity==0) return;` |
 | Boost Converter พัง | จิ้มสายปั๊มขณะมีไฟ → Short circuit | ซื้อใหม่ XL6009/XL4016, ปิดไฟก่อนต่อ/ถอดสายเสมอ |
 | Port ไม่ขึ้น Arduino IDE (Mac M3) | ไม่มี CH340 driver | ติดตั้ง driver จาก wch-ic.com + อนุญาตใน Privacy & Security + restart |
-| พัดลม 5V ไม่หมุน | ยังไม่แน่ใจ — JUMP jumper? | ตรวจ JUMP jumper บน Expansion Board + วัด Multimeter |
+| พัดลม 5V ไม่หมุน | JUMP jumper บน Expansion Board | แก้แล้ว ✅ (ยืนยัน 2026-07-03) |
 | ESP32 38-pin เสียบ Expansion Board ไม่พอดี | Board รองรับ 30-pin | เปลี่ยนใช้ ESP32 30-pin |
 
 ---
 
-## 15. สิ่งที่ต้องทำต่อ (TODO — ตรวจสอบล่าสุด 2026-07-02)
+## 15. สิ่งที่ต้องทำต่อ (TODO — ตรวจสอบล่าสุด 2026-07-03)
 
-### 🔴 ด่วนที่สุด — Flash firmware (โค้ด commit แล้วในทุกจุดด้านล่าง แต่ยังไม่ยืนยันว่าขึ้นบอร์ดจริง)
-- [ ] **Flash firmware ล่าสุด** ผ่าน Arduino IDE — รวมการแก้ทั้งหมดนี้ในรอบเดียว:
-  Buzzer active-LOW fix · LCD auto-detect address (0x27/0x3F) · DHT22 self-heal ·
-  Auto Control v2 (พัดลมคุมด้วยน้ำ+อากาศ, ปั๊ม hysteresis, sensor averaging)
-- [ ] **ตัดสินใจเรื่อง PUMP_MAX_RUNTIME_MS** — ตอนนี้ตั้งไว้ 10 นาที (ปกติ 5) เพื่อทดสอบสมมติฐาน
-  noise/DHT22 failsafe — ถ้ายืนยันแล้วว่าไม่ใช่สาเหตุ ควรปรับกลับเป็น 5 นาที (ค่า safety เดิม)
-- [ ] **ใส่ Telegram Token + Chat ID จริง** ใน `config.h` (ตอนนี้ยังเป็น placeholder text อยู่
-  — ฟีเจอร์ Telegram compile ผ่านแต่จะไม่ส่งอะไรจนกว่าจะใส่ token จริง)
+### 🔴 ด่วนที่สุด — ผล A/B test ยืนยันแล้ว: ปัญหาคือ Hardware ไม่ใช่ Firmware
+
+**สรุปสำคัญ:** ผู้ใช้ flash เทียบทั้งเวอร์ชันเก่า (มี failsafe/recovery layer เต็ม) และเวอร์ชัน rollback
+(ถอด failsafe/recovery ออกหมดแล้ว — ดูล่างนี้) ได้ผลลัพธ์ความไม่เสถียร **เหมือนกันทุกประการ** — สรุปได้
+ชัดเจนว่า noise จากปั๊มที่รบกวน DHT22/ระบบไม่ใช่เรื่องโค้ด (ไม่ว่า simple หรือซับซ้อนแค่ไหนก็เจอเหมือนกัน)
+เป็นปัญหาไฟฟ้า/hardware ล้วนๆ **priority ตอนนี้คือแก้ hardware ไม่ใช่แก้ firmware เพิ่ม**:
+- [ ] Cap (ตัวเก็บประจุ) คร่อมขั้วมอเตอร์ปั๊ม (กัน arcing จาก commutator)
+- [ ] RC snubber ที่ relay CH4 (ปั๊ม)
+- [ ] แยกสายไฟกำลัง (ปั๊ม/มอเตอร์) ออกจากสายสัญญาณ (DHT22/DS18B20/I2C) ให้ห่างที่สุด
+
+### ✅ Rollback Failsafe/Recovery layer — เสร็จแล้ว ยืนยันผลแล้ว (2026-07-03)
+
+หลังจากต่อกัน 3 รอบ (auto control v2 → recovery layer v1 → recovery layer v2) ในเวลาไล่เลี่ยกัน
+ระบบเริ่มรวน/ค้างบ่อยขึ้น ไม่ลดลง — rollback กลับไปเวอร์ชันไม่มี failsafe/recovery เลย แล้ว flash
+เทียบกับเวอร์ชันเก่า **ผลออกมาเหมือนกัน** (ดูสรุปด้านบน) — เก็บเวอร์ชันเรียบง่ายนี้ไว้เป็น baseline
+ต่อไปไม่ต้องเพิ่ม recovery/failsafe กลับเข้ามาจนกว่าจะแก้ hardware noise ที่ต้นตอก่อน
+
+- [x] Backup โค้ดเวอร์ชันเต็ม (recovery layer v2 + DHT power-cycle + push embargo + NVS + LCD
+  widen) ไว้ที่ branch `experimental/recovery-layers-v2-untested` — ไม่ได้ลบทิ้ง ดึงกลับมาอ้างอิง/
+  cherry-pick ได้เสมอ (แต่ไม่ควรดึงกลับมาจนกว่าจะแก้ hardware noise แล้ว เพราะพิสูจน์แล้วว่าไม่ช่วย)
+- [x] ถอด `checkFailsafe()`, `failsafeActive`, recovery-layer restart (failsafe timeout restart,
+  Firebase connectivity watchdog restart), DHT22 GPIO19 power-cycle, push embargo ออกจาก `main`
+  ทั้งหมด — **เก็บไว้**: relay channel mapping, DS18B20 hardening, buzzer active-LOW fix,
+  heartbeat LED (GPIO2), auto control v2 (hysteresis + water-temp assist)
+- [x] Flash เทียบเวอร์ชันเก่า vs rollback — ผลเหมือนกัน ยืนยันเป็น hardware issue (ดูสรุปด้านบน)
+- [ ] **ย้ายสาย VCC ของ DHT22 กลับจากช่อง S (D19) ไปช่อง V (power rail ปกติ)** ถ้าเคยย้ายไปแล้ว —
+  `PIN_DHT_PWR` ถูกถอดออกจาก config.h แล้ว ถ้าไม่ย้ายสายกลับ DHT22 จะไม่มีไฟเลี้ยงเลย
+- [ ] **LCD ไม่ขึ้นจอเลย** — ยืนยันแล้วว่าไม่ใช่ปัญหา address/โค้ด (I2C scan เต็มช่วง 1-127 ตอนบูตไม่เจอ
+  อุปกรณ์เลยสักตัว) ต้องตรวจสาย GND/VCC/SDA/SCL ด้วยมัลติมิเตอร์จริง — ดูหัวข้อ 14
+
+### ✅ Telegram Alert — ถอดออกทั้งหมดแล้ว (2026-07-03)
+ผู้ใช้ตัดสินใจไม่ใช้ฟีเจอร์นี้ ถอดออกจาก firmware (.ino, config.h, config.h.example) และ dashboard
+(toggle chip + JS) ทั้งหมดแล้ว — ดูหัวข้อ 6 สำหรับ **คำเตือนความปลอดภัย**: bot token จริงเคยอยู่ใน
+PROJECT_MEMORY.md (ไฟล์ที่ track ใน git) ควร revoke ผ่าน @BotFather เพราะยังอยู่ใน git history
 
 ### 🟡 Hardware ที่ยังค้าง
-- [ ] แก้ปัญหาพัดลม 5V (ระบายความร้อนกล่อง IP65) ไม่หมุน — ตรวจ JUMP jumper (ยังไม่ยืนยันว่าแก้แล้ว)
-- [ ] ปั๊มน้ำ (CH4) + พัดลม 220V (CH3) ต่อจริงแล้ว ทำงานปกติ (ยืนยัน 2026-07-01) ✅
+- [x] พัดลม 5V (ระบายความร้อนกล่อง IP65) ไม่หมุน — แก้แล้ว (JUMP jumper) ยืนยัน 2026-07-03 ✅
+- [x] ปั๊มน้ำ (CH4) + พัดลม 220V (CH3) ต่อจริงแล้ว ทำงานปกติ (ยืนยัน 2026-07-01) ✅
+- [ ] Noise มอเตอร์ปั๊มรบกวน DHT22/ระบบ — ดูรายการ 3 ข้อในหัวข้อ 🔴 ด้านบน (ตอนนี้เป็น priority หลัก)
 
-### 🟢 Software ที่ทำเสร็จแล้วรอบนี้ (2026-06-29 – 2026-07-02)
-- [x] Telegram Alert (โค้ด+dashboard toggle เสร็จ — รอ token จริง)
+### 🟢 Software ที่ทำเสร็จแล้วรอบนี้ (2026-06-29 – 2026-07-03)
 - [x] Relay channel remap ตามสายจริง (CH4=ปั๊ม, CH3=พัดลม, CH1=สำรอง)
 - [x] DS18B20 hardening (retry, กรองค่าขยะ) + ยืนยัน pull-up 4.7-5kΩ จำเป็นจริง (ทดสอบแล้ว)
 - [x] ลบระบบ Soil Moisture ทั้งหมด (ไม่ใช้แล้ว)
@@ -413,6 +437,8 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 - [x] LCD auto-detect I2C address + DHT22 self-heal
 - [x] Auto Control v2 (น้ำช่วยคุมพัดลม, ปั๊ม hysteresis, sensor averaging)
 - [x] Dashboard redesign (เสร็จไปหลาย session ก่อนแล้ว)
+- [x] Rollback ถอด failsafe/recovery layer — ยืนยันด้วย A/B test ว่าเป็น hardware issue
+- [x] ถอด Telegram Alert ทั้งหมด (ไม่ใช้แล้ว)
 
 ### 🔵 ค้างไว้พิจารณา (ไม่เร่งด่วน)
 - [ ] Login: ยังไม่มีปุ่มสมัคร account — แนะนำไม่ทำ (control write เปิดให้ทุก account ที่ login ได้
@@ -431,4 +457,4 @@ firebase deploy
 
 ---
 
-*อัปเดตล่าสุด: 2026-07-02*
+*อัปเดตล่าสุด: 2026-07-07 — แก้ PIN_DHT11 (32→18) และชื่อบริษัทให้ตรงกับโค้ดจริง, ยืนยัน PUMP_MAX_RUNTIME_MS=10 นาทีเป็นค่าสุดท้าย*

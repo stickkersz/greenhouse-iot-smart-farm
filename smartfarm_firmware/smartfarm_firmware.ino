@@ -6,7 +6,6 @@
   Changelog v1.4.0:
     - Relay remap: CH4=ปั๊มน้ำ, CH3=พัดลม 220V, CH1=สำรอง (CH2 ไม่ใช้)
     - DS18B20 hardening: กรองค่า -127/85°C + อ่านซ้ำ (รองรับสายยาว 4m)
-    - Telegram Alert: ESP32 ยิง Bot API ตรง + cooldown 5 นาที/ชนิด
 
   Hardware:
     - ESP32 DevKit V1
@@ -37,8 +36,6 @@ WiFiMulti wifiMulti;
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
 #include <esp_task_wdt.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
 #include "config.h"
 
 // เผื่อ config.h เก่าไม่มี define นี้ — relay เป็น active-LOW (LOW=เปิด, HIGH=ปิด)
@@ -50,14 +47,6 @@ WiFiMulti wifiMulti;
 // (LOW=ดัง, HIGH=เงียบ) ถ้าใช้ buzzer แบบอื่นแล้วเงียบตลอด/ดังกลับด้าน ให้เปลี่ยนเป็น false ใน config.h
 #ifndef BUZZER_ACTIVE_LOW
 #define BUZZER_ACTIVE_LOW true
-#endif
-
-// เผื่อ config.h เก่าไม่มี Telegram — ปล่อยว่าง = ฟีเจอร์ปิด (ไม่ส่ง)
-#ifndef TELEGRAM_BOT_TOKEN
-#define TELEGRAM_BOT_TOKEN ""
-#endif
-#ifndef TELEGRAM_CHAT_ID
-#define TELEGRAM_CHAT_ID ""
 #endif
 
 // ── Role → Channel mapping (การเดินสายจริง 2026-06-26) ──
@@ -108,8 +97,6 @@ volatile float thresh_water_temp_off = 27.0;  // ยกเลิกเงื่�
 volatile float thresh_temp_alert = 38.0;  // เกณฑ์แจ้งเตือน/buzzer (sync กับ dashboard)
 volatile float thresh_hum_alert  = 40.0;
 volatile bool  buzzerEnabled   = true;   // ปิด/เปิดเสียงเตือนจาก dashboard
-volatile bool  telegramEnabled = false;  // ปิด/เปิดแจ้งเตือน Telegram จาก dashboard
-bool telegramWasEnabled = false;         // จับ transition ปิด→เปิด (ส่งข้อความยืนยัน)
 
 // ── Schedule State ────────────────────────────────────
 // ch index: 0=ch1(unused) 1=ch2(unused) 2=ch3_fan 3=ch4_pump
@@ -125,7 +112,7 @@ int   h_count   = 0;   // จำนวน sample อากาศ
 int   h_countWT = 0;   // จำนวน sample น้ำที่อ่านได้ (แยกต่างหาก — DS18B20 สายยาวอาจอ่านพลาดบางครั้ง)
 
 // ── Control-loop Averaging (แยกจาก hourly-log accumulator ด้านบนโดยสิ้นเชิง) ──
-// N=3 ตาม convention เดียวกับ DHT_FAIL_LIMIT/DHT_RECOVER_LIMIT — กัน relay สั่งเปลี่ยนจากค่าเพี้ยนชั่วครู่ครั้งเดียว
+// N=3 รอบ — กัน relay สั่งเปลี่ยนจากค่าเพี้ยนชั่วครู่ครั้งเดียว
 #define CTRL_AVG_N 3
 float ctrlBufAT[CTRL_AVG_N] = {0};   // buffer อุณหภูมิอากาศ (สำหรับตัดสินใจ auto control เท่านั้น)
 float ctrlBufAH[CTRL_AVG_N] = {0};   // buffer ความชื้นอากาศ
@@ -140,11 +127,8 @@ unsigned long lastNtpSync    = 0;
 
 // ── Safety / Worst-case Protection (v1.3.0) ───────────
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
-#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 10 นาที (auto/schedule) — ชั่วคราวเพื่อทดสอบว่า pump cutoff เป็นตัวการ noise/DHT22 failsafe หรือไม่ (เดิม 5 นาที)
+#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 10 นาที (auto/schedule) — ค่าสุดท้าย ตัดสินใจแล้ว 2026-07-07 (เดิม 5 นาที)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
-#define DHT_FAIL_LIMIT       3                 // DHT อ่านพลาดติดกันกี่ครั้งถึงเข้า failsafe
-#define DHT_RECOVER_LIMIT    3                 // อ่านดีติดกันกี่ครั้งถึงออกจาก failsafe (กัน flapping)
-#define FAILSAFE_REALERT_MS  (10UL*60*1000)    // ใน failsafe ดัง buzzer เตือนซ้ำทุก 10 นาที
 #define DHT_TEMP_MIN        -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
 #define DHT_TEMP_MAX         70.0
 // DS18B20: ช่วงอุณหภูมิน้ำสมเหตุผล — นอกช่วงนี้ = ค่าเสีย (-127 สายหลุด / 85.0 reset อ่านไม่ทัน / noise จากสายยาว)
@@ -153,29 +137,18 @@ unsigned long lastNtpSync    = 0;
 #define DS_READ_RETRY        2                 // อ่าน DS18B20 ซ้ำได้กี่ครั้งถ้าค่าเสีย (สายยาว 4m รบกวน)
 // DHT22 อยู่ใกล้ relay/สาย pump บน expansion board มาก — noise ตอน pump switch ทำอ่านพลาด
 #define PUMP_SWITCH_QUIET_MS  3000             // เว้น 3 วิหลังปั๊มสวิตช์ ก่อนอ่าน DHT22 รอบถัดไป (รอ noise transient สงบ)
-// ── Recovery layer (กู้คืนตัวเองแทนที่จะค้างถาวร) ──
-#define DHT_REINIT_EVERY     3                 // ลอง dht22.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด (ไม่ใช่ครั้งเดียว)
-#define FAILSAFE_MAX_MS      (5UL*60*1000)     // อยู่ failsafe นานเกินนี้แล้ว DHT ยังไม่ฟื้น → ESP.restart() กู้ตัวเอง
-#define FB_DEAD_MS           (5UL*60*1000)     // Firebase ไม่พร้อมนานเกินนี้ → ESP.restart() กู้ WiFi/Firebase
+#define DHT_REINIT_EVERY     3                 // ลอง dht22.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด — self-heal เบาๆ ไม่ผูกกับ emergency mode ใดๆ
 // Heartbeat LED (GPIO2 — ตรงกับ LED บนบอร์ด ESP32 DevKit V1 ส่วนใหญ่) — กระพริบ = loop() ยังรันอยู่
-// ถ้าเจอ "ค้าง" อีก ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ
-// โดยไม่ trip watchdog) · หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
+// ถ้าเจอ "ค้าง" ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ)
+// หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
 #define PIN_STATUS_LED        2
 #define HEARTBEAT_BLINK_MS    500
 #define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม.
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
-#define TG_COOLDOWN_MS       (5UL*60*1000)     // กันสแปม — แจ้ง Telegram ต่อชนิดได้ทุก 5 นาที
-enum { TG_HIGH_TEMP=0, TG_LOW_HUM, TG_HIGH_WATER, TG_SENSOR_FAULT, TG_PUMP_CUTOFF, TG_TYPES };
-unsigned long tgCooldown[TG_TYPES] = {0};      // เวลาพ้น cooldown ของแต่ละชนิด
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน DHT22
-unsigned long failsafeSince      = 0;          // เวลาที่เข้า failsafe (0 = ไม่ได้อยู่ failsafe) — ใช้ timeout → restart
-unsigned long lastFirebaseOkTime = 0;          // เวลาที่ Firebase พร้อม/push สำเร็จล่าสุด — ใช้ connectivity watchdog
-unsigned long lastFailsafeBeep = 0;            // เวลาที่ buzzer เตือน failsafe ครั้งล่าสุด
-int  dhtFailCount  = 0;                        // นับ DHT อ่านพลาดติดกัน (เข้า failsafe)
-int  dhtGoodCount  = 0;                        // นับ DHT อ่านดีติดกัน (ออก failsafe)
-bool failsafeActive = false;                   // โหมดฉุกเฉิน sensor อากาศพัง
+int  dhtFailCount  = 0;                        // นับ DHT อ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
 
 // ── Forward Declarations ──────────────────────────────
@@ -194,11 +167,8 @@ String getHourlyPath();
 void checkSchedule();
 void updateLCD();
 void buzzerBeep(int times, int onMs = 200, int offMs = 150);
-void checkFailsafe();
 void pumpSafetyCheck();
 bool timeValid();
-void sendTelegram(const String& msg);
-void notifyTelegram(int type, const String& msg);
 float avgCtrlAT();
 float avgCtrlAH();
 float avgCtrlWT();
@@ -289,7 +259,6 @@ void setup() {
   // โหลด control state ครั้งแรก
   loadControlFromFirebase();
   applyManualControl();
-  telegramWasEnabled = telegramEnabled;   // กันส่งข้อความ "เปิดแล้ว" ทุกครั้งที่ ESP32 รีบูต
 
   // Watchdog — reboot อัตโนมัติถ้า loop ค้าง (worst-case: ESP32 แฮงค์/SSL ค้าง)
 #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -303,8 +272,6 @@ void setup() {
 #endif
   esp_task_wdt_add(NULL);
   Serial.printf("Watchdog Ready (%ds)\n", WDT_TIMEOUT_S);
-
-  lastFirebaseOkTime = millis();   // เริ่มนับ connectivity watchdog จากตอนนี้ (กัน restart ทันทีตอนบูต)
 
   Serial.println("=== Setup Complete ===\n");
 }
@@ -320,41 +287,24 @@ void loop() {
   if (now - lastSensorTime >= SENSOR_INTERVAL) {
     lastSensorTime = now;
     readSensors();
-    checkFailsafe();                        // sensor อากาศพัง → เปิดพัดลม + ปิดปั๊ม
-    if (!failsafeActive) autoControl();      // auto ทำงานเฉพาะตอน sensor ปกติ
+    autoControl();
     if (Firebase.ready()) {
       pushToFirebase();
       checkAlerts();
       lastPushTime = millis();
-      lastFirebaseOkTime = millis();   // push สำเร็จ (Firebase พร้อม) — รีเซ็ต connectivity watchdog
     } else {
       Serial.println("[Firebase] Not ready — skip push");
     }
   }
 
-  // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 5 นาทีในโหมดอัตโนมัติ)
+  // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 10 นาทีในโหมดอัตโนมัติ)
   pumpSafetyCheck();
-
-  // Connectivity watchdog — Firebase ไม่พร้อมนานเกิน FB_DEAD_MS → restart กู้ WiFi/Firebase
-  // (watchdog ปกติจับได้แค่ loop ค้าง ไม่จับ "loop วนอยู่แต่เน็ตตายเงียบ" — อันนี้อุดช่องโหว่นั้น)
-  if (millis() - lastFirebaseOkTime >= FB_DEAD_MS) {
-    Serial.println("[RECOVERY] Firebase ไม่พร้อมนานเกินกำหนด → ESP.restart() กู้การเชื่อมต่อ");
-    delay(300);
-    ESP.restart();
-  }
 
   // poll คำสั่งควบคุมทุก CONTROL_POLL_MS (1.5 วิ) — รอ 2 วิหลัง push กัน SSL ชน
   static unsigned long lastControlPoll = 0;
   if (now - lastControlPoll >= CONTROL_POLL_MS && Firebase.ready() && (millis() - lastPushTime >= 2000)) {
     lastControlPoll = now;
     loadControlFromFirebase();
-    // เพิ่งกดเปิด Telegram จาก dashboard → ส่งข้อความยืนยันให้รู้ว่าเชื่อมต่อได้
-    if (telegramEnabled && !telegramWasEnabled) {
-      sendTelegram("✅ <b>SmartFarm ปุ๋ยไวกิ้ง</b>\nเปิดการแจ้งเตือน Telegram แล้ว\nระบบพร้อมส่งเตือนเมื่อมีเหตุผิดปกติ");
-    }
-    telegramWasEnabled = telegramEnabled;
-    // เรียกเสมอแม้อยู่ใน failsafe — ผู้ใช้ต้องสั่ง manual ได้ตลอดเวลา (ไม่ล็อกคนออกจากระบบตัวเอง)
-    // applyManualControl() แก้เฉพาะช่องที่ user สลับเป็น manual แล้วเท่านั้น ปลอดภัยเรียกได้เสมอ
     bool changed = applyManualControl();
     if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
   }
@@ -429,7 +379,6 @@ void loadControlFromFirebase() {
   if (json.get(d, "thresholds/temp_alert"))     thresh_temp_alert = d.floatValue;
   if (json.get(d, "thresholds/humidity_alert")) thresh_hum_alert  = d.floatValue;
   if (json.get(d, "buzzer_enabled"))         buzzerEnabled  = d.boolValue;
-  if (json.get(d, "telegram_enabled"))       telegramEnabled = d.boolValue;
 
   Serial.println(" OK");
 }
@@ -452,7 +401,7 @@ void readSensors() {
     if (dhtBad) {
       Serial.println("[DHT22] อ่านค่าผิดปกติ (NaN หรือ นอกช่วง)");
       airTemp = 0; airHumidity = 0;
-      dhtFailCount++; dhtGoodCount = 0;
+      dhtFailCount++;
       // DHT22 โดน noise แล้วมัก "ค้าง" อ่านไม่ได้จนกว่าจะรีเซ็ตไฟ — ลอง re-init driver เอง
       // ลองซ้ำทุกๆ DHT_REINIT_EVERY ครั้งที่พลาด (ไม่ใช่ครั้งเดียวแล้วยอมแพ้) เผื่อฟื้นได้โดยไม่ต้อง power cycle
       if (dhtFailCount % DHT_REINIT_EVERY == 0) {
@@ -461,7 +410,6 @@ void readSensors() {
       }
     } else {
       dhtFailCount = 0;
-      if (dhtGoodCount < 1000) dhtGoodCount++;
       // เก็บเฉพาะค่าดีเข้า control-averaging buffer (กัน autoControl() ตัดสินใจจากค่าเพี้ยน)
       ctrlBufAT[ctrlBufIdx] = airTemp;
       ctrlBufAH[ctrlBufIdx] = airHumidity;
@@ -605,66 +553,7 @@ bool timeValid() {
 }
 
 // ─────────────────────────────────────────────────────
-// FAILSAFE — sensor อากาศพัง (อ่านพลาดติดกัน DHT_FAIL_LIMIT ครั้ง)
-// worst-case: ตัดสินใจ auto ไม่ได้ → ระบายอากาศไว้ก่อน + ปิดปั๊มกันน้ำท่วม
-//
-// สำคัญ: failsafe บังคับ safe-state "เฉพาะช่องที่ยังอยู่โหมด auto จริง" (auto และไม่ได้ถูก schedule
-// ครอบอยู่) เท่านั้น — ถ้าผู้ใช้สลับช่องไหนเป็น manual เอง (ตัดสินใจเองหลังเห็น alert) failsafe จะ
-// "ไม่บังคับทับ" ช่องนั้นอีก ผู้ใช้ต้องสั่งเองได้เสมอ ไม่ถูกล็อกออกจากระบบตัวเองแม้อยู่ในภาวะฉุกเฉิน
-void checkFailsafe() {
-  bool fanUnderAuto  = ch_isAuto[IDX_FAN]  && !ch_schedEnabled[IDX_FAN];
-  bool pumpUnderAuto = ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP];
-
-  // เข้า failsafe: อ่านพลาดติดกัน DHT_FAIL_LIMIT ครั้ง
-  if (!failsafeActive && dhtFailCount >= DHT_FAIL_LIMIT) {
-    failsafeActive = true;
-    failsafeSince = millis();
-    lastFailsafeBeep = millis();
-    if (fanUnderAuto  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }   // เปิดพัดลม (CH3)
-    if (pumpUnderAuto &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); pumpOnSince = 0; }  // ปิดปั๊ม (CH4)
-    Serial.println("[FAILSAFE] เข้าโหมดฉุกเฉิน — sensor อากาศพัง → เปิดพัดลม + ปิดปั๊ม (เฉพาะช่อง auto)");
-    if (Firebase.ready()) {
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "sensor_fault");
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-        "Sensor อากาศอ่านค่าไม่ได้ — เข้าโหมดฉุกเฉิน (เปิดพัดลม/ปิดปั๊ม) ตรวจสอบ DHT22");
-    }
-    if (buzzerEnabled) buzzerBeep(5);
-    notifyTelegram(TG_SENSOR_FAULT, "🚨 <b>โหมดฉุกเฉิน (Failsafe)</b>\nSensor อากาศ (DHT22) อ่านค่าไม่ได้\n"
-      "ระบบเปิดพัดลม + ปิดปั๊มอัตโนมัติ (เฉพาะช่องที่เป็น auto — สลับเป็น manual เพื่อคุมเองได้)\n"
-      "กรุณาตรวจสอบเซ็นเซอร์ด่วน — SmartFarm ปุ๋ยไวกิ้ง");
-    return;
-  }
-
-  // ออกจาก failsafe: ต้องอ่านดีติดกัน DHT_RECOVER_LIMIT ครั้ง (hysteresis — กัน flapping จากสายหลวม)
-  if (failsafeActive && dhtGoodCount >= DHT_RECOVER_LIMIT) {
-    failsafeActive = false;
-    failsafeSince = 0;
-    Serial.println("[FAILSAFE] sensor กลับมาปกติ (อ่านดีติดกัน) → คืนการควบคุมอัตโนมัติ");
-    return;
-  }
-
-  // ยังอยู่ใน failsafe: ย้ำสถานะปลอดภัยเฉพาะช่อง auto + ดัง buzzer เตือนซ้ำทุก 10 นาที
-  if (failsafeActive) {
-    if (fanUnderAuto  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
-    if (pumpUnderAuto &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); }
-    if (buzzerEnabled && millis() - lastFailsafeBeep >= FAILSAFE_REALERT_MS) {
-      lastFailsafeBeep = millis();
-      buzzerBeep(5);
-      Serial.println("[FAILSAFE] ยังฉุกเฉินอยู่ — เตือนซ้ำ (sensor ยังไม่กลับมา)");
-    }
-    // RECOVERY: ติด failsafe นานเกิน FAILSAFE_MAX_MS แล้ว DHT ยังไม่ฟื้น → restart กู้ตัวเอง
-    // (เท่ากับ power-cycle ที่คนต้องทำมือ) — หลังบูต ปั๊มปิดอยู่แล้ว noise หาย DHT มักกลับมาปกติ
-    // ถ้ายังพัง จะ re-enter failsafe (พัดลมเปิด = สถานะปลอดภัยอยู่แล้ว) แต่ระบบไม่ค้างตายถาวรอีก
-    if (failsafeSince != 0 && millis() - failsafeSince >= FAILSAFE_MAX_MS) {
-      Serial.println("[RECOVERY] failsafe นานเกินกำหนด — DHT ไม่ฟื้น → ESP.restart() กู้ระบบ");
-      delay(300);   // ให้ Serial flush ก่อน
-      ESP.restart();
-    }
-  }
-}
-
-// ─────────────────────────────────────────────────────
-// PUMP SAFETY — ตัดปั๊มถ้าเดินต่อเนื่องเกิน 5 นาที (เฉพาะ auto/schedule)
+// PUMP SAFETY — ตัดปั๊มถ้าเดินต่อเนื่องเกิน 10 นาที (เฉพาะ auto/schedule)
 // กันน้ำท่วม / ปั๊มไหม้แห้ง · โหมด manual = คนคุมเอง ไม่ตัดอัตโนมัติ
 void pumpSafetyCheck() {
   unsigned long now = millis();
@@ -678,15 +567,13 @@ void pumpSafetyCheck() {
       lastPumpSwitchTime = now;
       pumpOnSince   = 0;
       pumpLockUntil = now + PUMP_COOLDOWN_MS;
-      Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 5 นาที (พัก 5 นาที)");
+      Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 10 นาที (พัก 5 นาที)");
       if (Firebase.ready()) {
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-          "ตัดปั๊มอัตโนมัติ — ทำงานต่อเนื่องเกิน 5 นาที (พัก 5 นาที) ตรวจสอบระดับน้ำ");
+          "ตัดปั๊มอัตโนมัติ — ทำงานต่อเนื่องเกิน 10 นาที (พัก 5 นาที) ตรวจสอบระดับน้ำ");
       }
       if (buzzerEnabled) buzzerBeep(2);
-      notifyTelegram(TG_PUMP_CUTOFF, "💧 <b>ตัดปั๊มอัตโนมัติ</b>\nปั๊มทำงานต่อเนื่องเกิน 5 นาที — พัก 5 นาที\n"
-        "กรุณาตรวจสอบระดับน้ำ — SmartFarm ปุ๋ยไวกิ้ง");
     }
   } else {
     pumpOnSince = 0;   // ปั๊มหยุด หรืออยู่โหมด manual → รีเซ็ตตัวจับเวลา
@@ -706,7 +593,7 @@ void pushStatus() {
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (dhtFailCount == 0));
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
-  Firebase.setBool (fbData, base + "status/failsafe",    failsafeActive);
+  Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
   Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
   Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
   Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
@@ -743,53 +630,6 @@ void buzzerBeep(int times, int onMs, int offMs) {
 }
 
 // ─────────────────────────────────────────────────────
-// Telegram — ส่งข้อความเข้า Bot API ตรงผ่าน HTTPS (ไม่ต้องใช้ Cloud Functions → ใช้ได้บน Spark free)
-void sendTelegram(const String& msg) {
-  if (strlen(TELEGRAM_BOT_TOKEN) == 0 || strlen(TELEGRAM_CHAT_ID) == 0) {
-    Serial.println("[TG] ยังไม่ตั้งค่า BOT_TOKEN/CHAT_ID ใน config.h — ข้าม");
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED) { Serial.println("[TG] ไม่มี WiFi — ข้าม"); return; }
-
-  esp_task_wdt_reset();   // ป้อน watchdog ก่อน — TLS handshake อาจกินเวลาหลายวินาที
-  WiFiClientSecure client;
-  client.setInsecure();                       // ข้าม cert validation (จัดการ root CA บน ESP32 ยุ่งยาก)
-  HTTPClient https;
-  String url = "https://api.telegram.org/bot" + String(TELEGRAM_BOT_TOKEN) + "/sendMessage";
-  if (!https.begin(client, url)) { Serial.println("[TG] begin() fail"); return; }
-  https.addHeader("Content-Type", "application/json");
-  https.setTimeout(8000);
-
-  // escape เฉพาะอักขระที่ทำ JSON พัง — ภาษาไทย (UTF-8) ส่งดิบได้เลย
-  String text = msg;
-  text.replace("\\", "\\\\"); text.replace("\"", "\\\""); text.replace("\n", "\\n");
-  String body = "{\"chat_id\":\"" + String(TELEGRAM_CHAT_ID) +
-                "\",\"text\":\"" + text + "\",\"parse_mode\":\"HTML\"}";
-
-  int code = https.POST(body);
-  if (code == 200) {
-    Serial.println("[TG] ส่งสำเร็จ");
-    // บันทึกเวลาส่งล่าสุด (epoch ms) ให้ dashboard แสดง — เฉพาะเมื่อนาฬิกา sync แล้ว
-    if (Firebase.ready() && timeValid()) {
-      Firebase.setDouble(fbData, "/smartfarm/alerts/telegram/last_sent", (double)time(nullptr) * 1000.0);
-      Firebase.setBool  (fbData, "/smartfarm/alerts/telegram/enabled",   telegramEnabled);
-    }
-  } else {
-    Serial.printf("[TG] ส่งไม่สำเร็จ — HTTP %d\n", code);
-  }
-  https.end();
-}
-
-// แจ้งเตือน Telegram แบบมี cooldown ต่อชนิด (กันสแปมตอนค่าแกว่งรอบ threshold)
-void notifyTelegram(int type, const String& msg) {
-  if (!telegramEnabled) return;
-  if (type >= 0 && type < TG_TYPES) {
-    if (millis() < tgCooldown[type]) return;          // ยังอยู่ใน cooldown ของชนิดนี้
-    tgCooldown[type] = millis() + TG_COOLDOWN_MS;
-  }
-  sendTelegram(msg);
-}
-
 void checkAlerts() {
   // ข้าม alert ถ้า sensor ยังอ่านไม่ได้
   if (airTemp == 0 && airHumidity == 0) {
@@ -805,8 +645,6 @@ void checkAlerts() {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
       "อุณหภูมิสูงเกิน " + String(thresh_temp_alert, 0) + "°C! (" + String(airTemp, 1) + "°C)");
     Serial.println("[ALERT] High Temp: " + String(airTemp, 1) + "°C");
-    notifyTelegram(TG_HIGH_TEMP, "🌡️ <b>อุณหภูมิสูงเกินกำหนด</b>\nวัดได้ " + String(airTemp, 1)
-      + "°C (เกณฑ์ " + String(thresh_temp_alert, 0) + "°C)\n— SmartFarm ปุ๋ยไวกิ้ง");
     hasAlert = true;
   }
   if (airHumidity > 0 && airHumidity < thresh_hum_alert) {
@@ -815,8 +653,6 @@ void checkAlerts() {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
       "ความชื้นต่ำกว่า " + String(thresh_hum_alert, 0) + "%! (" + String(airHumidity, 1) + "%)");
     Serial.println("[ALERT] Low Humidity: " + String(airHumidity, 1) + "%");
-    notifyTelegram(TG_LOW_HUM, "💧 <b>ความชื้นอากาศต่ำ</b>\nวัดได้ " + String(airHumidity, 1)
-      + "% (เกณฑ์ " + String(thresh_hum_alert, 0) + "%)\n— SmartFarm ปุ๋ยไวกิ้ง");
     hasAlert = true;
   }
   if (waterSensorOk && waterTemp > 35.0) {
@@ -825,8 +661,6 @@ void checkAlerts() {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
       "อุณหภูมิน้ำสูงเกิน 35°C! (" + String(waterTemp, 1) + "°C)");
     Serial.println("[ALERT] High Water Temp: " + String(waterTemp, 1) + "°C");
-    notifyTelegram(TG_HIGH_WATER, "🌊 <b>อุณหภูมิน้ำสูง</b>\nวัดได้ " + String(waterTemp, 1)
-      + "°C (เกณฑ์ 35°C)\n— SmartFarm ปุ๋ยไวกิ้ง");
     hasAlert = true;
   }
 

@@ -217,25 +217,25 @@ logs:          read=email, write=anon
 
 ## 🎯 Next Steps (ตรวจสอบล่าสุด 2026-07-02)
 
+> ⚠️ ส่วนนี้ (2026-07-02) ค่อนข้าง stale แล้ว — ดู PROJECT_MEMORY.md หัวข้อ 15 สำหรับสถานะล่าสุด
+> (2026-07-03): rollback ถอด failsafe/recovery layer + ยืนยัน A/B test ว่าความไม่เสถียรเป็น
+> hardware noise ไม่ใช่โค้ด, Telegram ถูกถอดออกทั้งหมดแล้ว (ไม่ใช้แล้ว), พัดลม 5V แก้แล้ว
+
 ### 🔴 ด่วนที่สุด
-- [ ] **Flash firmware ล่าสุดขึ้นบอร์ด** — โค้ด commit ครบแล้ว (buzzer active-LOW, LCD auto-detect,
-  DHT22 self-heal, Auto Control v2) แต่ยังไม่ยืนยันว่า flash ขึ้น ESP32 จริงแล้ว
-- [ ] ใส่ Telegram Token/Chat ID จริงใน `config.h` (ตอนนี้ยัง placeholder)
-- [ ] ตัดสินใจ `PUMP_MAX_RUNTIME_MS` — ตอนนี้ 10 นาทีชั่วคราว (ปกติ 5) เพื่อทดสอบ noise/DHT22
+- [x] ตัดสินใจ `PUMP_MAX_RUNTIME_MS` แล้ว ✅ (2026-07-07) — คงไว้ **10 นาที** เป็นค่าสุดท้าย (เดิม 5 นาที)
 
 ### Hardware
 - [x] ต่อปั๊มน้ำ CH4 จริง ✅ (2026-07-01, ทำงานปกติ)
 - [x] ต่อพัดลม CH3 220V จริง ✅ (2026-07-01, ทำงานปกติ)
-- [ ] แก้ปัญหาพัดลม 5V ระบายความร้อนกล่องไม่หมุน
-- [ ] ทดสอบ Auto mode ครบ loop กับฮาร์ดแวร์จริงต่อเนื่อง (มีรายงาน false failsafe ทุก ~5 นาที
-  อยู่ระหว่างวินิจฉัย — ดู PROJECT_MEMORY.md หัวข้อ 15)
+- [x] แก้ปัญหาพัดลม 5V ระบายความร้อนกล่องไม่หมุน ✅ (2026-07-03, JUMP jumper)
+- [x] ยืนยันแล้วว่า noise ปั๊มรบกวน DHT22/ระบบเป็น hardware ไม่ใช่ firmware (A/B test 2026-07-03) —
+  ต้องแก้: cap คร่อมมอเตอร์ปั๊ม + RC snubber CH4 + แยกสายไฟกำลัง/สัญญาณ
 - ❌ SHT35 ยกเลิกแล้ว — ใช้ DHT22 ถาวร ไม่ต้องซื้อ
 
 ### Software
 - [x] Dark Mode toggle ✅ (ทำเสร็จแล้ว)
-- [x] Telegram alerts (ESP32 ยิง Bot API ตรง — ใช้ได้บน Spark free) ✅ โค้ดเสร็จ รอ token จริง
 - [x] Auto Control v2 — พัดลมคุมด้วยน้ำ+อากาศ, ปั๊ม hysteresis, sensor averaging ✅
-- [ ] Email alerts (Firebase Cloud Functions — ต้อง Blaze, ยังไม่จำเป็นเพราะมี Telegram แล้ว)
+- [x] ถอด Telegram alerts ทั้งหมด ✅ (2026-07-03, ไม่ใช้แล้ว)
 - [ ] Multiple zones support
 - [ ] Weekly/monthly report PDF
 
