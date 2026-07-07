@@ -386,7 +386,23 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
 ---
 
-## 15. สิ่งที่ต้องทำต่อ (TODO — ตรวจสอบล่าสุด 2026-07-03)
+## 15. สิ่งที่ต้องทำต่อ (TODO — ตรวจสอบล่าสุด 2026-07-07)
+
+### ✅ Stability Hardening Round (2026-07-07) — เตรียมระบบสำหรับใช้งานทุกวัน/ทุกคนในทีม
+
+ผู้ใช้ยืนยันชัดเจนว่า**ไม่ต้องการ**เพิ่ม runtime failsafe/recovery layer กลับเข้ามาตอนนี้ (รอแก้
+hardware noise ก่อน — ดูหัวข้อ 🔴 ด้านล่าง) และ**ไม่ต้องการ**ระบบ role/สิทธิ์แยกระดับใน dashboard
+(ทีมงานขนาดเล็ก account ทุกตัวสิทธิ์เท่ากันพอแล้ว) ดังนั้นรอบนี้เน้นความเสถียร/ใช้งานง่ายเฉพาะจุดที่
+ไม่ขัดกับสองข้อนี้:
+- [x] Firmware: เพิ่ม retry การ auth กับ Firebase ตอนบูต (สูงสุด 4 ครั้ง ก่อน `ESP.restart()`) กันบอร์ด
+  วิ่งต่อแบบไม่ auth ตลอดไปเงียบๆ ถ้าเน็ต/Firebase สะดุดชั่วคราวตอนเปิดเครื่อง — เป็น boot-time check
+  ครั้งเดียว ไม่ใช่ runtime heuristic loop จึงไม่ขัดกับการตัดสินใจ "ไม่เพิ่ม recovery layer"
+- [x] Dashboard: แปล error code จาก Firebase listener (`permission-denied`, `network-error` ฯลฯ)
+  เป็นข้อความไทยที่พนักงานทั่วไปเข้าใจได้ (เดิมโชว์ error code ดิบ)
+- [x] เพิ่ม `TEAM_ONBOARDING.md` — วิธีเพิ่ม/ลบ account พนักงานผ่าน Firebase Console (dashboard ไม่มี
+  ปุ่มสมัครเอง โดยตั้งใจ)
+- [x] เพิ่ม `DAILY_OPERATIONS_CHECKLIST.md` — เช็คลิสต์ประจำวัน/สัปดาห์ + ความหมาย error ที่เจอบ่อย
+  + เมื่อไหร่ควรแจ้ง Tonkla ทันที เขียนให้คนไม่มีพื้นฐาน IT เข้าใจได้
 
 ### 🔴 ด่วนที่สุด — ผล A/B test ยืนยันแล้ว: ปัญหาคือ Hardware ไม่ใช่ Firmware
 

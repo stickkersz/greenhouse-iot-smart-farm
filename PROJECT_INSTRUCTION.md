@@ -134,6 +134,8 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 │   ├── index.html
 │   └── index.v1.1.0.backup.html
 ├── pinout_v2.md                 ← สรุปการต่อสายล่าสุด (pinout.docx/pdf เป็นเวอร์ชันเก่า ล้าสมัยบางจุด อย่าอ้างอิง)
+├── TEAM_ONBOARDING.md           ← วิธีเพิ่ม/ลบ account พนักงานผ่าน Firebase Console
+├── DAILY_OPERATIONS_CHECKLIST.md ← เช็คลิสต์ประจำวัน/สัปดาห์ สำหรับทีมที่ไม่ใช่สาย IT
 ├── PROJECT_MEMORY.md            ← ข้อมูลเทคนิคละเอียด
 └── PROJECT_INSTRUCTION.md       ← ไฟล์นี้
 ```
@@ -147,3 +149,14 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 - ถ้าต้องแก้ไข config.h ให้ระวัง WiFi password (sensitive)
 - เมื่อแนะนำ hardware ให้คำนึงว่าเป็นโรงเรือนขนาดเล็ก ~11m²
 - Relay เป็น Active-LOW เสมอ — ตรวจสอบ logic ให้ถูกต้องทุกครั้ง
+
+**การตัดสินใจเรื่อง Stability (2026-07-07 — อย่าเสนอย้อนกลับโดยไม่ถามก่อน):**
+- **ห้ามเพิ่ม runtime failsafe/recovery layer กลับเข้า firmware** (เช่น checkFailsafe บังคับ relay,
+  ESP.restart() อัตโนมัติเมื่อ sensor/Firebase ค้าง) จนกว่าจะแก้ hardware noise (cap+snubber ที่ปั๊ม)
+  เสร็จก่อน — เคยเพิ่มแล้วถอดออกเพราะ A/B test พิสูจน์ว่าปัญหาคือ noise ฮาร์ดแวร์ ไม่ใช่โค้ด และการมี
+  recovery layer ซับซ้อนขึ้นไม่ได้ช่วยอะไร ยกเว้นผู้ใช้ขอเปลี่ยนใจเอง
+  - ข้อยกเว้นที่ทำได้: boot-time retry แบบมีขอบเขต (เช่น WiFi connect retry, Firebase Auth retry
+    ก่อน ESP.restart()) เพราะเป็น deterministic check ตอนบูตครั้งเดียว ไม่ใช่ heuristic ที่รันตลอดและ
+    เคยไปชนกับ noise — ปัจจุบันมีทั้งสองแบบแล้ว
+- **Dashboard ไม่ต้องมีระบบ role/สิทธิ์แยกระดับ** — ทีมงานขนาดเล็ก ทุก account ที่ Tonkla สร้างให้มี
+  สิทธิ์เท่ากันหมด (ดู `TEAM_ONBOARDING.md`) ไม่ต้องเสนอทำ RBAC เพิ่มเว้นแต่ผู้ใช้ขอเอง

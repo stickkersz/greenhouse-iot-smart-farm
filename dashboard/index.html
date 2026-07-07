@@ -1212,9 +1212,18 @@ function startListeners() {
 let sysStatus = {};
 let connectedToFb = true;
 
+// ── แปล error code เป็นข้อความไทยเข้าใจง่าย — คนใช้งานทั่วไปไม่ต้องเห็น "PERMISSION_DENIED" ดิบๆ
+const FRIENDLY_ERR = {
+  'PERMISSION_DENIED':  'ไม่มีสิทธิ์เข้าถึงข้อมูลส่วนนี้ — ลองออกจากระบบแล้วเข้าใหม่ ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ',
+  'permission-denied':  'ไม่มีสิทธิ์เข้าถึงข้อมูลส่วนนี้ — ลองออกจากระบบแล้วเข้าใหม่ ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ',
+  'NETWORK_ERROR':      'เชื่อมต่ออินเทอร์เน็ตไม่ได้ — ตรวจสอบ WiFi/เน็ตมือถือแล้วลองใหม่',
+  'network-error':      'เชื่อมต่ออินเทอร์เน็ตไม่ได้ — ตรวจสอบ WiFi/เน็ตมือถือแล้วลองใหม่',
+};
 function onListenerError(name, err) {
   console.error('Firebase listener error:', name, err);
-  showToast('⚠️ อ่านข้อมูล ' + name + ' ไม่ได้: ' + (err?.code || err?.message || 'error'));
+  const code = err?.code || err?.message || '';
+  const friendly = FRIENDLY_ERR[code] || `เกิดข้อผิดพลาดที่ไม่รู้จัก (${code || 'unknown'}) — ลองรีเฟรชหน้าเว็บ ถ้ายังไม่หายให้แจ้งผู้ดูแลระบบ`;
+  showToast('⚠️ อ่านข้อมูล ' + name + ' ไม่ได้ — ' + friendly);
 }
 
 function updateHealth() {

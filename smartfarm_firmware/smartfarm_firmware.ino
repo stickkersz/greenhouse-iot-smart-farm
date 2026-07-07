@@ -6,6 +6,10 @@
   Changelog v1.4.0:
     - Relay remap: CH4=ปั๊มน้ำ, CH3=พัดลม 220V, CH1=สำรอง (CH2 ไม่ใช้)
     - DS18B20 hardening: กรองค่า -127/85°C + อ่านซ้ำ (รองรับสายยาว 4m)
+    - Pump safety cutoff = 10 นาที (ค่าสุดท้าย, เดิม 5) — 2026-07-07
+    - Firebase Auth: ลองซ้ำ 4 ครั้งตอนบูตก่อนรีสตาร์ท กันบอร์ดวิ่งต่อแบบไม่ auth ตลอดไป — 2026-07-07
+    - หมายเหตุ: ตั้งใจไม่มี runtime failsafe/recovery layer (ถอดออกแล้ว 2026-07-03 หลัง A/B test
+      ยืนยันว่าความไม่เสถียรเกิดจาก noise ฮาร์ดแวร์ ไม่ใช่โค้ด) — จะพิจารณาใหม่หลังแก้ hardware noise แล้ว
 
   Hardware:
     - ESP32 DevKit V1
@@ -235,13 +239,25 @@ void setup() {
   syncNTP();
   lastNtpSync = millis();
 
-  // Firebase Auth (Anonymous)
+  // Firebase Auth (Anonymous) — ลองซ้ำถ้าล้มเหลว (เน็ต/Firebase สะดุดชั่วคราวตอนบูต) แทนที่จะ
+  // ปล่อยให้บอร์ดวิ่งต่อแบบไม่ auth ตลอดไป (ดูปกติทุกอย่าง แต่ไม่มีข้อมูลขึ้น dashboard เลย จนกว่าจะไฟดับ/รีสตาร์ทเอง)
+  // ทำเฉพาะตอนบูต (ไม่ใช่ runtime recovery loop) — ยังไม่แตะ watchdog เพราะ esp_task_wdt_add() ยังไม่ถูกเรียก ณ จุดนี้
   fbConfig.database_url = FIREBASE_HOST;
   fbConfig.api_key      = FIREBASE_API_KEY;
-  if (Firebase.signUp(&fbConfig, &fbAuth, "", "")) {
-    Serial.println("Firebase Auth OK (anonymous)");
-  } else {
-    Serial.println("Firebase Auth FAILED: " + String(fbConfig.signer.signupError.message.c_str()));
+  bool authOk = false;
+  for (int a = 1; a <= 4 && !authOk; a++) {
+    authOk = Firebase.signUp(&fbConfig, &fbAuth, "", "");
+    if (authOk) {
+      Serial.println("Firebase Auth OK (anonymous)");
+    } else {
+      Serial.printf("Firebase Auth FAILED (ครั้งที่ %d/4): %s\n", a, fbConfig.signer.signupError.message.c_str());
+      if (a < 4) delay(2000);
+    }
+  }
+  if (!authOk) {
+    Serial.println("Firebase Auth ล้มเหลวติดต่อกัน 4 ครั้ง — รีสตาร์ท (กันบอร์ดวิ่งต่อแบบไม่มีข้อมูลขึ้น Firebase)");
+    delay(300);
+    ESP.restart();
   }
   Firebase.begin(&fbConfig, &fbAuth);
   Firebase.reconnectWiFi(true);
