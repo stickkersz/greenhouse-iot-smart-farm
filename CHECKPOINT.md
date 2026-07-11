@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-02  
 **Status:** ⚠️ Dashboard deployed + committed — Firmware flash ยังไม่ยืนยัน (ดู Next Steps)  
-**Version:** 1.4.0 (comment ในโค้ด — ยังไม่ bump แม้ผ่าน Auto Control v2 มาแล้ว)  
+**Version:** 1.5.0 (bump แล้ว 2026-07-11 — ดู PROJECT_MEMORY.md สำหรับสถานะปัจจุบันจริง ไฟล์นี้ค่อนข้าง stale)  
 **GitHub:** https://github.com/stickkersz/greenhouse-iot-smart-farm (private)  
 **Deployed:** https://greenhouse-iot-smart-farm.web.app  
 **Last Commit:** `cc45618 feat: auto control v2 — water-temp fan assist + pump hysteresis + finer precision`
@@ -245,7 +245,7 @@ logs:          read=email, write=anon
 - [ ] ปุ่มสมัคร account หน้า Login — **แนะนำไม่ทำ** (control write เปิดให้ทุก account คุมฮาร์ดแวร์จริง
   ถ้าจำเป็นควรทำ invite-only ไม่ใช่ signup สาธารณะ)
 - [ ] Redact WiFi password จาก git history เก่า (ไฟล์ปัจจุบัน redact แล้ว แต่ history เก่ายังมี)
-- [ ] Bump firmware version comment ในโค้ด (ยังเขียน "v1.4.0" ทั้งที่ผ่าน Auto Control v2 มาแล้ว)
+- [x] Bump firmware version comment — v1.4.0 → v1.5.0 (2026-07-11)
 
 ### Maintenance
 - [ ] Monitor Firebase free tier usage

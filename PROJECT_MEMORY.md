@@ -9,16 +9,21 @@
 ```
 /Greenhouse IoT Smart Farm/
 ├── smartfarm_firmware/
-│   ├── smartfarm_firmware.ino   ← Firmware หลัก (v1.4.0)
+│   ├── smartfarm_firmware.ino   ← Firmware หลัก (v1.5.0)
 │   └── config.h                 ← Pin mapping, WiFi, Firebase
 ├── dashboard/
 │   ├── index.html               ← Web Dashboard (Green Nature theme)
 │   └── index.v1.1.0.backup.html ← Backup ก่อน redesign
-├── Hardware_Checklist.md
-├── ESP32_Firmware_Plan.md
+├── tests/                       ← Firebase rules unit tests (npm run test:rules)
+├── docs/archive/                ← เอกสารวางแผนก่อนสร้างจริง (มิ.ย. 2569) — เก็บประวัติ ไม่ใช่ reference ปัจจุบัน ดู docs/archive/README.md
 ├── Firebase_Database_Structure.md
-└── PROJECT_MEMORY.md            ← ไฟล์นี้
+└── PROJECT_MEMORY.md            ← ไฟล์นี้ — source of truth สำหรับสถานะปัจจุบัน
 ```
+
+> 📁 เอกสารวางแผนช่วงก่อนสร้างระบบจริง (`STATUS.md`, `ESP32_Firmware_Plan.md`, `Hardware_Checklist.md`,
+> `Smart_Farm_Project_Plan.md`, ผังอุปกรณ์ร่าง v1/v2, เอกสารเสนอโครงการร่าง) ย้ายไป `docs/archive/`
+> แล้ว (2026-07-11) เพราะมีเนื้อหาไม่ตรงกับระบบจริงอีกต่อไป (soil moisture, DHT22, GPIO mapping เดิม)
+> — **ไฟล์นี้ (PROJECT_MEMORY.md) คือ source of truth เดียวสำหรับสถานะปัจจุบัน**
 
 ---
 
@@ -52,16 +57,21 @@
 | XL4015 Step-Down | ✅ ใช้งาน **(หลัก)** | 12V → 5V จ่าย ESP32 + Relay + Fan 5V + Buzzer + LCD |
 | Boost Converter (XL6009/XL4016) | ✅ มีแล้ว (ตัวใหม่) | 12V → 24V สำหรับปั๊มน้ำ (ตัวเก่าพังเพราะ Short) |
 | Relay Module 4CH (5V) | ✅ ทำงาน | Active-LOW (LOW=เปิด, HIGH=ปิด) |
-| DHT22 | ✅ ทำงาน **(ถาวร)** | GPIO18 — วัดอุณหภูมิ + ความชื้นอากาศ (ย้ายจาก GPIO32 ให้ไกล relay กัน noise, 2026-07-02) |
+| SHT35 (I2C) | ✅ ทำงาน **(เปลี่ยนมาใช้ 2026-07-11)** | Address 0x44/0x45 (auto-detect), SDA=GPIO21, SCL=GPIO22 ร่วมกับ LCD — แทน DHT22 (ดูหัวข้อ 15) |
 | DS18B20 Waterproof | ✅ ทำงาน | GPIO4 — วัดอุณหภูมิน้ำ, **ต้องมี Pull-up 4.7kΩ** (DATA-VCC) |
-| LCD I2C 16x2 | ✅ มีแล้ว | Address 0x27, SDA=GPIO21, SCL=GPIO22, **ต้องการไฟ 5V** |
+| LCD I2C 16x2 | ✅ ทำงาน | Address 0x27, SDA=GPIO21, SCL=GPIO22, **ต้องการไฟ 5V** — แก้แล้ว 2026-07-08 (จอเดิมเสีย เปลี่ยนจอใหม่) |
 | Buzzer Module (Active) | ✅ ทำงาน | GPIO33 (GND–I/O–VCC), เสียงเตือนแจ้งเตือน |
 | Fan 220V AC (พัดลม ดูดเข้า) | ✅ ต่อจริงแล้ว (2026-07-01) | CH3 — evaporative cooling, ทำงานปกติ |
-| Fan Module 5V | ⚠️ มีปัญหา (ยังไม่ยืนยันแก้) | ระบายความร้อนกล่อง — ยังไม่หมุน (ตรวจ JUMP jumper) |
+| Fan Module 5V | ✅ ทำงาน | ระบายความร้อนกล่อง — แก้แล้ว 2026-07-03 (JUMP jumper) |
 | ปั๊มน้ำ DC 24V | ✅ ต่อจริงแล้ว (2026-07-01) | CH4 — ทำงานปกติ |
 | PWM Speed Controller CW008 | ✅ มีแล้ว | IN+/IN−/OUT+/OUT− สำหรับควบคุมความเร็วปั๊ม |
 
-> ❌ **SHT35 ยกเลิกแล้ว** — ไม่ซื้อ ใช้ DHT22 ถาวร (SHT35 ถูกลบออกจาก firmware ทั้งหมดแล้ว)
+> ✅ **SHT35 เปลี่ยนกลับมาใช้แล้ว (2026-07-11)** — หลังพิสูจน์ว่า DHT22 ยังกลิตช์เวลาปั๊ม/พัดลมสวิตช์
+> ต่อเนื่องแม้แก้ firmware ทุกทางแล้ว (ดู A/B test 2026-07-03) เปลี่ยนไปใช้ I2C ที่มี CRC ตรวจสอบ
+> ข้อมูลในตัวแทน — **หมายเหตุสำคัญ:** หลักฐาน 2026-07-08 ชี้ว่าปัญหาเดิมเกิดจาก **ระยะห่างจากกลุ่ม
+> relay** ไม่ใช่ตัวโปรโตคอล (DS18B20 ที่อยู่ไกล relay อ่านค่าปกติตลอด) — ถ้าติด SHT35 ตำแหน่งเดิมที่
+> DHT22 เคยอยู่ (ใกล้กลุ่ม relay) ก็มีโอกาสเจอปัญหาเดิมได้ ควรย้ายสาย SHT35 ให้ไกลกลุ่ม relay เหมือน
+> DS18B20 ด้วยถึงจะทดสอบได้ชัดว่าโปรโตคอลช่วยจริงไหม ดูหัวข้อ 15 สำหรับ TODO ทดสอบ
 
 ---
 
@@ -70,10 +80,10 @@
 ```cpp
 // ── Sensors ───────────────────────────────────────────
 #define PIN_DS18B20       4    // DS18B20 Data (ต้องมี External Pull-up 5.1kΩ)
-#define PIN_DHT11        18    // DHT22 — อุณหภูมิ + ความชื้นอากาศ (ถาวร, ย้ายจาก GPIO32 เมื่อ 2026-07-02)
 #define PIN_BUZZER       33    // Buzzer Module (I/O)
+// SHT35 (อุณหภูมิ+ความชื้นอากาศ) ไม่มี PIN_ แยก — เป็น I2C ใช้บัสเดียวกับ LCD ด้านล่าง
 
-// LCD I2C: SDA=GPIO21, SCL=GPIO22 (ESP32 default I2C), Address=0x27
+// I2C bus ร่วม (LCD + SHT35): SDA=GPIO21, SCL=GPIO22 — LCD address=0x27, SHT35 address=0x44/0x45 (auto-detect)
 
 // ── Relay (Active-LOW: LOW=เปิด, HIGH=ปิด) ─────────────
 #define PIN_RELAY_CH1    26   // CH1 = สำรอง (manual/schedule เท่านั้น)
@@ -110,7 +120,7 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
     ch2_fan_out       bool    ← ไม่ได้ใช้
     ch3_fan_in        bool    ← พัดลม 220V
     ch4_spare         bool    ← ปั๊มน้ำ (ชื่อ key เก่า)
-    firmware          string  "1.4.0"
+    firmware          string  "1.5.0"
   control/
     thresholds/
       temp_on         float   (35.0)  ← เปิด auto
@@ -167,10 +177,11 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
 | Firebase ESP32 Client by Mobizt | Firebase Realtime DB |
 | OneWire by Paul Stoffregen | DS18B20 |
 | DallasTemperature by Miles Burton | DS18B20 |
-| DHT sensor library by Adafruit | DHT22 |
+| Adafruit SHT31 Library | SHT35 (รองรับ SHT30/31/35 — คำสั่ง I2C ชุดเดียวกัน) |
 | LiquidCrystal I2C by Frank de Brabander | LCD I2C 16x2 |
 
-> ❌ **Adafruit SHT31 Library — ลบออกแล้ว** (ไม่ต้องติดตั้ง)
+> ✅ **Adafruit SHT31 Library — ต้องติดตั้งใหม่** (Arduino IDE → Manage Libraries → ค้นหา "SHT31" → เลือกของ Adafruit) — เปลี่ยนกลับมาใช้ 2026-07-11 หลังเคยลบไปตอนยกเลิก SHT35 รอบก่อน
+> ❌ **DHT sensor library by Adafruit — ไม่ใช้แล้ว** (ถอด DHT22 ออกจากระบบแล้ว 2026-07-11)
 
 ---
 
@@ -263,10 +274,13 @@ waterTemp = ds18b20.getTempCByIndex(0);
 // ต้องมี Pull-up 4.7-5kΩ ระหว่าง DATA-VCC (ยืนยันแล้วว่าจำเป็น — ทดสอบแล้วใช้ได้)
 ```
 
-### DHT22 self-heal (เบา ไม่ผูกกับ emergency mode ใดๆ)
+### SHT35 (I2C, เปลี่ยนจาก DHT22 แล้ว 2026-07-11 — ดูหัวข้อ 15) — self-heal เบา ไม่ผูกกับ emergency mode ใดๆ
 ```cpp
-#define DHT_REINIT_EVERY 3   // อ่านพลาดครบ 3 ครั้ง → ลอง dht22.begin() re-init เฉยๆ (ไม่ restart ไม่สั่ง relay)
-// ระบบ Failsafe (auto เปิดพัดลม/ปิดปั๊มเมื่อ DHT พัง) + Recovery layer (auto ESP.restart() เมื่อ
+Adafruit_SHT31 sht35 = Adafruit_SHT31();
+uint8_t shtAddr = 0;   // เจอจาก I2C scan ตอนบูต (0x44 หรือ 0x45 ตาม ADDR pin) — 0 = ไม่เจอ, ข้ามอ่านทุกรอบ
+#define SHT_REINIT_EVERY 3   // อ่านพลาดครบ 3 ครั้ง → ลอง sht35.begin(shtAddr) re-init เฉยๆ (ไม่ restart ไม่สั่ง relay)
+// อ่าน temp/humidity แล้วเช็ค isnan() (NaN = CRC ไม่ผ่านหรือสื่อสารพลาด) เหมือน pattern เดิมของ DHT22 ทุกจุด
+// ระบบ Failsafe (auto เปิดพัดลม/ปิดปั๊มเมื่อ sensor พัง) + Recovery layer (auto ESP.restart() เมื่อ
 // failsafe/Firebase ค้างนาน) ถูก "ถอดออกทั้งหมด" ใน rollback 2026-07-03 — ดูหัวข้อ 15
 ```
 
@@ -296,7 +310,7 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
 ---
 
-## 10. Web Dashboard v1.4.0
+## 10. Web Dashboard v1.5.0
 
 **ไฟล์:** `dashboard/index.html`
 **เปิดได้:** double-click หรือ deploy ขึ้น Firebase Hosting
@@ -354,7 +368,7 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 |---|---|
 | PCB ทั่วไป | Conformal Coating (สเปรย์เคลือบ) |
 | DS18B20 5m cable | PVC Conduit (ท่อร้อยสาย) + กาวปิดปลาย |
-| DHT22 | กล่องพลาสติกเล็กเจาะรู (ให้อากาศผ่านได้ แต่กันน้ำกระเซ็น) |
+| SHT35 | กล่องพลาสติกเล็กเจาะรู (ให้อากาศผ่านได้ แต่กันน้ำกระเซ็น) |
 | ESP32/Expansion Board | อยู่ในกล่อง IP65 |
 
 ### DS18B20 สายยาว 5 เมตร
@@ -379,7 +393,7 @@ configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 | LCD I2C ไม่ทำงาน | VCC ต่อกับ 3.3V / wiring ผิด | ต้องใช้ไฟ 5V, ตรวจสาย SDA/SCL |
 | LCD I2C ไม่ขึ้นจอเลย (I2C scan 1-127 ไม่เจออุปกรณ์) | จอ LCD ตัวเดิมเสีย (hardware defect ในตัวจอเอง ไม่ใช่สาย) | เปลี่ยนจอใหม่ ต่อสายเดิมทุกเส้น → ติดปกติทันที — ยืนยันแล้ว 2026-07-08 |
 | "invalid header" boot fail | GPIO12 strapping pin ถูกดึง HIGH | ย้าย CH4 จาก GPIO12 → GPIO25 |
-| Buzzer ดังตลอด | DHT22 ไม่ได้ต่อ → humidity=0 < 40% | ต่อ DHT22 หรือ check `if (airTemp==0 && airHumidity==0) return;` |
+| Buzzer ดังตลอด | Sensor อากาศไม่ได้ต่อ → humidity=0 < 40% | ต่อเซนเซอร์ให้ถูกต้อง หรือ check `if (airTemp==0 && airHumidity==0) return;` |
 | Boost Converter พัง | จิ้มสายปั๊มขณะมีไฟ → Short circuit | ซื้อใหม่ XL6009/XL4016, ปิดไฟก่อนต่อ/ถอดสายเสมอ |
 | Port ไม่ขึ้น Arduino IDE (Mac M3) | ไม่มี CH340 driver | ติดตั้ง driver จาก wch-ic.com + อนุญาตใน Privacy & Security + restart |
 | พัดลม 5V ไม่หมุน | JUMP jumper บน Expansion Board | แก้แล้ว ✅ (ยืนยัน 2026-07-03) |
@@ -413,17 +427,35 @@ hardware noise ก่อน — ดูหัวข้อ 🔴 ด้านล่
 เป็นปัญหาไฟฟ้า/hardware ล้วนๆ **priority ตอนนี้คือแก้ hardware ไม่ใช่แก้ firmware เพิ่ม**:
 - [ ] Cap (ตัวเก็บประจุ) คร่อมขั้วมอเตอร์ปั๊ม (กัน arcing จาก commutator)
 - [ ] RC snubber ที่ relay CH4 (ปั๊ม)
-- [ ] แยกสายไฟกำลัง (ปั๊ม/มอเตอร์) ออกจากสายสัญญาณ (DHT22/DS18B20/I2C) ให้ห่างที่สุด
+- [ ] แยกสายไฟกำลัง (ปั๊ม/มอเตอร์) ออกจากสายสัญญาณ (sensor อากาศ/DS18B20/I2C) ให้ห่างที่สุด
   - 🔎 **หลักฐานสนับสนุน (2026-07-08):** ทดสอบเทียบสด — DS18B20 ที่จัมป์สายลง breadboard (ไกลจากกลุ่ม
     relay) อ่านค่าได้ปกติแม้ตอนเปิด/ปิดปั๊ม-พัดลม ในขณะที่ DHT22 ที่ต่อตรงบน Expansion Board (ใกล้กลุ่ม
     relay) ยังอ่านค่าไม่ได้ตอนสวิตช์ ทั้งที่ไฟเลี้ยงบอร์ดปกติดี — ยืนยันว่า **ระยะห่างจากจุดสวิตช์สำคัญกว่า
-    คุณภาพจุดต่อ (breadboard vs solder)** สรุป: ควรย้ายสาย/ตัวเซนเซอร์ DHT22 ออกไปไกลจากกลุ่ม relay
-    เหมือนที่ DS18B20 ทำ ไม่ใช่แค่เปลี่ยนวิธีต่อ
+    คุณภาพจุดต่อ (breadboard vs solder)** สรุป: ควรย้ายสาย/ตัวเซนเซอร์ออกไปไกลจากกลุ่ม relay เหมือนที่
+    DS18B20 ทำ ไม่ใช่แค่เปลี่ยนวิธีต่อ — **ยังใช้ได้กับ SHT35 ด้วย** ดูหัวข้อ SHT35 ด้านล่าง
   - 🔎 **ทดลองเพิ่ม (2026-07-08):** ย้ายสาย VCC ของ Relay ไปจัมป์ผ่าน rail+ บน breadboard แทนการต่อ VCC
     ตรงจาก Expansion Board — ผลเบื้องต้นทำงานปกติดีขึ้น (ยังไม่ผ่านการทดสอบระยะยาว) เข้าใจได้ว่าเป็นการ
-    แยก path จ่ายไฟของ relay ออกจาก rail ร่วมที่ DHT22 ใช้ ลด common-impedance coupling — แนวทางเดียวกับ
-    star-grounding แต่ทำฝั่งจ่ายไฟ (+) แทนฝั่ง ground ยังไม่ควรถือว่าแก้ถาวร จนกว่าจะติด cap+snubber ที่
-    ต้นตอด้วย
+    แยก path จ่ายไฟของ relay ออกจาก rail ร่วมที่ sensor อากาศใช้ ลด common-impedance coupling — แนวทาง
+    เดียวกับ star-grounding แต่ทำฝั่งจ่ายไฟ (+) แทนฝั่ง ground ยังไม่ควรถือว่าแก้ถาวร จนกว่าจะติด
+    cap+snubber ที่ต้นตอด้วย
+
+### 🔵 SHT35 แทน DHT22 (2026-07-11) — ยังต้องทดสอบ
+
+ผู้ใช้เปลี่ยนเซนเซอร์อากาศจาก DHT22 → SHT35 (I2C) เพราะ DHT22 ยังกลิตช์ตอนปั๊ม/พัดลมสวิตช์ต่อเนื่อง
+แม้แก้ firmware ทุกทางแล้ว (ดู A/B test ด้านบน — ยืนยันแล้วว่าไม่ใช่โค้ด) ความหวังคือ I2C ที่มี CRC
+ตรวจสอบข้อมูลในตัวจะทนต่อ noise ได้ดีกว่าโปรโตคอล single-wire — **แต่หลักฐาน proximity ด้านบนชี้ว่า
+ระยะห่างจากกลุ่ม relay น่าจะเป็นตัวแปรจริงมากกว่าโปรโตคอล** ถ้าติด SHT35 ตำแหน่งเดิมที่ DHT22 เคยอยู่
+ก็มีโอกาสเจอปัญหาเดิม
+
+- [x] Firmware: เปลี่ยน `#include <DHT.h>` → `#include <Adafruit_SHT31.h>`, `dht22` → `sht35` object,
+  I2C address auto-detect (0x44/0x45) ร่วมกับ scan ของ LCD ในรอบเดียว, เปลี่ยนชื่อตัวแปร/log prefix
+  จาก DHT-specific เป็น sensor-agnostic (`dhtFailCount`→`airSensorFailCount` เป็นต้น)
+- [x] config.h / config.h.example: ลบ `PIN_DHT11` (ไม่ใช้แล้ว — SHT35 ไม่มี pin แยก เป็น I2C)
+- [ ] **ติดตั้ง Adafruit SHT31 Library ใหม่** ผ่าน Arduino IDE (เคยลบไปตอนยกเลิก SHT35 รอบก่อน)
+- [ ] **ย้ายสาย SHT35 ให้ไกลจากกลุ่ม relay เหมือน DS18B20** — ไม่ใช่แค่เปลี่ยนชิป แต่ควรย้ายตำแหน่งด้วย
+  ถึงจะทดสอบได้ชัดว่า I2C protocol ช่วยจริงไหม หรือเป็นแค่เรื่องระยะห่างเหมือนที่หลักฐานชี้ไว้
+- [ ] Flash + ทดสอบเปิด/ปิดปั๊ม-พัดลมซ้ำๆ เหมือนที่เคยทำกับ DHT22 ดูว่า SHT35 กลิตช์ไหม (โดยเฉพาะถ้ายัง
+  ไม่ได้ย้ายตำแหน่งไกลจาก relay ก่อน — ผลลัพธ์ตรงนี้จะบอกว่า proximity หรือ protocol คือตัวแปรจริง)
 
 ### ✅ Rollback Failsafe/Recovery layer — เสร็จแล้ว ยืนยันผลแล้ว (2026-07-03)
 
@@ -440,8 +472,8 @@ hardware noise ก่อน — ดูหัวข้อ 🔴 ด้านล่
   ทั้งหมด — **เก็บไว้**: relay channel mapping, DS18B20 hardening, buzzer active-LOW fix,
   heartbeat LED (GPIO2), auto control v2 (hysteresis + water-temp assist)
 - [x] Flash เทียบเวอร์ชันเก่า vs rollback — ผลเหมือนกัน ยืนยันเป็น hardware issue (ดูสรุปด้านบน)
-- [ ] **ย้ายสาย VCC ของ DHT22 กลับจากช่อง S (D19) ไปช่อง V (power rail ปกติ)** ถ้าเคยย้ายไปแล้ว —
-  `PIN_DHT_PWR` ถูกถอดออกจาก config.h แล้ว ถ้าไม่ย้ายสายกลับ DHT22 จะไม่มีไฟเลี้ยงเลย
+- [x] ~~ย้ายสาย VCC ของ DHT22 กลับจากช่อง S (D19) ไปช่อง V~~ — **moot แล้ว** DHT22 ถูกถอดออกจากระบบ
+  ทั้งหมดแล้ว (เปลี่ยนไปใช้ SHT35 แทน 2026-07-11 — ดูหัวข้อ SHT35 ด้านบน) ไม่ต้องสนใจสาย DHT22 อีก
 - [x] **LCD ไม่ขึ้นจอเลย — แก้แล้ว ✅ (2026-07-08)** สาเหตุจริงคือจอ LCD ตัวเดิมเสีย ไม่ใช่ปัญหาสาย/โค้ด
   ตามที่สงสัยไว้ — เปลี่ยนจอใหม่ต่อสายเดิมทุกเส้น ติดปกติทันที ดูหัวข้อ 14
 
@@ -453,7 +485,7 @@ PROJECT_MEMORY.md (ไฟล์ที่ track ใน git) ควร revoke ผ�
 ### 🟡 Hardware ที่ยังค้าง
 - [x] พัดลม 5V (ระบายความร้อนกล่อง IP65) ไม่หมุน — แก้แล้ว (JUMP jumper) ยืนยัน 2026-07-03 ✅
 - [x] ปั๊มน้ำ (CH4) + พัดลม 220V (CH3) ต่อจริงแล้ว ทำงานปกติ (ยืนยัน 2026-07-01) ✅
-- [ ] Noise มอเตอร์ปั๊มรบกวน DHT22/ระบบ — ดูรายการ 3 ข้อในหัวข้อ 🔴 ด้านบน (ตอนนี้เป็น priority หลัก)
+- [ ] Noise มอเตอร์ปั๊มรบกวน sensor อากาศ/ระบบ — ดูรายการ 3 ข้อในหัวข้อ 🔴 ด้านบน (ตอนนี้เป็น priority หลัก) + หัวข้อ SHT35 สำหรับแผนทดสอบล่าสุด
 
 ### 🟢 Software ที่ทำเสร็จแล้วรอบนี้ (2026-06-29 – 2026-07-03)
 - [x] Relay channel remap ตามสายจริง (CH4=ปั๊ม, CH3=พัดลม, CH1=สำรอง)
@@ -471,7 +503,7 @@ PROJECT_MEMORY.md (ไฟล์ที่ track ใน git) ควร revoke ผ�
 - [ ] Login: ยังไม่มีปุ่มสมัคร account — แนะนำไม่ทำ (control write เปิดให้ทุก account ที่ login ได้
   คุมฮาร์ดแวร์จริง) ถ้าต้องการ ควรทำ invite-only ไม่ใช่ signup สาธารณะ
 - [ ] Redact WiFi password จาก git history เก่า (ยังอยู่ใน commit history แม้ redact จากไฟล์ปัจจุบันแล้ว)
-- [ ] Firmware version comment ในโค้ดยังเขียน "v1.4.0" ทั้งที่ฟีเจอร์ผ่านมาไกลกว่านั้นแล้ว (ยังไม่ bump)
+- [x] Firmware version bump — v1.4.0 → v1.5.0 (2026-07-11) สะท้อนงานสะสม (SHT35, rules hardening, boot-time auth retry ฯลฯ) — อัปเดตครบทุกจุด (.ino ×4, dashboard footer, PROJECT_MEMORY.md ×3)
 
 ### 🚀 Deploy
 ```bash
@@ -484,4 +516,6 @@ firebase deploy
 
 ---
 
-*อัปเดตล่าสุด: 2026-07-08 — LCD แก้แล้ว (จอเดิมเสีย เปลี่ยนจอใหม่), พบหลักฐานยืนยันว่าระยะห่างจากกลุ่ม relay สำคัญกว่าคุณภาพจุดต่อสำหรับ noise ที่ DHT22*
+*อัปเดตล่าสุด: 2026-07-11 — เปลี่ยนเซนเซอร์อากาศจาก DHT22 → SHT35 (I2C) หลัง DHT22 พิสูจน์แล้วว่ายังกลิตช์
+ต่อเนื่องแม้แก้ firmware ทุกทาง — ยังไม่ได้ทดสอบว่า SHT35 ช่วยจริงไหม (ควรย้ายตำแหน่งให้ไกล relay ด้วย
+ไม่ใช่แค่เปลี่ยนชิป — ดูหัวข้อ SHT35)*

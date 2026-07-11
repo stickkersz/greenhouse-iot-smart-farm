@@ -29,7 +29,64 @@
       },
       "control": {
         ".read":  "auth != null",
-        ".write": "auth != null && auth.token.email != null"
+        ".write": "auth != null && auth.token.email != null",
+        "ch1_pump":    {
+          "mode":         { ".validate": "newData.isString() && (newData.val() == 'auto' || newData.val() == 'manual')" },
+          "manual_state": { ".validate": "newData.isBoolean()" },
+          "schedule": {
+            "enabled":  { ".validate": "newData.isBoolean()" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        },
+        "ch2_fan_out": {
+          "mode":         { ".validate": "newData.isString() && (newData.val() == 'auto' || newData.val() == 'manual')" },
+          "manual_state": { ".validate": "newData.isBoolean()" },
+          "schedule": {
+            "enabled":  { ".validate": "newData.isBoolean()" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        },
+        "ch3_fan_in":  {
+          "mode":         { ".validate": "newData.isString() && (newData.val() == 'auto' || newData.val() == 'manual')" },
+          "manual_state": { ".validate": "newData.isBoolean()" },
+          "schedule": {
+            "enabled":  { ".validate": "newData.isBoolean()" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        },
+        "ch4_spare":   {
+          "mode":         { ".validate": "newData.isString() && (newData.val() == 'auto' || newData.val() == 'manual')" },
+          "manual_state": { ".validate": "newData.isBoolean()" },
+          "schedule": {
+            "enabled":  { ".validate": "newData.isBoolean()" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        },
+        "thresholds": {
+          "temp_on":        { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_off').val()" },
+          "temp_off":       { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70" },
+          "humidity_min":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+          "humidity_max":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() > newData.parent().child('humidity_min').val()" },
+          "water_temp_on":  { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 80 && newData.val() > newData.parent().child('water_temp_off').val()" },
+          "water_temp_off": { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 80" },
+          "temp_alert":     { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_on').val()" },
+          "humidity_alert": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() < newData.parent().child('humidity_min').val()" },
+          "$other": { ".validate": false }
+        },
+        "buzzer_enabled": { ".validate": "newData.isBoolean()" },
+        "$other": { ".validate": false }
       },
       "alerts": {
         ".read":  "auth != null && auth.token.email != null",

@@ -1,17 +1,19 @@
 # Pinout — Greenhouse IoT Smart Farm
 
 **Board:** ESP32 DevKit V1 (30-pin) บน Expansion Board HW-777
-**Firmware:** v1.4.0 (`smartfarm_firmware.ino` + `config.h`)
+**Firmware:** v1.5.0 (`smartfarm_firmware.ino` + `config.h`)
 **อัปเดตล่าสุด:** 2026-07-08 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า), sync กับ PROJECT_INSTRUCTION.md/PROJECT_MEMORY.md แล้ว
 
-> ✅ DHT22 อยู่ที่ **GPIO18** ตั้งแต่ 2026-07-02 (ย้ายจาก GPIO32 ให้ไกลจากกลุ่ม relay กัน noise) — PROJECT_INSTRUCTION.md และ PROJECT_MEMORY.md แก้ให้ตรงกันแล้ว (2026-07-07)
+> ✅ **เปลี่ยนเซนเซอร์อากาศจาก DHT22 (GPIO18) → SHT35 (I2C) แล้ว (2026-07-11)** — GPIO18 ว่างแล้ว, SHT35
+> ใช้บัส I2C ร่วมกับ LCD (GPIO21/22) แทน address auto-detect 0x44/0x45 — ดูตารางด้านล่าง + PROJECT_MEMORY.md §15
+> สำหรับเหตุผลและ TODO (ควรย้ายตำแหน่ง SHT35 ให้ไกลกลุ่ม relay เหมือน DS18B20 ด้วย ไม่ใช่แค่เปลี่ยนชิป)
 >
 > ✅ **LCD I2C ทำงานปกติแล้ว (2026-07-08)** — สาเหตุที่ไม่ขึ้นจอก่อนหน้านี้คือจอตัวเดิมเสีย ไม่ใช่ปัญหาสาย/address เปลี่ยนจอใหม่ต่อสายเดิมทุกเส้นแล้วติดทันที
 >
-> 🔎 **หลักฐานใหม่ (2026-07-08):** ทดสอบเทียบสด DS18B20 (จัมป์ลง breadboard ไกลจากกลุ่ม relay) กับ DHT22
-> (ต่อตรงบน Expansion Board ใกล้กลุ่ม relay) ระหว่างเปิด/ปิดปั๊ม-พัดลม — DS18B20 อ่านค่าปกติ แต่ DHT22
-> ยังอ่านค่าไม่ได้ ทั้งที่ไฟเลี้ยงบอร์ดปกติดี ยืนยันว่า **ระยะห่างจากกลุ่ม relay สำคัญกว่าคุณภาพจุดต่อ**
-> (breadboard vs solder) — แผนต่อไปคือย้ายสาย/ตัว DHT22 ออกห่างจากกลุ่ม relay เพิ่ม ดู PROJECT_MEMORY.md §15
+> 🔎 **หลักฐานที่นำไปสู่การเปลี่ยนเซนเซอร์ (2026-07-08):** ทดสอบเทียบสด DS18B20 (จัมป์ลง breadboard ไกล
+> จากกลุ่ม relay) กับ DHT22 (ต่อตรงบน Expansion Board ใกล้กลุ่ม relay) ระหว่างเปิด/ปิดปั๊ม-พัดลม — DS18B20
+> อ่านค่าปกติ แต่ DHT22 ยังอ่านค่าไม่ได้ ทั้งที่ไฟเลี้ยงบอร์ดปกติดี ยืนยันว่า **ระยะห่างจากกลุ่ม relay
+> สำคัญกว่าคุณภาพจุดต่อ (breadboard vs solder) หรือโปรโตคอลที่ใช้** — ข้อนี้สำคัญมากสำหรับ SHT35 ด้วย
 
 ---
 
@@ -22,9 +24,9 @@
 | **GPIO2** | Onboard Status LED | ไฟแสดงสถานะบอร์ด | Active-HIGH, เพิ่งพบใน .ino (ไม่มีในเอกสารเดิม) |
 | **GPIO4** | DS18B20 (Waterproof) | วัดอุณหภูมิน้ำ | ต้องมี Pull-up 4.7kΩ ระหว่าง VCC–DATA ที่ฝั่ง ESP32 |
 | **GPIO14** | Relay CH3 | พัดลม 220V AC (ดูดอากาศเข้า) | Auto ตามอุณหภูมิ (TEMP_ON/OFF) |
-| **GPIO18** | DHT22 | วัดอุณหภูมิ/ความชื้นอากาศ | ย้ายจาก GPIO32 (2026-07-02); ตัวแปรในโค้ดยังชื่อ `PIN_DHT11` (ชื่อเก่า ใช้จริงเป็น DHT22) |
-| **GPIO21** | LCD I2C — SDA | จอ LCD 16x2 | ต้องใช้ไฟ 5V ไม่ใช่ 3.3V — ✅ ยืนยันทำงานแล้ว (2026-07-08 เปลี่ยนจอตัวใหม่) |
-| **GPIO22** | LCD I2C — SCL | จอ LCD 16x2 | Address auto-scan 0x27/0x3F (ไม่ hardcode แล้ว), I2C clock ลดเหลือ 50kHz กัน noise |
+| **GPIO18** | ว่าง (ไม่ได้ใช้) | — | เคยเป็น DHT22 DATA — ถอดออกแล้ว 2026-07-11 (เปลี่ยนไปใช้ SHT35 แบบ I2C แทน ไม่มี pin แยก) |
+| **GPIO21** | I2C — SDA (ร่วม LCD + SHT35) | จอ LCD 16x2 + เซนเซอร์อากาศ SHT35 | LCD ต้องใช้ไฟ 5V ไม่ใช่ 3.3V — ✅ ยืนยันทำงานแล้ว (2026-07-08 เปลี่ยนจอตัวใหม่) |
+| **GPIO22** | I2C — SCL (ร่วม LCD + SHT35) | จอ LCD 16x2 + เซนเซอร์อากาศ SHT35 | Address auto-scan: LCD 0x27/0x3F, SHT35 0x44/0x45 (ไม่ hardcode), I2C clock ลดเหลือ 50kHz กัน noise |
 | **GPIO25** | Relay CH4 | ปั๊มน้ำ 24V DC | Auto ตามความชื้น (HUMIDITY_MIN); เดิมเคยใช้ GPIO12 แต่ชนกับ strapping pin ทำ boot fail จึงย้ายมา |
 | **GPIO26** | Relay CH1 | สำรอง (manual/schedule เท่านั้น) | Key เก่าใน Firebase: `ch1_pump` |
 | **GPIO27** | Relay CH2 | ไม่ได้ใช้งาน (ซ่อนใน dashboard) | |

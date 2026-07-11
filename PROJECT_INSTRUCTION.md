@@ -34,7 +34,7 @@
 
 ---
 
-## Firmware v1.4.0
+## Firmware v1.5.0
 
 **ไฟล์:** `smartfarm_firmware/smartfarm_firmware.ino` + `config.h`
 
@@ -128,7 +128,7 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 ```
 /Greenhouse IoT Smart Farm/
 ├── smartfarm_firmware/
-│   ├── smartfarm_firmware.ino   (v1.4.0)
+│   ├── smartfarm_firmware.ino   (v1.5.0)
 │   └── config.h
 ├── dashboard/
 │   ├── index.html
