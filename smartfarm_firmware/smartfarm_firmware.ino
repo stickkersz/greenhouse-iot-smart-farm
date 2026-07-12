@@ -2,18 +2,21 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 1.4.0
-  Changelog v1.4.0:
+  Version: 1.5.0
+  Changelog v1.5.0 (สะสมตั้งแต่ v1.4.0 — เดิม version comment ไม่ได้ bump ตามมานาน):
     - Relay remap: CH4=ปั๊มน้ำ, CH3=พัดลม 220V, CH1=สำรอง (CH2 ไม่ใช้)
     - DS18B20 hardening: กรองค่า -127/85°C + อ่านซ้ำ (รองรับสายยาว 4m)
     - Pump safety cutoff = 10 นาที (ค่าสุดท้าย, เดิม 5) — 2026-07-07
     - Firebase Auth: ลองซ้ำ 4 ครั้งตอนบูตก่อนรีสตาร์ท กันบอร์ดวิ่งต่อแบบไม่ auth ตลอดไป — 2026-07-07
     - หมายเหตุ: ตั้งใจไม่มี runtime failsafe/recovery layer (ถอดออกแล้ว 2026-07-03 หลัง A/B test
       ยืนยันว่าความไม่เสถียรเกิดจาก noise ฮาร์ดแวร์ ไม่ใช่โค้ด) — จะพิจารณาใหม่หลังแก้ hardware noise แล้ว
+    - เปลี่ยนเซนเซอร์อากาศจาก DHT22 → SHT35 (I2C) — 2026-07-11 หลังพิสูจน์แล้วว่า DHT22 ยังกลิตช์เวลา
+      ปั๊ม/พัดลมสวิตช์ไม่ว่าจะแก้ firmware ยังไงก็ตาม (ดู A/B test 2026-07-03) — ลองเปลี่ยนไปใช้ I2C
+      ที่มี CRC ตรวจสอบความถูกต้องของข้อมูลในตัว แทนโปรโตคอลแบบ single-wire ที่ไม่มี CRC
 
   Hardware:
     - ESP32 DevKit V1
-    - DHT22 (GPIO18) — อุณหภูมิ + ความชื้นอากาศ (ย้ายจาก GPIO32 ให้ไกลกลุ่ม relay กัน noise)
+    - SHT35 (I2C, address 0x44 หรือ 0x45 ตาม ADDR pin) — อุณหภูมิ + ความชื้นอากาศ (แชร์บัส I2C กับ LCD)
     - DS18B20 Waterproof (GPIO4)   — อุณหภูมิน้ำ
     - Relay 4CH Active-LOW (การเดินสายจริง 2026-06-26):
         CH1 GPIO26 — สำรอง (manual/schedule only)
@@ -25,7 +28,7 @@
     - Firebase ESP32 Client by Mobizt
     - OneWire by Paul Stoffregen
     - DallasTemperature by Miles Burton
-    - DHT sensor library by Adafruit
+    - Adafruit SHT31 Library (รองรับ SHT30/31/35 — คำสั่ง I2C ชุดเดียวกัน)
     - LiquidCrystal I2C by Frank de Brabander
 */
 
@@ -36,7 +39,7 @@ WiFiMulti wifiMulti;
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <Wire.h>
-#include <DHT.h>
+#include <Adafruit_SHT31.h>
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
 #include <esp_task_wdt.h>
@@ -75,7 +78,8 @@ FirebaseConfig fbConfig;
 // ── Sensor Objects ────────────────────────────────────
 OneWire oneWire(PIN_DS18B20);
 DallasTemperature ds18b20(&oneWire);
-DHT dht22(PIN_DHT11, DHT22);
+Adafruit_SHT31 sht35 = Adafruit_SHT31();
+uint8_t shtAddr = 0;   // address ที่เจอจริงตอนบูต (0x44/0x45 ตาม ADDR pin) — 0 = ไม่เจอ
 
 // ── Sensor Values ─────────────────────────────────────
 float airTemp     = 0.0;
@@ -133,15 +137,16 @@ unsigned long lastNtpSync    = 0;
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
 #define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 10 นาที (auto/schedule) — ค่าสุดท้าย ตัดสินใจแล้ว 2026-07-07 (เดิม 5 นาที)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
-#define DHT_TEMP_MIN        -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
-#define DHT_TEMP_MAX         70.0
+#define AIR_TEMP_MIN         -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
+#define AIR_TEMP_MAX          70.0
 // DS18B20: ช่วงอุณหภูมิน้ำสมเหตุผล — นอกช่วงนี้ = ค่าเสีย (-127 สายหลุด / 85.0 reset อ่านไม่ทัน / noise จากสายยาว)
 #define DS_WATER_MIN        -20.0
 #define DS_WATER_MAX         80.0              // น้ำในฟาร์มไม่เกินนี้ → 85.0 (sentinel) ถูกตัดออกอัตโนมัติ
 #define DS_READ_RETRY        2                 // อ่าน DS18B20 ซ้ำได้กี่ครั้งถ้าค่าเสีย (สายยาว 4m รบกวน)
-// DHT22 อยู่ใกล้ relay/สาย pump บน expansion board มาก — noise ตอน pump switch ทำอ่านพลาด
-#define PUMP_SWITCH_QUIET_MS  3000             // เว้น 3 วิหลังปั๊มสวิตช์ ก่อนอ่าน DHT22 รอบถัดไป (รอ noise transient สงบ)
-#define DHT_REINIT_EVERY     3                 // ลอง dht22.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด — self-heal เบาๆ ไม่ผูกกับ emergency mode ใดๆ
+// เดิม DHT22 อยู่ใกล้ relay/สาย pump บน expansion board มาก — noise ตอน pump switch ทำอ่านพลาด
+// SHT35 ยังไม่ยืนยันว่าเจอปัญหาเดียวกันไหม (ขึ้นกับตำแหน่งที่ติดตั้งจริง) — คงกลไกนี้ไว้เป็นเซฟตี้เน็ตก่อน
+#define PUMP_SWITCH_QUIET_MS  3000             // เว้น 3 วิหลังปั๊มสวิตช์ ก่อนอ่าน sensor อากาศรอบถัดไป (รอ noise transient สงบ)
+#define SHT_REINIT_EVERY      3                 // ลอง sht35.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด — self-heal เบาๆ ไม่ผูกกับ emergency mode ใดๆ
 // Heartbeat LED (GPIO2 — ตรงกับ LED บนบอร์ด ESP32 DevKit V1 ส่วนใหญ่) — กระพริบ = loop() ยังรันอยู่
 // ถ้าเจอ "ค้าง" ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ)
 // หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
@@ -151,8 +156,8 @@ unsigned long lastNtpSync    = 0;
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
-unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน DHT22
-int  dhtFailCount  = 0;                        // นับ DHT อ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
+unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
+int  airSensorFailCount = 0;                   // นับ sensor อากาศอ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
 
 // ── Forward Declarations ──────────────────────────────
@@ -180,7 +185,7 @@ float avgCtrlWT();
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v1.4.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v1.5.0 ===");
 
   // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -196,18 +201,20 @@ void setup() {
   buzzerBeep(1, 100, 0);                                       // ทดสอบดัง 100ms แล้วกลับเงียบ
   Serial.println("Buzzer Ready");
 
-  // I2C scanner — หา address ของ LCD จริง (โมดูลส่วนใหญ่ 0x27 บางล็อต 0x3F)
+  // I2C scanner — หา address ของ LCD (โมดูลส่วนใหญ่ 0x27 บางล็อต 0x3F) และ SHT35 (0x44/0x45 ตาม ADDR pin)
+  // ในรอบเดียว — ทั้งสองตัวแชร์บัส I2C เดียวกัน (SDA=21, SCL=22)
   // เดิม hardcode 0x27 ตายตัว — ถ้าโมดูลจริงเป็น 0x3F จะเขียนไปที่ address ที่ไม่มีใครตอบ
   // (I2C write ไป address ที่ไม่มีอุปกรณ์จะเงียบ ไม่ error) ทำให้ backlight ติด (จัมเปอร์ไฟตรง)
   // แต่ตัวอักษรไม่ขึ้นเลย — เป็นสาเหตุที่พบบ่อยที่สุดของอาการนี้
   Wire.begin();
   Wire.setClock(50000);   // ลดจาก default 100kHz — I2C ช้าลงแต่ทนต่อ noise บนบอร์ดที่มี relay/ปั๊มได้มากขึ้น
-  uint8_t lcdAddr = 0;
+  uint8_t lcdAddr = 0, shtAddrFound = 0;
   for (byte a = 1; a < 127; a++) {
     Wire.beginTransmission(a);
     if (Wire.endTransmission() == 0) {
       Serial.printf("[I2C] พบอุปกรณ์ที่ 0x%02X\n", a);
       if (lcdAddr == 0 && (a == 0x27 || a == 0x3F)) lcdAddr = a;   // เจอ address LCD ที่รู้จัก
+      if (shtAddrFound == 0 && (a == 0x44 || a == 0x45)) shtAddrFound = a;   // เจอ address SHT35
     }
   }
   if (lcdAddr == 0) {
@@ -216,7 +223,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v1.4.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v1.5.0");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -268,9 +275,13 @@ void setup() {
   ds18b20.begin();
   Serial.printf("DS18B20 พบ %d ตัว\n", ds18b20.getDeviceCount());
 
-  // DHT22 (single-wire, ไม่ใช้ I2C — ไม่ต้องเรียก Wire.begin() ซ้ำ)
-  dht22.begin();
-  Serial.println("DHT22 Ready");
+  // SHT35 — ใช้ address ที่เจอจาก I2C scan ด้านบน (Wire.begin() เรียกไปแล้วตอนสแกน LCD ไม่ต้องเรียกซ้ำ)
+  if (shtAddrFound != 0 && sht35.begin(shtAddrFound)) {
+    shtAddr = shtAddrFound;
+    Serial.printf("SHT35 Ready (address 0x%02X)\n", shtAddr);
+  } else {
+    Serial.println("[SHT35] ไม่พบเซนเซอร์ที่ 0x44/0x45 — เช็คสาย SDA(21)/SCL(22)/VCC/GND");
+  }
 
   // โหลด control state ครั้งแรก
   loadControlFromFirebase();
@@ -401,31 +412,33 @@ void loadControlFromFirebase() {
 
 // ─────────────────────────────────────────────────────
 void readSensors() {
-  // DHT22 อยู่ใกล้ relay/สายปั๊มบน expansion board มาก — ปั๊มสวิตช์ทำให้เกิด noise transient
-  // รบกวน timing ของ DHT22 ได้ทันที เว้นช่วง PUMP_SWITCH_QUIET_MS ก่อนลองอ่าน กันอ่านชนจังหวะ noise
+  // เดิม DHT22 อยู่ใกล้ relay/สายปั๊มบน expansion board มาก — ปั๊มสวิตช์ทำให้เกิด noise transient
+  // รบกวน timing ตอนอ่านได้ทันที เว้นช่วง PUMP_SWITCH_QUIET_MS ก่อนลองอ่าน กันอ่านชนจังหวะ noise
+  // (คงกลไกนี้ไว้หลังเปลี่ยนเป็น SHT35 ด้วย — ยังไม่ยืนยันว่า proximity เดิมจะกระทบ I2C เหมือนกันไหม)
   bool inPumpQuietWindow = (lastPumpSwitchTime != 0)
                          && (millis() - lastPumpSwitchTime < PUMP_SWITCH_QUIET_MS);
   if (inPumpQuietWindow) {
-    Serial.println("[DHT22] ข้ามรอบนี้ — ปั๊มเพิ่งสวิตช์ รอ noise transient สงบก่อน (ใช้ค่าเดิม)");
+    Serial.println("[SHT35] ข้ามรอบนี้ — ปั๊มเพิ่งสวิตช์ รอ noise transient สงบก่อน (ใช้ค่าเดิม)");
+  } else if (shtAddr == 0) {
+    Serial.println("[SHT35] ไม่พบเซนเซอร์ตอนบูต — ข้ามการอ่าน");
   } else {
-    airTemp     = dht22.readTemperature();
-    airHumidity = dht22.readHumidity();
-    // ถือว่าพังถ้า NaN หรือค่านอกช่วงสมเหตุผล (จับ sensor ส่งค่าขยะ ไม่ใช่แค่ NaN)
-    bool dhtBad = isnan(airTemp) || isnan(airHumidity)
-               || airTemp < DHT_TEMP_MIN || airTemp > DHT_TEMP_MAX
+    airTemp     = sht35.readTemperature();
+    airHumidity = sht35.readHumidity();
+    // ถือว่าพังถ้า NaN (CRC ไม่ผ่าน/สื่อสารพลาด) หรือค่านอกช่วงสมเหตุผล
+    bool airBad = isnan(airTemp) || isnan(airHumidity)
+               || airTemp < AIR_TEMP_MIN || airTemp > AIR_TEMP_MAX
                || airHumidity < 0 || airHumidity > 100;
-    if (dhtBad) {
-      Serial.println("[DHT22] อ่านค่าผิดปกติ (NaN หรือ นอกช่วง)");
+    if (airBad) {
+      Serial.println("[SHT35] อ่านค่าผิดปกติ (NaN/CRC พลาด หรือ นอกช่วง)");
       airTemp = 0; airHumidity = 0;
-      dhtFailCount++;
-      // DHT22 โดน noise แล้วมัก "ค้าง" อ่านไม่ได้จนกว่าจะรีเซ็ตไฟ — ลอง re-init driver เอง
-      // ลองซ้ำทุกๆ DHT_REINIT_EVERY ครั้งที่พลาด (ไม่ใช่ครั้งเดียวแล้วยอมแพ้) เผื่อฟื้นได้โดยไม่ต้อง power cycle
-      if (dhtFailCount % DHT_REINIT_EVERY == 0) {
-        Serial.printf("[DHT22] พลาดสะสม %d ครั้ง — ลอง re-init sensor\n", dhtFailCount);
-        dht22.begin();
+      airSensorFailCount++;
+      // ลองซ้ำทุกๆ SHT_REINIT_EVERY ครั้งที่พลาด (ไม่ใช่ครั้งเดียวแล้วยอมแพ้) เผื่อฟื้นได้เอง
+      if (airSensorFailCount % SHT_REINIT_EVERY == 0) {
+        Serial.printf("[SHT35] พลาดสะสม %d ครั้ง — ลอง re-init sensor\n", airSensorFailCount);
+        sht35.begin(shtAddr);
       }
     } else {
-      dhtFailCount = 0;
+      airSensorFailCount = 0;
       // เก็บเฉพาะค่าดีเข้า control-averaging buffer (กัน autoControl() ตัดสินใจจากค่าเพี้ยน)
       ctrlBufAT[ctrlBufIdx] = airTemp;
       ctrlBufAH[ctrlBufIdx] = airHumidity;
@@ -454,7 +467,7 @@ void readSensors() {
     Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด)\n", wt);
   }
 
-  // สะสมข้อมูลอากาศ สำหรับ hourly log — ข้ามถ้า sensor อ่านไม่ได้ หรือรอบนี้ข้าม DHT ไปเพราะ pump quiet window
+  // สะสมข้อมูลอากาศ สำหรับ hourly log — ข้ามถ้า sensor อ่านไม่ได้ หรือรอบนี้ข้ามไปเพราะ pump quiet window
   // (กันเอาค่าเก่าจากรอบก่อนมานับซ้ำ ทำ hourly average เพี้ยน)
   if (!inPumpQuietWindow && (airTemp > 0 || airHumidity > 0)) {
     h_sumAT += airTemp;     h_maxAT = max(h_maxAT, airTemp);     h_minAT = min(h_minAT, airTemp);
@@ -542,6 +555,9 @@ bool applyManualControl() {
     Serial.printf("[MANUAL] CH3 Fan → %s\n", ch3_fanIn ? "ON" : "OFF");
     changed = true;
   }
+  // ตั้งใจไม่เช็ค pumpLockUntil ตรงนี้ — คนละกรณีกับ checkSchedule() ที่เช็ค (เพราะ schedule ไม่มีคนคอยดูตอนนั้น)
+  // manual = คนสั่งเองตรงหน้าจอ เห็นสถานะ/badge "พักปั๊ม" อยู่แล้วถ้าจะสั่งฝืนก็ตัดสินใจเอง สอดคล้องกับหลักการ
+  // เดิมของระบบ: ผู้ใช้ต้องสั่ง manual ได้เสมอ ไม่ถูกล็อกออกจากระบบตัวเอง (ดูเหตุผลเดียวกันตอนแก้ failsafe)
   if (!ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP] && (bool)ch_manual[IDX_PUMP] != ch4_spare) {
     ch4_spare = ch_manual[IDX_PUMP];
     setRelay(PIN_RELAY_CH4, ch4_spare);
@@ -605,9 +621,9 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "1.4.0");
+  Firebase.setString(fbData, base + "status/firmware",    "1.5.0");
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
-  Firebase.setBool (fbData, base + "status/sensor_ok",   (dhtFailCount == 0));
+  Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
   Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
   Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
@@ -802,7 +818,7 @@ void checkSchedule() {
 void updateLCD() {
   if (!lcd) return;   // ไม่เจอ LCD ตอนบูต (address ผิด/สายหลุด) — ข้ามแทนที่จะ crash
 
-  // LCD ไม่มีทางอ่านค่ากลับมาเช็คว่าเพี้ยนไหม (ไม่เหมือน DHT/DS18B20 ที่ validate ค่าได้)
+  // LCD ไม่มีทางอ่านค่ากลับมาเช็คว่าเพี้ยนไหม (ไม่เหมือน SHT35/DS18B20 ที่ validate ค่าได้)
   // ถ้า I2C โดน noise จาก relay/ปั๊มรบกวนกลางทาง ตัวควบคุมจออาจ "ค้าง" สถานะภายในเพี้ยน
   // (เช่น cursor/DDRAMผิดตำแหน่ง) จนตัวอักษรกลายเป็นขยะถาวร — re-init เป็นระยะเชิงป้องกันไว้ก่อน
   static uint8_t lcdCycles = 0;

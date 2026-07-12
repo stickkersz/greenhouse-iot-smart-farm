@@ -839,7 +839,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v1.4.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · มิถุนายน 2569</footer>
+<footer>🌿 SmartFarm v1.5.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1370,6 +1370,10 @@ function saveSchedule(channel, id) {
   const enabled  = document.getElementById('schedEn_'  + id).checked;
   const on_time  = document.getElementById('schedOn_'  + id).value;
   const off_time = document.getElementById('schedOff_' + id).value;
+  // เวลาเปิด=ปิดเป๊ะ ทำให้ firmware ตีความเป็น "เปิดตลอดเวลา" (ดู checkSchedule() branch ข้ามคืน) ไม่ใช่ "ไม่มีผล" ตามที่คนตั้งใจ
+  if (enabled && on_time === off_time) {
+    showToast('⚠️ เวลาเปิดกับเวลาปิดห้ามตรงกัน (ระบบจะตีความว่าเปิดตลอดเวลา)'); return;
+  }
   db.ref(`/smartfarm/control/${channel}/schedule`).set({enabled, on_time, off_time})
     .then(() => {
       updateScheduleUI(id, {enabled, on_time, off_time});
@@ -1423,6 +1427,9 @@ function saveThresholds() {
   const wtoff = parseFloat(document.getElementById('waterTempOff').value);
   const tAlert= parseFloat(document.getElementById('tempAlert').value);
   const hAlert= parseFloat(document.getElementById('humidityAlert').value);
+  if ([ton, toff, hmin, hmax, wton, wtoff, tAlert, hAlert].some(Number.isNaN)) {
+    showToast('⚠️ กรอกตัวเลขให้ครบทุกช่อง (มีช่องว่างเปล่าหรือไม่ใช่ตัวเลข)'); return;
+  }
   if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
   if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
   if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
