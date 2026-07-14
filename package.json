@@ -1,9 +1,11 @@
 {
   "name": "greenhouse-iot-smart-farm",
   "private": true,
-  "description": "Test suite for Firebase security rules (database.rules.json) — no build step, matches the dashboard's vanilla-JS approach",
+  "description": "Test suite for Firebase security rules + firmware auto-control logic — no build step, matches the project's vanilla approach",
   "scripts": {
-    "test:rules": "firebase emulators:exec --only database \"node --test tests/**/*.test.js\""
+    "test:rules": "firebase emulators:exec --only database \"node --test tests/**/*.test.js\"",
+    "test:logic": "g++ -std=c++17 -Wall -Wextra -I smartfarm_firmware tests/auto_control_logic.test.cpp -o /tmp/auto_control_test && /tmp/auto_control_test",
+    "test": "npm run test:rules && npm run test:logic"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^3.0.4"

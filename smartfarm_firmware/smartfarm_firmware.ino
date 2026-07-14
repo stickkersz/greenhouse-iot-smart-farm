@@ -2,7 +2,15 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 1.5.0
+  Version: 1.6.0
+  Changelog v1.6.0 (2026-07-14) — rewrite auto-control ให้พนักงาน 10 คนเข้าใจง่าย:
+    - พัดลม (CH3) คุมด้วย "อุณหภูมิอากาศ" อย่างเดียว — ถอดการผูกกับอุณหภูมิน้ำ (evaporative pad) ออก
+      เพราะ 2 เซนเซอร์ต่อ 1 พัดลมทำให้พฤติกรรมเดายาก อธิบายพนักงานไม่ไหว
+    - น้ำ (DS18B20) เหลือหน้าที่ แสดง/log/แจ้งเตือน อย่างเดียว ไม่คุมรีเลย์แล้ว
+    - เกณฑ์ที่พนักงานตั้ง ลดจาก 9 → 6: พัดลม on/off, ปั๊ม on/off, + alert 3 ตัว (temp/hum/water)
+    - เพิ่ม guard: ถ้า threshold ไม่ถูกต้อง (temp_on≤temp_off หรือ humidity_max≤humidity_min) ข้ามรอบ กันรีเลย์กระพริบ
+    - water_temp_alert ตั้งค่าได้จาก Firebase แล้ว (เดิม hardcode 35°C)
+    - logic บริสุทธิ์ย้ายไป auto_control_logic.h ทั้งหมด — เทสต์ครอบทุกกรณี (21 assertions, g++)
   Changelog v1.5.0 (สะสมตั้งแต่ v1.4.0 — เดิม version comment ไม่ได้ bump ตามมานาน):
     - Relay remap: CH4=ปั๊มน้ำ, CH3=พัดลม 220V, CH1=สำรอง (CH2 ไม่ใช้)
     - DS18B20 hardening: กรองค่า -127/85°C + อ่านซ้ำ (รองรับสายยาว 4m)
@@ -44,6 +52,7 @@ WiFiMulti wifiMulti;
 #include <time.h>
 #include <esp_task_wdt.h>
 #include "config.h"
+#include "auto_control_logic.h"
 
 // เผื่อ config.h เก่าไม่มี define นี้ — relay เป็น active-LOW (LOW=เปิด, HIGH=ปิด)
 #ifndef RELAY_ACTIVE_LOW
@@ -96,14 +105,17 @@ bool ch4_spare  = false;   // CH4 = ปั๊มน้ำ
 // ch index: 0=ch1(unused) 1=ch2(unused) 2=ch3_fan 3=ch4_pump
 volatile bool  ch_isAuto[4] = {false, false, true,  true};
 volatile bool  ch_manual[4] = {false, false, false, false};
-volatile float thresh_temp_on  = TEMP_ON;
-volatile float thresh_temp_off = TEMP_OFF;
-volatile float thresh_hum_min  = HUMIDITY_MIN;
-volatile float thresh_hum_max  = 75.0;    // ปิดปั๊มเมื่อความชื้น ≥ นี้ (hysteresis คู่กับ humidity_min กันปั๊มกระพริบ)
-volatile float thresh_water_temp_on  = 30.0;  // พัดลมช่วยเปิดเมื่อน้ำร้อน (evaporative pad)
-volatile float thresh_water_temp_off = 27.0;  // ยกเลิกเงื่อนไขน้ำเมื่อน้ำเย็นพอ
-volatile float thresh_temp_alert = 38.0;  // เกณฑ์แจ้งเตือน/buzzer (sync กับ dashboard)
-volatile float thresh_hum_alert  = 40.0;
+// ── Auto-control thresholds (พนักงานตั้งค่าจาก dashboard) ──
+// พัดลม (CH3) คุมด้วย "อุณหภูมิอากาศ" อย่างเดียว · ปั๊ม (CH4) คุมด้วย "ความชื้นอากาศ"
+// แต่ละอุปกรณ์มีเลข ON/OFF คู่กัน (ช่องว่าง = hysteresis กันรีเลย์กระพริบ)
+volatile float thresh_temp_on  = TEMP_ON;       // พัดลมเปิดเมื่ออากาศ ≥ ค่านี้ (ร้อน)
+volatile float thresh_temp_off = TEMP_OFF;      // พัดลมปิดเมื่ออากาศ ≤ ค่านี้ (เย็น) — ต้อง < temp_on
+volatile float thresh_hum_min  = HUMIDITY_MIN;  // ปั๊มเปิดเมื่อความชื้น < ค่านี้ (แห้ง)
+volatile float thresh_hum_max  = 75.0;          // ปั๊มปิดเมื่อความชื้น ≥ ค่านี้ (ชื้น) — ต้อง > humidity_min
+// เกณฑ์แจ้งเตือน/buzzer (แยกจาก auto-control — ไม่สั่งรีเลย์ แค่เตือน) sync กับ dashboard
+volatile float thresh_temp_alert       = 38.0;
+volatile float thresh_hum_alert        = 40.0;
+volatile float thresh_water_temp_alert = 35.0;  // configurable จาก Firebase
 volatile bool  buzzerEnabled   = true;   // ปิด/เปิดเสียงเตือนจาก dashboard
 
 // ── Schedule State ────────────────────────────────────
@@ -113,20 +125,19 @@ char ch_schedOn[4][6]  = {"07:00","07:00","07:00","07:00"};
 char ch_schedOff[4][6] = {"18:00","18:00","18:00","18:00"};
 
 // ── Hourly Log Accumulators ───────────────────────────
-float h_sumAT = 0, h_maxAT = -99, h_minAT = 99;
-float h_sumAH = 0, h_maxAH = -1,  h_minAH = 101;
-float h_sumWT = 0, h_maxWT = -99, h_minWT = 99;
+float h_sumAT = 0, h_maxAT = -999, h_minAT = 999;
+float h_sumAH = 0, h_maxAH = -999, h_minAH = 999;
+float h_sumWT = 0, h_maxWT = -999, h_minWT = 999;
 int   h_count   = 0;   // จำนวน sample อากาศ
 int   h_countWT = 0;   // จำนวน sample น้ำที่อ่านได้ (แยกต่างหาก — DS18B20 สายยาวอาจอ่านพลาดบางครั้ง)
 
 // ── Control-loop Averaging (แยกจาก hourly-log accumulator ด้านบนโดยสิ้นเชิง) ──
 // N=3 รอบ — กัน relay สั่งเปลี่ยนจากค่าเพี้ยนชั่วครู่ครั้งเดียว
+// เก็บเฉพาะอากาศ (temp+humidity) — auto-control ใช้แค่ 2 ตัวนี้ · น้ำไม่คุมรีเลย์แล้ว (alert-only)
 #define CTRL_AVG_N 3
-float ctrlBufAT[CTRL_AVG_N] = {0};   // buffer อุณหภูมิอากาศ (สำหรับตัดสินใจ auto control เท่านั้น)
-float ctrlBufAH[CTRL_AVG_N] = {0};   // buffer ความชื้นอากาศ
-float ctrlBufWT[CTRL_AVG_N] = {0};   // buffer อุณหภูมิน้ำ (เก็บเฉพาะตอน waterSensorOk)
-int   ctrlBufATCount = 0, ctrlBufIdx   = 0;   // อากาศ+ความชื้น sample พร้อมกันเสมอ ใช้ index/count ร่วม
-int   ctrlBufWTCount = 0, ctrlBufWTIdx = 0;   // น้ำแยกต่างหาก เพราะอาจอ่านพลาดบางรอบ
+float ctrlBufAT[CTRL_AVG_N] = {0};   // buffer อุณหภูมิอากาศ (คุมพัดลม)
+float ctrlBufAH[CTRL_AVG_N] = {0};   // buffer ความชื้นอากาศ (คุมปั๊ม)
+int   ctrlBufATCount = 0, ctrlBufIdx = 0;   // อากาศ+ความชื้น sample พร้อมกันเสมอ ใช้ index/count ร่วม
 
 // ── Timing ────────────────────────────────────────────
 unsigned long lastSensorTime = 0;
@@ -180,12 +191,11 @@ void pumpSafetyCheck();
 bool timeValid();
 float avgCtrlAT();
 float avgCtrlAH();
-float avgCtrlWT();
 
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v1.5.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v1.6.0 ===");
 
   // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -223,7 +233,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v1.5.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v1.6.0");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -401,11 +411,10 @@ void loadControlFromFirebase() {
   if (json.get(d, "thresholds/temp_off"))    thresh_temp_off = d.floatValue;
   if (json.get(d, "thresholds/humidity_min")) thresh_hum_min = d.floatValue;
   if (json.get(d, "thresholds/humidity_max")) thresh_hum_max = d.floatValue;
-  if (json.get(d, "thresholds/water_temp_on"))  thresh_water_temp_on  = d.floatValue;
-  if (json.get(d, "thresholds/water_temp_off")) thresh_water_temp_off = d.floatValue;
-  if (json.get(d, "thresholds/temp_alert"))     thresh_temp_alert = d.floatValue;
-  if (json.get(d, "thresholds/humidity_alert")) thresh_hum_alert  = d.floatValue;
-  if (json.get(d, "buzzer_enabled"))         buzzerEnabled  = d.boolValue;
+  if (json.get(d, "thresholds/temp_alert"))        thresh_temp_alert       = d.floatValue;
+  if (json.get(d, "thresholds/humidity_alert"))   thresh_hum_alert        = d.floatValue;
+  if (json.get(d, "thresholds/water_temp_alert")) thresh_water_temp_alert = d.floatValue;
+  if (json.get(d, "buzzer_enabled"))              buzzerEnabled           = d.boolValue;
 
   Serial.println(" OK");
 }
@@ -457,11 +466,7 @@ void readSensors() {
   }
   if (wt >= DS_WATER_MIN && wt <= DS_WATER_MAX) {
     waterTemp = wt;          // เก็บเฉพาะค่าที่ใช้ได้ (ถ้าอ่านพลาด คงค่าเดิมไว้ ไม่เอาค่าขยะไปแสดง/log/alert)
-    waterSensorOk = true;
-    // เก็บเข้า control-averaging buffer แยกจากอากาศ (น้ำอาจอ่านพลาดบางรอบ ไม่ sync กับ air buffer)
-    ctrlBufWT[ctrlBufWTIdx] = waterTemp;
-    ctrlBufWTIdx = (ctrlBufWTIdx + 1) % CTRL_AVG_N;
-    if (ctrlBufWTCount < CTRL_AVG_N) ctrlBufWTCount++;
+    waterSensorOk = true;    // น้ำใช้แค่ แสดง/log/alert — ไม่คุมรีเลย์แล้ว จึงไม่มี control buffer
   } else {
     waterSensorOk = false;
     Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด)\n", wt);
@@ -488,46 +493,40 @@ void readSensors() {
 // ค่าเฉลี่ยจาก control-averaging buffer — ใช้เฉพาะใน autoControl() (กันตัดสินใจจากค่าเพี้ยนชั่วครู่)
 float avgCtrlAT() { float s=0; for (int i=0;i<ctrlBufATCount;i++) s+=ctrlBufAT[i]; return ctrlBufATCount ? s/ctrlBufATCount : 0; }
 float avgCtrlAH() { float s=0; for (int i=0;i<ctrlBufATCount;i++) s+=ctrlBufAH[i]; return ctrlBufATCount ? s/ctrlBufATCount : 0; }
-float avgCtrlWT() { float s=0; for (int i=0;i<ctrlBufWTCount;i++) s+=ctrlBufWT[i]; return ctrlBufWTCount ? s/ctrlBufWTCount : 0; }
 
 // ─────────────────────────────────────────────────────
-// Auto Control — ใช้ threshold แบบ dynamic จาก Firebase + ค่าเฉลี่ย N=3 รอบ (กัน relay สั่งจากค่าเพี้ยนครั้งเดียว)
+// Auto Control — โมเดลใหม่ 2026-07-14: 1 อุปกรณ์ = 1 เซนเซอร์ (เข้าใจง่าย)
+//   พัดลม (CH3) ← อุณหภูมิอากาศ    | ร้อน≥temp_on เปิด · เย็น≤temp_off ปิด
+//   ปั๊ม  (CH4) ← ความชื้นอากาศ    | แห้ง<humidity_min เปิด · ชื้น≥humidity_max ปิด
+//   น้ำ = แจ้งเตือนอย่างเดียว (ไม่คุมรีเลย์)
+// ใช้ค่าเฉลี่ย N=3 รอบ (กัน relay สั่งจากค่าเพี้ยนครั้งเดียว) · logic บริสุทธิ์อยู่ที่ auto_control_logic.h
 void autoControl() {
-  float ton   = thresh_temp_on,        toff  = thresh_temp_off;
-  float wton  = thresh_water_temp_on,  wtoff = thresh_water_temp_off;
-  float hmin  = thresh_hum_min,        hmax  = thresh_hum_max;
+  float ton  = thresh_temp_on,  toff = thresh_temp_off;
+  float hmin = thresh_hum_min,  hmax = thresh_hum_max;
+
+  // config ต้องมีช่องว่าง hysteresis ที่ถูกต้อง (พัดลม on>off, ปั๊ม max>min) ไม่งั้นรีเลย์กระพริบ → ข้ามรอบ
+  if (ton <= toff || hmax <= hmin) {
+    Serial.println("[AUTO] ข้าม — threshold ไม่ถูกต้อง (ต้อง temp_on>temp_off และ humidity_max>humidity_min)");
+    return;
+  }
+  // ยังไม่มี sample อากาศที่อ่านได้เลย (บูตใหม่/เซนเซอร์ยังไม่พร้อม) → อย่าเพิ่งสั่งรีเลย์
+  if (ctrlBufATCount == 0) return;
 
   float avgAT = avgCtrlAT();
   float avgAH = avgCtrlAH();
-  bool  haveWater = (ctrlBufWTCount > 0) && waterSensorOk;
-  float avgWT = haveWater ? avgCtrlWT() : 0;
+  AutoControlDecisions dec = computeAutoDecisions({avgAT, avgAH, ton, toff, hmin, hmax});
 
-  // พัดลม (CH3): ระบบระบายความร้อนแบบ evaporative — คุมด้วยอากาศ + น้ำร่วมกัน
-  // เปิด: อากาศร้อน "หรือ" น้ำร้อน (worst-case wins — สัญญาณไหนบอกร้อนก็เปิด ไม่พลาดโอกาสระบาย)
-  // ปิด: อากาศเย็นพอ "และ" น้ำเย็นพอ (หรือไม่มีน้ำให้เช็ค) — ต้องเย็นพร้อมกันถึงปิด
-  bool fanOpen  = (avgAT >= ton)  || (haveWater && avgWT >= wton);
-  bool fanClose = (avgAT <= toff) && (!haveWater || avgWT <= wtoff);
-
-  // ปั๊มน้ำ (CH4): คุมด้วยความชื้น + hysteresis (เปิดต่ำกว่า hmin, ปิดสูงกว่า hmax) กันปั๊มกระพริบใกล้ threshold เดียว
-  // ถ้า sensor ความชื้นพัง (อ่านได้ 0) → ปิดปั๊มเพื่อความปลอดภัย (กันปั๊มทำงานค้าง)
-  bool pumpOpen  = (avgAH > 0 && avgAH < hmin);
-  bool pumpClose = (avgAH == 0 || avgAH >= hmax);
-
-  // หมายเหตุ precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
-  // ทำงานเฉพาะตอนมี sample เฉลี่ยจริง (ctrlBufATCount>0) — กัน glitch ตอนบูตก่อน buffer เต็ม
-  // CH3 พัดลม
-  if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN] && ctrlBufATCount > 0) {
-    if (fanOpen  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  }
-    if (fanClose &&  ch3_fanIn) { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
+  // precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
+  // CH3 พัดลม — คุมด้วยอุณหภูมิอากาศ
+  if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
+    if (dec.fanOpen  && !ch3_fanIn) { ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);  Serial.printf("[AUTO] พัดลมเปิด — อากาศ %.1f≥%.1f°C\n", avgAT, ton); }
+    if (dec.fanClose &&  ch3_fanIn) { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); Serial.printf("[AUTO] พัดลมปิด — อากาศ %.1f≤%.1f°C\n", avgAT, toff); }
   }
-  // CH4 ปั๊มน้ำ — เปิดได้เฉพาะเมื่อพ้น safety lock (cooldown)
-  if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP] && ctrlBufATCount > 0) {
-    if (pumpOpen  && !ch4_spare && millis() >= pumpLockUntil) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis(); }
-    if (pumpClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); }
+  // CH4 ปั๊มน้ำ — คุมด้วยความชื้น · เปิดได้เฉพาะพ้น safety lock (cooldown)
+  if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
+    if (dec.pumpOpen  && !ch4_spare && millis() >= pumpLockUntil) { ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis(); Serial.printf("[AUTO] ปั๊มเปิด — ความชื้น %.1f<%.1f%%\n", avgAH, hmin); }
+    if (dec.pumpClose &&  ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis(); Serial.printf("[AUTO] ปั๊มปิด — ความชื้น %.1f≥%.1f%%\n", avgAH, hmax); }
   }
-
-  if (fanOpen)  Serial.printf("[AUTO] พัดลมเปิด — AvgT:%.1f≥%.1f หรือ AvgWT:%.1f≥%.1f\n", avgAT, ton, avgWT, wton);
-  if (pumpOpen) Serial.printf("[AUTO] ปั๊มเปิด — AvgRH:%.1f<%.1f\n", avgAH, hmin);
 }
 
 // ─────────────────────────────────────────────────────
@@ -621,7 +620,7 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "1.5.0");
+  Firebase.setString(fbData, base + "status/firmware",    "1.6.0");
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
@@ -687,11 +686,11 @@ void checkAlerts() {
     Serial.println("[ALERT] Low Humidity: " + String(airHumidity, 1) + "%");
     hasAlert = true;
   }
-  if (waterSensorOk && waterTemp > 35.0) {
+  if (waterSensorOk && waterTemp > thresh_water_temp_alert) {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "high_water_temp");
     Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   waterTemp);
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-      "อุณหภูมิน้ำสูงเกิน 35°C! (" + String(waterTemp, 1) + "°C)");
+      "อุณหภูมิน้ำสูงเกิน " + String(thresh_water_temp_alert, 0) + "°C! (" + String(waterTemp, 1) + "°C)");
     Serial.println("[ALERT] High Water Temp: " + String(waterTemp, 1) + "°C");
     hasAlert = true;
   }

@@ -55,8 +55,8 @@ describe("control/thresholds — hysteresis + type validation", () => {
   const VALID = {
     temp_on: 35, temp_off: 32,
     humidity_min: 60, humidity_max: 75,
-    water_temp_on: 30, water_temp_off: 27,
     temp_alert: 40, humidity_alert: 40,
+    water_temp_alert: 35,
   };
 
   test("email user CAN write valid ordered thresholds", async () => {
@@ -76,9 +76,15 @@ describe("control/thresholds — hysteresis + type validation", () => {
     await assertFails(db.ref("/smartfarm/control/thresholds").set(bad));
   });
 
-  test("REJECTS water_temp_on <= water_temp_off", async () => {
+  test("ACCEPTS water_temp_alert as a standalone number (no ordering constraint)", async () => {
     const db = emailUser().database();
-    const bad = { ...VALID, water_temp_on: 25, water_temp_off: 27 };
+    const ok = { ...VALID, water_temp_alert: 42 };
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(ok));
+  });
+
+  test("REJECTS out-of-range water_temp_alert", async () => {
+    const db = emailUser().database();
+    const bad = { ...VALID, water_temp_alert: 999 };
     await assertFails(db.ref("/smartfarm/control/thresholds").set(bad));
   });
 

@@ -79,10 +79,9 @@
           "temp_off":       { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70" },
           "humidity_min":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
           "humidity_max":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() > newData.parent().child('humidity_min').val()" },
-          "water_temp_on":  { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 80 && newData.val() > newData.parent().child('water_temp_off').val()" },
-          "water_temp_off": { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 80" },
           "temp_alert":     { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_on').val()" },
           "humidity_alert": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() < newData.parent().child('humidity_min').val()" },
+          "water_temp_alert": { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 80" },
           "$other": { ".validate": false }
         },
         "buzzer_enabled": { ".validate": "newData.isBoolean()" },
