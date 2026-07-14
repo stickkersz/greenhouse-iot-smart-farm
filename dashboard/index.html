@@ -1064,22 +1064,24 @@ function startListeners() {
     if (d.air_humidity   != null) { sensorLive.airHum_prev     = sensorLive.airHum;     sensorLive.airHum     = d.air_humidity; }
     if (d.water_temp     != null) { sensorLive.waterTemp_prev  = sensorLive.waterTemp;  sensorLive.waterTemp  = d.water_temp; }
 
+    // badge ทุกตัวอิงเกณฑ์ live จาก alertThresholds (พนักงานตั้งเอง) ไม่ hardcode
+    const T = alertThresholds;
     const t = d.air_temp;
     if (t != null) {
       document.getElementById('airTempGauge').innerHTML = buildGauge(t, 0, 50, '#16a34a', '°C');
-      if      (t > 38) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus','🔴 ร้อนวิกฤต — ระบบเปิดพัดลม'); }
-      else if (t > 35) { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus','🟡 ร้อน — พัดลมทำงาน'); }
-      else if (t > 30) { setBadge('airTempBadge','badge-ok','ปกติ');     setText('airTempStatus','🟢 อุณหภูมิปกติ'); }
-      else             { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus','🔵 อากาศเย็น'); }
+      if      (t > T.temp_alert) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus',`🔴 ร้อนวิกฤต (เกิน ${T.temp_alert}°C) — พัดลมทำงาน`); }
+      else if (t >= T.temp_on)   { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus',`🟡 ร้อน ≥${T.temp_on}°C — พัดลมทำงาน`); }
+      else if (t >  T.temp_off)  { setBadge('airTempBadge','badge-ok','ปกติ');     setText('airTempStatus','🟢 อุณหภูมิปกติ'); }
+      else                       { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus',`🔵 อากาศเย็น ≤${T.temp_off}°C — พัดลมพัก`); }
     }
 
     const rh = d.air_humidity;
     if (rh != null) {
       document.getElementById('airHumGauge').innerHTML = buildGauge(rh, 0, 100, '#2563eb', '%');
-      if      (rh < 40) { setBadge('airHumBadge','badge-danger','แห้งมาก'); setText('airHumStatus','🔴 ความชื้นต่ำมาก'); }
-      else if (rh < 60) { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus','🟡 ความชื้นต่ำกว่าเกณฑ์'); }
-      else if (rh > 85) { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus','💧 ความชื้นสูง'); }
-      else              { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
+      if      (rh < T.humidity_alert) { setBadge('airHumBadge','badge-danger','แห้งมาก'); setText('airHumStatus',`🔴 ความชื้นต่ำมาก (ต่ำกว่า ${T.humidity_alert}%)`); }
+      else if (rh < T.humidity_min)   { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus',`🟡 แห้ง <${T.humidity_min}% — ปั๊มทำงาน`); }
+      else if (rh >= T.humidity_max)  { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus',`💧 ความชื้นสูง ≥${T.humidity_max}% — ปั๊มพัก`); }
+      else                            { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
     }
 
     const wt = d.water_temp;
@@ -1089,9 +1091,9 @@ function startListeners() {
       setText('waterTempStatus','🌊 เซ็นเซอร์น้ำไม่พร้อม — ตรวจสอบสาย/Pull-up');
     } else if (wt != null) {
       document.getElementById('waterTempGauge').innerHTML = buildGauge(wt, 0, 50, '#0f766e', '°C');
-      if      (wt > 35) { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus','🔴 น้ำร้อนเกินไป'); }
-      else if (wt > 28) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น'); }
-      else              { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
+      if      (wt > T.water_temp_alert)     { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus',`🔴 น้ำร้อนเกินไป (เกิน ${T.water_temp_alert}°C)`); }
+      else if (wt > T.water_temp_alert - 3) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น — ใกล้เกณฑ์เตือน'); }
+      else                                  { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
     }
 
     if (d.uptime_sec != null) {
@@ -1143,10 +1145,15 @@ function startListeners() {
       if (th.temp_alert       != null) document.getElementById('tempAlert').value      = th.temp_alert;
       if (th.humidity_alert   != null) document.getElementById('humidityAlert').value  = th.humidity_alert;
       if (th.water_temp_alert != null) document.getElementById('waterTempAlert').value = th.water_temp_alert;
-      // อัปเดต alertThresholds ให้ checkAlerts() ใช้ค่าล่าสุดเสมอ
+      // อัปเดต alertThresholds ให้ checkAlerts() + sensor badges ใช้ค่าล่าสุดเสมอ
       alertThresholds = {
-        temp_alert:     th.temp_alert     ?? alertThresholds.temp_alert,
-        humidity_alert: th.humidity_alert ?? alertThresholds.humidity_alert,
+        temp_on:          th.temp_on          ?? alertThresholds.temp_on,
+        temp_off:         th.temp_off         ?? alertThresholds.temp_off,
+        humidity_min:     th.humidity_min     ?? alertThresholds.humidity_min,
+        humidity_max:     th.humidity_max     ?? alertThresholds.humidity_max,
+        temp_alert:       th.temp_alert       ?? alertThresholds.temp_alert,
+        humidity_alert:   th.humidity_alert   ?? alertThresholds.humidity_alert,
+        water_temp_alert: th.water_temp_alert ?? alertThresholds.water_temp_alert,
       };
       // ไฮไลต์ preset ที่ตรง
       let matched = false;
@@ -1388,7 +1395,9 @@ function updateScheduleUI(id, s) {
 }
 
 // ── Thresholds ────────────────────────────────────────
-let alertThresholds = {temp_alert: 38, humidity_alert: 40};
+// live copy ของ threshold ทั้งหมด — sensor badges + checkAlerts() ใช้ค่านี้ (ไม่ hardcode)
+// อัปเดตจาก /smartfarm/control listener ทุกครั้งที่พนักงานบันทึกค่าใหม่
+let alertThresholds = {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, temp_alert:38, humidity_alert:40, water_temp_alert:35};
 
 const PRESETS = {
   summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, temp_alert:38, humidity_alert:50, water_temp_alert:34, label:'☀️ ฤดูร้อน'},
