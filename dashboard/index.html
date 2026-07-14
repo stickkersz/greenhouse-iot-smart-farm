@@ -1067,8 +1067,8 @@ function startListeners() {
     const t = d.air_temp;
     if (t != null) {
       document.getElementById('airTempGauge').innerHTML = buildGauge(t, 0, 50, '#16a34a', '°C');
-      if      (t > 38) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus','🔴 ร้อนวิกฤต — ระบบเปิดปั๊ม+พัดลม'); }
-      else if (t > 35) { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus','🟡 ร้อน — ระบบเปิดทำงาน'); }
+      if      (t > 38) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus','🔴 ร้อนวิกฤต — ระบบเปิดพัดลม'); }
+      else if (t > 35) { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus','🟡 ร้อน — พัดลมทำงาน'); }
       else if (t > 30) { setBadge('airTempBadge','badge-ok','ปกติ');     setText('airTempStatus','🟢 อุณหภูมิปกติ'); }
       else             { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus','🔵 อากาศเย็น'); }
     }
@@ -1230,8 +1230,6 @@ function updateHealth() {
 
   if (!connectedToFb) {
     sev = 'warn'; msg = '🌐 เครื่องนี้ไม่ได้เชื่อมต่ออินเทอร์เน็ต — ข้อมูลอาจไม่อัปเดต';
-  } else if (sysStatus.failsafe) {
-    sev = 'crit'; msg = '🚨 โหมดฉุกเฉิน: Sensor อากาศพัง — ระบบเปิดพัดลม + ปิดปั๊มอัตโนมัติ · ตรวจสอบ DHT22';
   } else if (lastSensorTs && ageMs > 120000) {
     sev = 'crit'; msg = `📡 ESP32 ออฟไลน์ — ไม่มีข้อมูลใหม่ ${ageMin} นาที · ตรวจสอบไฟ/WiFi`;
   } else if (sysStatus.sensor_ok === false) {
@@ -1239,7 +1237,7 @@ function updateHealth() {
   } else if (lastSensorTs && ageMs > 90000) {
     sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
   } else if (sysStatus.pump_locked) {
-    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown) หลังเดินครบ 5 นาที — จะกลับมาทำงานเอง';
+    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) หลังเดินครบ 10 นาที — จะกลับมาทำงานเอง';
   } else if (sysStatus.water_ok === false) {
     sev = 'info'; msg = '🌊 Sensor อุณหภูมิน้ำ (DS18B20) อ่านไม่ได้ — ตรวจสอบสาย';
   } else if (sysStatus.time_ok === false) {
