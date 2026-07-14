@@ -1438,7 +1438,8 @@ function saveThresholds() {
   const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, humidity_max:hmax,
                 temp_alert:tAlert, humidity_alert:hAlert, water_temp_alert:wtAlert};
   db.ref('/smartfarm/control/thresholds').set(data).then(() => {
-    alertThresholds = {temp_alert: tAlert, humidity_alert: hAlert};
+    // ไม่ reset alertThresholds ตรงนี้ — /smartfarm/control listener rebuild ครบทั้ง 7 field ให้อยู่แล้ว
+    // (เดิม set แค่ 2 field ทำให้ badge อ่าน temp_on/off, humidity_min/max, water_temp_alert เป็น undefined)
     logAction(`ตั้งค่า — พัดลมเปิด ≥${ton}°C ปิด ≤${toff}°C · ปั๊มเปิด ≤${hmin}% ปิด ≥${hmax}% · Alert อากาศ ${tAlert}°C / ${hAlert}% · น้ำ ${wtAlert}°C`);
     showToast('✅ บันทึกแล้ว · ESP32 รับค่าใหม่ทันที');
     // ทำให้ preset ไฮไลต์ถ้า match
