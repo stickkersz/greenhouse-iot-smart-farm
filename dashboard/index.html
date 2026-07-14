@@ -819,6 +819,7 @@
               <div class="si-wrap"><input type="number" id="humidityMax" value="75" step="0.1" min="15" max="100"><span class="si-unit">%</span></div>
             </div>
           </div>
+          <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">ปั๊มยังเปิดช่วยพัดลมลดอุณหภูมิด้วย เมื่ออากาศร้อน ≥ เกณฑ์เปิดพัดลม (evaporative) — ยกเว้นอากาศชื้นเกินเกณฑ์ปิดปั๊ม</div>
         </div>
 
         <button class="save-btn" onclick="saveThresholds()">💾 บันทึกการตั้งค่า</button>
@@ -836,7 +837,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v1.6.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v1.7.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1069,8 +1070,8 @@ function startListeners() {
     const t = d.air_temp;
     if (t != null) {
       document.getElementById('airTempGauge').innerHTML = buildGauge(t, 0, 50, '#16a34a', '°C');
-      if      (t > T.temp_alert) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus',`🔴 ร้อนวิกฤต (เกิน ${T.temp_alert}°C) — พัดลมทำงาน`); }
-      else if (t >= T.temp_on)   { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus',`🟡 ร้อน ≥${T.temp_on}°C — พัดลมทำงาน`); }
+      if      (t > T.temp_alert) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus',`🔴 ร้อนวิกฤต (เกิน ${T.temp_alert}°C) — พัดลม+ปั๊มช่วยลดอุณหภูมิ`); }
+      else if (t >= T.temp_on)   { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus',`🟡 ร้อน ≥${T.temp_on}°C — พัดลม+ปั๊มทำงาน`); }
       else if (t >  T.temp_off)  { setBadge('airTempBadge','badge-ok','ปกติ');     setText('airTempStatus','🟢 อุณหภูมิปกติ'); }
       else                       { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus',`🔵 อากาศเย็น ≤${T.temp_off}°C — พัดลมพัก`); }
     }

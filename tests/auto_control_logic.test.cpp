@@ -11,106 +11,114 @@ void check(bool cond, const char* name) {
   else      { printf("  FAIL  %s\n", name); failures++; }
 }
 
-// ค่า default จริงจากระบบ: fanOnTemp=35 fanOffTemp=32 pumpOnHum=60 pumpOffHum=75
-// {airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum}
+// default จริง: fanOnTemp=35 fanOffTemp=32 pumpOnHum=60 pumpOffHum=75
+// {airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum, humidifyLatch, coolLatch}
 static AutoControlInputs base() {
-  return {0, 50, 35, 32, 60, 75};   // humidity=50 (ยังไม่ตาย) กันเผลอ trigger pump safety-close ในเทสต์พัดลม
+  return {30, 50, 35, 32, 60, 75, false, false};   // อากาศ 30°C ชื้น 50% latch ปิดทั้งคู่
 }
 
 int main() {
-  printf("== Fan: hot air opens ==\n");
+  printf("== Fan: hot opens / cool closes / dead-zone holds ==\n");
   {
-    auto in = base(); in.airTemp = 36; // >= fanOnTemp(35)
+    auto in = base(); in.airTemp = 36;
+    check(computeAutoDecisions(in).fanOpen,  "airTemp=36>=35 -> fanOpen");
+    in.airTemp = 30;
+    check(computeAutoDecisions(in).fanClose, "airTemp=30<=32 -> fanClose");
+    in.airTemp = 33.5f;
     auto d = computeAutoDecisions(in);
-    check(d.fanOpen,  "airTemp=36 >= 35 -> fanOpen");
-    check(!d.fanClose, "airTemp=36 -> fanClose false");
+    check(!d.fanOpen && !d.fanClose, "airTemp=33.5 -> fan hold (neither)");
   }
 
-  printf("== Fan: cool air closes ==\n");
+  printf("== Pump humidify: dry opens, humid closes (hysteresis) ==\n");
   {
-    auto in = base(); in.airTemp = 30; // <= fanOffTemp(32)
+    auto in = base(); in.airTemp = 30; in.airHumidity = 50; // dry (<60), cool
     auto d = computeAutoDecisions(in);
-    check(d.fanClose,  "airTemp=30 <= 32 -> fanClose");
-    check(!d.fanOpen,  "airTemp=30 -> fanOpen false");
+    check(d.pumpOn && d.pumpHumidifyOn, "humidity=50<60 -> pump on (humidify)");
+    check(!d.pumpCoolAssistOn, "cool air -> no cooling-assist");
+  }
+  {
+    // latch on from humidify, humidity rises into dead-zone (60..75) -> hold on
+    auto in = base(); in.airHumidity = 65; in.pumpHumidifyOn = true;
+    auto d = computeAutoDecisions(in);
+    check(d.pumpOn && d.pumpHumidifyOn, "humidity=65 dead-zone, latch on -> stays on");
+  }
+  {
+    // humidity reaches hmax -> humidify releases
+    auto in = base(); in.airHumidity = 78; in.pumpHumidifyOn = true;
+    auto d = computeAutoDecisions(in);
+    check(!d.pumpHumidifyOn && !d.pumpOn, "humidity=78>=75 -> humidify off, pump off");
   }
 
-  printf("== Fan: hysteresis dead-zone holds state ==\n");
+  printf("== Pump cooling-assist: hot opens pump even when humidity comfortable ==\n");
   {
-    auto in = base(); in.airTemp = 33.5; // between 32 and 35
+    auto in = base(); in.airTemp = 37; in.airHumidity = 65; // hot, humidity comfortable (60..75, no humidify)
     auto d = computeAutoDecisions(in);
-    check(!d.fanOpen,  "airTemp=33.5 -> fanOpen false (hold)");
-    check(!d.fanClose, "airTemp=33.5 -> fanClose false (hold)");
+    check(d.fanOpen, "hot -> fan open");
+    check(d.pumpOn && d.pumpCoolAssistOn && !d.pumpHumidifyOn, "hot & humidity 65 -> pump on (cooling only, not humidify)");
+  }
+  {
+    // hot but already humid (>=hmax) -> cooling skipped, fan still on
+    auto in = base(); in.airTemp = 37; in.airHumidity = 80;
+    auto d = computeAutoDecisions(in);
+    check(d.fanOpen, "hot -> fan open (regardless of humidity)");
+    check(!d.pumpCoolAssistOn, "hot BUT humidity=80>=75 -> no cooling assist (humid gate)");
+    check(!d.pumpOn, "humid+hot -> pump off (humidify not needed either)");
   }
 
-  printf("== Fan: water temp no longer affects fan ==\n");
+  printf("== Pump cooling-assist hysteresis (temp on/off), humidity comfortable ==\n");
   {
-    // struct ไม่มี field น้ำแล้ว — พิสูจน์โดยตั้งอากาศเย็น: ต้องปิดเสมอ ไม่ว่าน้ำจะร้อนแค่ไหน
-    auto in = base(); in.airTemp = 25;
+    // cool latch on, temp drops into dead-zone (32..35) -> hold on · humidity 65 = no humidify
+    auto in = base(); in.airTemp = 33; in.airHumidity = 65; in.pumpCoolAssistOn = true;
     auto d = computeAutoDecisions(in);
-    check(d.fanClose,  "cool air -> fanClose regardless of any water temp");
-    check(!d.fanOpen,  "cool air -> fanOpen false");
+    check(d.pumpOn && d.pumpCoolAssistOn, "cool-latch on, temp=33 dead-zone -> stays on");
+  }
+  {
+    // temp drops to <=fanOffTemp -> cooling releases (humidity 65 so humidify does not hold it on)
+    auto in = base(); in.airTemp = 31; in.airHumidity = 65; in.pumpCoolAssistOn = true;
+    auto d = computeAutoDecisions(in);
+    check(!d.pumpCoolAssistOn && !d.pumpOn, "temp=31<=32 -> cooling off, pump off");
   }
 
-  printf("== Fan: open/close never both true (valid config) ==\n");
+  printf("== No stuck-on: cooling done + mid humidity -> pump releases ==\n");
   {
-    bool sawOverlap = false;
-    for (float t = 20; t <= 45; t += 0.25f) {
-      auto in = base(); in.airTemp = t;
-      auto d = computeAutoDecisions(in);
-      if (d.fanOpen && d.fanClose) sawOverlap = true;
+    // the exact case a stateless OR would get wrong: pump was on for cooling,
+    // temp now cool, humidity comfortable (mid, not >=hmax) -> must turn OFF
+    auto in = base(); in.airTemp = 30; in.airHumidity = 65;
+    in.pumpCoolAssistOn = true; in.pumpHumidifyOn = false;
+    auto d = computeAutoDecisions(in);
+    check(!d.pumpOn, "cool + humidity=65 mid, cool-latch was on -> pump OFF (no stuck-on)");
+  }
+
+  printf("== Pump combined: dry AND hot -> both reasons ==\n");
+  {
+    auto in = base(); in.airTemp = 37; in.airHumidity = 45; // hot + dry
+    auto d = computeAutoDecisions(in);
+    check(d.pumpHumidifyOn && d.pumpCoolAssistOn && d.pumpOn, "hot+dry -> both latches on");
+  }
+
+  printf("== Safety: dead humidity sensor (0) forces pump fully off ==\n");
+  {
+    auto in = base(); in.airTemp = 40; in.airHumidity = 0; // very hot but sensor dead
+    in.pumpHumidifyOn = true; in.pumpCoolAssistOn = true;   // even if latched on
+    auto d = computeAutoDecisions(in);
+    check(!d.pumpHumidifyOn && !d.pumpCoolAssistOn && !d.pumpOn, "humidity=0 -> pump forced off (safety), never on");
+    check(d.fanOpen, "fan still follows temperature (40>=35 -> open)");
+  }
+
+  printf("== Pump never chatters: sweep temp x humidity, latch stable ==\n");
+  {
+    // feed each state back as latch; after settling, on/off must be consistent (no oscillation at a fixed point)
+    bool unstable = false;
+    for (float t = 20; t <= 45; t += 1.0f) {
+      for (float h = 10; h <= 100; h += 5.0f) {
+        AutoControlInputs in = {t, h, 35, 32, 60, 75, false, false};
+        auto a = computeAutoDecisions(in);
+        in.pumpHumidifyOn = a.pumpHumidifyOn; in.pumpCoolAssistOn = a.pumpCoolAssistOn;
+        auto b = computeAutoDecisions(in);   // second pass with settled latch
+        if (b.pumpOn != a.pumpOn) unstable = true;   // fixed point must not flip
+      }
     }
-    check(!sawOverlap, "no airTemp triggers fan open+close simultaneously");
-  }
-
-  printf("== Fan: boundary values ==\n");
-  {
-    auto in = base(); in.airTemp = 35;  // exactly fanOnTemp
-    check(computeAutoDecisions(in).fanOpen, "airTemp==fanOnTemp(35) -> fanOpen (>=)");
-    in.airTemp = 32;                    // exactly fanOffTemp
-    check(computeAutoDecisions(in).fanClose, "airTemp==fanOffTemp(32) -> fanClose (<=)");
-  }
-
-  printf("== Pump: dead sensor (humidity==0) forces close, never open ==\n");
-  {
-    auto in = base(); in.airHumidity = 0;
-    auto d = computeAutoDecisions(in);
-    check(d.pumpClose, "humidity=0 -> pumpClose true (safety)");
-    check(!d.pumpOpen, "humidity=0 -> pumpOpen false (never open on dead sensor)");
-  }
-
-  printf("== Pump: dry air opens ==\n");
-  {
-    auto in = base(); in.airHumidity = 50; // < pumpOnHum(60)
-    auto d = computeAutoDecisions(in);
-    check(d.pumpOpen,  "humidity=50 < 60 -> pumpOpen");
-    check(!d.pumpClose, "humidity=50 -> pumpClose false");
-  }
-
-  printf("== Pump: humid air closes ==\n");
-  {
-    auto in = base(); in.airHumidity = 80; // >= pumpOffHum(75)
-    auto d = computeAutoDecisions(in);
-    check(d.pumpClose, "humidity=80 >= 75 -> pumpClose");
-    check(!d.pumpOpen, "humidity=80 -> pumpOpen false");
-  }
-
-  printf("== Pump: hysteresis dead-zone holds state ==\n");
-  {
-    auto in = base(); in.airHumidity = 65; // between 60 and 75
-    auto d = computeAutoDecisions(in);
-    check(!d.pumpOpen,  "humidity=65 -> pumpOpen false (hold)");
-    check(!d.pumpClose, "humidity=65 -> pumpClose false (hold)");
-  }
-
-  printf("== Pump: open/close never both true ==\n");
-  {
-    bool sawOverlap = false;
-    for (float h = 0; h <= 100; h += 0.25f) {
-      auto in = base(); in.airHumidity = h;
-      auto d = computeAutoDecisions(in);
-      if (d.pumpOpen && d.pumpClose) sawOverlap = true;
-    }
-    check(!sawOverlap, "no humidity value triggers pump open+close simultaneously");
+    check(!unstable, "pump reaches a stable fixed point for every (temp,humidity)");
   }
 
   printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "SOME FAILED", failures, failures == 1 ? "" : "s");
