@@ -612,7 +612,7 @@
         <div class="relay-card" id="relayCard_ch4">
           <div class="relay-top">
             <div class="relay-icon" id="relayIcon_ch4">💧</div>
-            <div class="relay-info"><div class="relay-name">ปั๊มน้ำ</div><div class="relay-ch">CH4 · GPIO25 · ความชื้น</div></div>
+            <div class="relay-info"><div class="relay-name">ปั๊มน้ำ</div><div class="relay-ch">CH4 · GPIO25 · แห้ง/ร้อน</div></div>
             <label class="toggle"><input type="checkbox" id="toggle_ch4" disabled onchange="setRelay('ch4_spare',this.checked)"><span class="slider"></span></label>
             <div class="relay-badge s-off" id="relayBadge_ch4">OFF</div>
           </div>
@@ -758,11 +758,11 @@
         <div class="ch-assign-grid">
           <div class="ch-assign-item">
             <span class="ch-num">CH4</span>
-            <div><div class="ch-desc">💧 ปั๊มน้ำ</div><div class="ch-ctrl">เปิดเมื่อความชื้นต่ำ</div></div>
+            <div><div class="ch-desc">💧 ปั๊มน้ำ</div><div class="ch-ctrl">เปิดเมื่อแห้ง หรือ ร้อน</div></div>
           </div>
           <div class="ch-assign-item">
             <span class="ch-num">CH3</span>
-            <div><div class="ch-desc">💨 พัดลม 220V (ดูดเข้า)</div><div class="ch-ctrl">เปิดเมื่ออุณหภูมิสูง</div></div>
+            <div><div class="ch-desc">💨 พัดลม 220V (ดูดเข้า)</div><div class="ch-ctrl">เปิดเมื่อร้อน หรือ แห้ง</div></div>
           </div>
           <div class="ch-assign-item">
             <span class="ch-num spare">CH1</span>
@@ -774,16 +774,16 @@
           </div>
         </div>
 
-        <!-- Temperature Control (CH3 พัดลม คุมด้วยอุณหภูมิอากาศอย่างเดียว) -->
+        <!-- Temperature Control (อากาศร้อน → สั่งทั้งพัดลม CH3 และปั๊ม CH4) -->
         <div class="setting-group">
-          <div class="setting-group-title">🌡️ ควบคุมอุณหภูมิ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH3 พัดลม)</span></div>
+          <div class="setting-group-title">🌡️ ควบคุมอุณหภูมิ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH3 พัดลม + CH4 ปั๊มน้ำ)</span></div>
           <div class="setting-row">
             <div>
-              <label>🌡️ เปิดพัดลมเมื่อ ≥</label>
+              <label>🌡️ เปิดพัดลม+ปั๊มเมื่อ ≥</label>
               <div class="si-wrap"><input type="number" id="tempOn" value="35" step="0.1" min="20" max="50"><span class="si-unit">°C</span></div>
             </div>
             <div>
-              <label>❄️ ปิดพัดลมเมื่อ ≤</label>
+              <label>❄️ ปิดพัดลม+ปั๊มเมื่อ ≤</label>
               <div class="si-wrap"><input type="number" id="tempOff" value="32" step="0.1" min="15" max="45"><span class="si-unit">°C</span></div>
             </div>
           </div>
@@ -797,15 +797,15 @@
               <div class="si-wrap"><input type="number" id="waterTempAlert" value="35" step="0.1" min="20" max="60"><span class="si-unit">°C</span></div>
             </div>
           </div>
-          <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">อุณหภูมิน้ำใช้แจ้งเตือนอย่างเดียว — ไม่ควบคุมพัดลม (พัดลมดูอากาศเท่านั้น)</div>
+          <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">อากาศร้อน = พัดลม+ปั๊มทำงานคู่กัน (พ่นน้ำ+ลม = evaporative ลดอุณหภูมิ) — ยกเว้นอากาศชื้นเกินเกณฑ์ปิดปั๊ม จะเหลือพัดลมอย่างเดียว<br>อุณหภูมิน้ำใช้แจ้งเตือนอย่างเดียว — ไม่ควบคุมรีเลย์</div>
         </div>
 
         <!-- Humidity Control -->
         <div class="setting-group">
-          <div class="setting-group-title">💧 ควบคุมความชื้นอากาศ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH4 ปั๊มน้ำ)</span></div>
+          <div class="setting-group-title">💧 ควบคุมความชื้นอากาศ <span style="font-size:.68rem;font-weight:500;color:var(--muted)">(CH4 ปั๊มน้ำ + CH3 พัดลม)</span></div>
           <div class="setting-row">
             <div>
-              <label>💧 เปิดปั๊มน้ำเมื่อ ≤</label>
+              <label>💧 เปิดปั๊ม+พัดลมเมื่อ ≤</label>
               <div class="si-wrap"><input type="number" id="humidityMin" value="60" step="0.1" min="10" max="95"><span class="si-unit">%</span></div>
             </div>
             <div class="alert-field">
@@ -815,11 +815,11 @@
           </div>
           <div style="margin-top:10px" class="setting-row">
             <div>
-              <label>💧 ปิดปั๊มน้ำเมื่อ ≥</label>
+              <label>💧 ปิดปั๊ม+พัดลมเมื่อ ≥</label>
               <div class="si-wrap"><input type="number" id="humidityMax" value="75" step="0.1" min="15" max="100"><span class="si-unit">%</span></div>
             </div>
           </div>
-          <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">ปั๊มยังเปิดช่วยพัดลมลดอุณหภูมิด้วย เมื่ออากาศร้อน ≥ เกณฑ์เปิดพัดลม (evaporative) — ยกเว้นอากาศชื้นเกินเกณฑ์ปิดปั๊ม</div>
+          <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">อากาศแห้ง = ปั๊ม+พัดลมทำงานคู่กัน (พัดลมดูดเข้า จึงดูดอากาศชื้นจากนอกเข้ามา + กระจายละอองน้ำจากปั๊ม)<br>เกณฑ์ปิดปั๊มนี้ยังเป็นเพดานกันปั๊มพ่นน้ำตอนอากาศอิ่มตัวแล้วด้วย</div>
         </div>
 
         <button class="save-btn" onclick="saveThresholds()">💾 บันทึกการตั้งค่า</button>
@@ -837,7 +837,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v1.7.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v1.8.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1073,15 +1073,15 @@ function startListeners() {
       if      (t > T.temp_alert) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus',`🔴 ร้อนวิกฤต (เกิน ${T.temp_alert}°C) — พัดลม+ปั๊มช่วยลดอุณหภูมิ`); }
       else if (t >= T.temp_on)   { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus',`🟡 ร้อน ≥${T.temp_on}°C — พัดลม+ปั๊มทำงาน`); }
       else if (t >  T.temp_off)  { setBadge('airTempBadge','badge-ok','ปกติ');     setText('airTempStatus','🟢 อุณหภูมิปกติ'); }
-      else                       { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus',`🔵 อากาศเย็น ≤${T.temp_off}°C — พัดลมพัก`); }
+      else                       { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus',`🔵 อากาศเย็น ≤${T.temp_off}°C — ไม่ต้องระบายความร้อน`); }
     }
 
     const rh = d.air_humidity;
     if (rh != null) {
       document.getElementById('airHumGauge').innerHTML = buildGauge(rh, 0, 100, '#2563eb', '%');
       if      (rh < T.humidity_alert) { setBadge('airHumBadge','badge-danger','แห้งมาก'); setText('airHumStatus',`🔴 ความชื้นต่ำมาก (ต่ำกว่า ${T.humidity_alert}%)`); }
-      else if (rh < T.humidity_min)   { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus',`🟡 แห้ง <${T.humidity_min}% — ปั๊มทำงาน`); }
-      else if (rh >= T.humidity_max)  { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus',`💧 ความชื้นสูง ≥${T.humidity_max}% — ปั๊มพัก`); }
+      else if (rh < T.humidity_min)   { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus',`🟡 แห้ง <${T.humidity_min}% — ปั๊ม+พัดลมทำงาน`); }
+      else if (rh >= T.humidity_max)  { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus',`💧 ความชื้นสูง ≥${T.humidity_max}% — ปั๊มพัก (พ่นน้ำไม่ช่วยแล้ว)`); }
       else                            { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
     }
 
