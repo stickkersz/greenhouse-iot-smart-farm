@@ -1070,8 +1070,11 @@ function startListeners() {
     const t = d.air_temp;
     if (t != null) {
       document.getElementById('airTempGauge').innerHTML = buildGauge(t, 0, 50, '#16a34a', '°C');
-      if      (t > T.temp_alert) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus',`🔴 ร้อนวิกฤต (เกิน ${T.temp_alert}°C) — พัดลม+ปั๊มช่วยลดอุณหภูมิ`); }
-      else if (t >= T.temp_on)   { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus',`🟡 ร้อน ≥${T.temp_on}°C — พัดลม+ปั๊มทำงาน`); }
+      // ตอนร้อน ปั๊มจะช่วยก็ต่อเมื่ออากาศยังไม่อิ่มตัว (humid gate) — ไม่งั้นเหลือพัดลมอย่างเดียว
+      const gated = d.air_humidity != null && d.air_humidity > 0 && d.air_humidity >= T.humidity_max;
+      const hotActors = gated ? 'พัดลม (อากาศชื้นเกิน ปั๊มพัก)' : 'พัดลม+ปั๊ม';
+      if      (t > T.temp_alert) { setBadge('airTempBadge','badge-danger','วิกฤต'); setText('airTempStatus',`🔴 ร้อนวิกฤต (เกิน ${T.temp_alert}°C) — ${hotActors}ช่วยลดอุณหภูมิ`); }
+      else if (t >= T.temp_on)   { setBadge('airTempBadge','badge-warn','ร้อน');   setText('airTempStatus',`🟡 ร้อน ≥${T.temp_on}°C — ${hotActors}ทำงาน`); }
       else if (t >  T.temp_off)  { setBadge('airTempBadge','badge-ok','ปกติ');     setText('airTempStatus','🟢 อุณหภูมิปกติ'); }
       else                       { setBadge('airTempBadge','badge-ok','เย็น');     setText('airTempStatus',`🔵 อากาศเย็น ≤${T.temp_off}°C — ไม่ต้องระบายความร้อน`); }
     }

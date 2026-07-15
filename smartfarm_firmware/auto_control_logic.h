@@ -4,20 +4,27 @@
 //
 // โมเดล 2026-07-15 (v1.8.0 — พัดลม+ปั๊มทำงานคู่กันทั้งคุมอุณหภูมิและคุมความชื้น):
 //
-//   2 latch (hysteresis) อ่านจากเซนเซอร์อากาศ ใช้ร่วมกันทั้ง 2 ช่อง:
-//       ร้อน (hotOn) ← อุณหภูมิ  | ≥ fanOnTemp เปิด · ≤ fanOffTemp ปิด · ระหว่างกลางคงสถานะ
-//       แห้ง (dryOn) ← ความชื้น  | < pumpOnHum เปิด · ≥ pumpOffHum ปิด · ระหว่างกลางคงสถานะ
+//   3 latch (hysteresis) อ่านจากเซนเซอร์อากาศ:
+//       ร้อน     (hotOn)      ← อุณหภูมิ | ≥ fanOnTemp เปิด · ≤ fanOffTemp ปิด · ระหว่างกลางคงสถานะ
+//       แห้ง     (dryOn)      ← ความชื้น | < pumpOnHum เปิด · ≥ pumpOffHum ปิด · ระหว่างกลางคงสถานะ
+//       ปั๊มไล่ร้อน (pumpHeatOn) ← เหมือน latch ร้อน แต่ถูก humid gate ล้างได้ (ดูล่าง)
 //
 //   พัดลม (CH3, ดูดเข้า) = ร้อน OR แห้ง
 //       ร้อน → ระบายความร้อน · แห้ง → ดูดอากาศนอกเข้ามา + กระจายละอองน้ำจากปั๊ม
 //       ไม่มี humid gate — พัดลมต้องระบายความร้อนได้เสมอแม้อากาศชื้น (พัดลมไม่ได้พ่นน้ำ ไม่มีอะไรเสีย)
 //
-//   ปั๊มน้ำ (CH4) = (ร้อน AND อากาศยังไม่อิ่มตัว) OR แห้ง
-//       humid gate: ร้อนแต่ชื้นแล้ว (≥ pumpOffHum) → ปั๊มไม่ช่วย เพราะพ่นน้ำในอากาศอิ่มตัว
+//   ปั๊มน้ำ (CH4) = ปั๊มไล่ร้อน OR แห้ง
+//       humid gate: ร้อนแต่ชื้นแล้ว (≥ pumpOffHum) → ล้าง latch ปั๊มไล่ร้อน เพราะพ่นน้ำในอากาศอิ่มตัว
 //       = ไม่เย็นลง แค่ท่วม (พัดลมยังเปิดอยู่ — นี่คือเคสเดียวที่ 2 ช่องแยกกัน)
 //       เซนเซอร์ความชื้นตาย (humidity == 0) → ปั๊มปิดเสมอ (safety) · พัดลมยังตามอุณหภูมิปกติ
 //
-// ทำไมต้อง latch: 2 ช่องนี้ต่างมี 2 hysteresis loop ต่อ 1 รีเลย์ — stateless OR ของ 2 loop
+// ⚠️ ทำไม humid gate ต้องอยู่ "ข้างใน" latch ไม่ใช่ AND ที่ output (บั๊ก v1.8.0 รอบแรก แก้ 2026-07-15):
+// gate แบบ stateless (pumpOn = ร้อน AND ไม่อิ่มตัว) ไม่มีความจำ — ความชื้นแกว่งข้าม pumpOffHum
+// ทีไรปั๊มสลับทุกที (วัดได้ 5 สวิตช์ / 6 รอบ ที่ temp ใน dead-zone, RH แกว่งรอบ 75)
+// พอ gate ล้าง latch แทน การจะติดใหม่ต้องรอ airTemp ข้าม fanOnTemp อีกครั้ง ความชื้นตกกลับมาเฉยๆ
+// ไม่ปลุกปั๊ม → กระพริบไม่ได้ · การสวิตช์ปั๊มคือต้นเหตุ sensor latch-up ของโปรเจกต์นี้ ห้ามให้รัว
+//
+// ทำไมต้อง latch ทั่วไป: ทั้ง 2 ช่องมี 2 hysteresis loop ต่อ 1 รีเลย์ — stateless OR ของ 2 loop
 // จะค้างเปิด (loop นึงเลิกต้องการตอนอีก loop อยู่ dead-zone) หรือกระพริบ จึงส่ง latch ปัจจุบัน
 // เข้ามาแล้วคืนค่าใหม่ให้ firmware เก็บข้ามรอบ — อย่าเปลี่ยนกลับเป็น stateless open/close
 // เงื่อนไข config ที่ถูกต้อง (ผู้เรียกตรวจก่อน): fanOnTemp > fanOffTemp, pumpOffHum > pumpOnHum
@@ -31,14 +38,15 @@ struct AutoControlInputs {
   float fanOffTemp;   // เย็น ≤ ค่านี้ → latch ร้อนปิด
   float pumpOnHum;    // แห้ง < ค่านี้ → latch แห้งเปิด
   float pumpOffHum;   // ชื้น ≥ ค่านี้ → latch แห้งปิด · และเป็นเพดาน humid gate ของปั๊ม
-  bool  hotOn;        // latch ปัจจุบัน: อากาศร้อนอยู่ไหม
-  bool  dryOn;        // latch ปัจจุบัน: อากาศแห้งอยู่ไหม
+  bool  hotOn;        // latch ปัจจุบัน: อากาศร้อนอยู่ไหม (คุมพัดลม)
+  bool  dryOn;        // latch ปัจจุบัน: อากาศแห้งอยู่ไหม (คุมทั้ง 2 ช่อง)
+  bool  pumpHeatOn;   // latch ปัจจุบัน: ปั๊มกำลังไล่ร้อนอยู่ไหม (โดน humid gate ล้างได้)
 };
 
 struct AutoControlDecisions {
-  bool hotOn, dryOn;   // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
+  bool hotOn, dryOn, pumpHeatOn;  // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
   bool fanOn;          // สถานะพัดลมที่ต้องการ = ร้อน OR แห้ง
-  bool pumpOn;         // สถานะปั๊มที่ต้องการ = (ร้อน AND ไม่อิ่มตัว) OR แห้ง
+  bool pumpOn;         // สถานะปั๊มที่ต้องการ = ปั๊มไล่ร้อน OR แห้ง
 };
 
 inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
@@ -59,14 +67,25 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   else if (in.airHumidity >= in.pumpOffHum) dry = false;
   // else: คงสถานะ
 
-  d.hotOn = hot;
-  d.dryOn = dry;
+  // latch ปั๊มไล่ร้อน — เกณฑ์อุณหภูมิเดียวกับ latch ร้อน แต่ humid gate/เซนเซอร์ตาย "ล้าง" ได้
+  // ล้างแล้วต้องรอ airTemp ข้าม fanOnTemp ใหม่ถึงติดอีก — นี่คือสิ่งที่กันปั๊มกระพริบที่เส้น pumpOffHum
+  bool pumpHeat = in.pumpHeatOn;
+  if      (dead || saturated)           pumpHeat = false;
+  else if (in.airTemp >= in.fanOnTemp)  pumpHeat = true;
+  else if (in.airTemp <= in.fanOffTemp) pumpHeat = false;
+  // else: คงสถานะ
+
+  d.hotOn      = hot;
+  d.dryOn      = dry;
+  d.pumpHeatOn = pumpHeat;
 
   // พัดลม — ร้อนหรือแห้ง เปิดได้ทั้งคู่ (เซนเซอร์ความชื้นตายก็ยังตามอุณหภูมิได้)
   d.fanOn = hot || dry;
 
-  // ปั๊ม — ช่วยระบายความร้อนเฉพาะตอนอากาศยังไม่อิ่มตัว · เพิ่มความชื้นตอนแห้ง · ตาย = ปิดเสมอ
-  d.pumpOn = !dead && ((hot && !saturated) || dry);
+  // ปั๊ม — ไล่ร้อน (ผ่าน gate แล้ว) หรือ เพิ่มความชื้นตอนแห้ง · ตาย = ปิดเสมอ
+  // `hot &&` กัน latch 2 ตัวหลุด sync (ในทางปฏิบัติ pumpHeat ⊆ hot เพราะใช้เกณฑ์อุณหภูมิเดียวกัน)
+  // — ค้ำ invariant "ปั๊มเปิด → พัดลมเปิด" ไว้ ไม่ให้ปั๊มพ่นน้ำตอนพัดลมดับ
+  d.pumpOn = !dead && ((hot && pumpHeat) || dry);
   return d;
 }
 

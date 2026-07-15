@@ -7,10 +7,12 @@
     - พัดลม (CH3) เพิ่มหน้าที่ 2: เปิดตอนอากาศแห้ง (<humidity_min) ด้วย ไม่ใช่แค่ตอนร้อน
       พัดลมเป็นแบบ "ดูดเข้า" จึงดูดอากาศนอก (ความชื้นสูง) เข้ามา + กระจายละอองน้ำจากปั๊ม — ช่วยเพิ่มความชื้น ไม่ได้ไล่ทิ้ง
     - เดิม: ควบคุมอุณหภูมิ→พัดลมอย่างเดียว, ควบคุมความชื้น→ปั๊มอย่างเดียว · ใหม่: ทั้ง 2 เกณฑ์สั่งทั้ง 2 ช่องพร้อมกัน
-    - รื้อ latch จาก "2 หน้าที่ของปั๊ม" เป็น "2 สภาพอากาศ" (ร้อน/แห้ง) ใช้ร่วมกันทั้ง 2 ช่อง — พัดลมเป็น latch แล้ว
-      (พัดลมมี 2 hysteresis loop ต่อ 1 รีเลย์เหมือนปั๊ม จึงใช้ stateless open/close ต่อไม่ได้)
+    - รื้อ latch เป็น 3 ตัว: ร้อน (คุมพัดลม), แห้ง (คุมทั้ง 2 ช่อง), ปั๊มไล่ร้อน (เกณฑ์เดียวกับร้อน แต่ humid gate ล้างได้)
+      พัดลมเป็น latch แล้ว — มี 2 hysteresis loop ต่อ 1 รีเลย์เหมือนปั๊ม จึงใช้ stateless open/close ต่อไม่ได้
     - humid gate ยังคุมเฉพาะปั๊ม: ร้อน+ชื้นเกิน (≥humidity_max) → พัดลมเปิด ปั๊มปิด (เคสเดียวที่ 2 ช่องแยกกัน)
       เพราะพัดลมยังระบายความร้อนได้ฟรี แต่ปั๊มพ่นน้ำในอากาศอิ่มตัวไม่ทำให้เย็น แค่ท่วม
+    - ⚠️ gate ต้องอยู่ "ข้างใน" latch (ล้าง latch) ไม่ใช่ AND ที่ output — ไม่งั้น RH แกว่งรอบ humidity_max
+      ทำปั๊มกระพริบ (วัดได้ 5 สวิตช์/6 รอบ) ซึ่งเป็นต้นเหตุ sensor latch-up ของโปรเจกต์นี้ · มีเทสต์ crossing กันไว้แล้ว
     - ไม่เพิ่ม threshold ใหม่ · เซนเซอร์ความชื้นตาย (0) → ปั๊มปิดเสมอ, พัดลมยังตามอุณหภูมิได้ (เหมือนเดิม)
   Changelog v1.7.0 (2026-07-14) — evaporative cooling: ปั๊มช่วยพัดลมลดอุณหภูมิ:
     - ปั๊ม (CH4) เพิ่มหน้าที่ 2: เมื่ออากาศร้อน (≥temp_on) เปิดปั๊มช่วยพัดลมระบายความร้อน (พ่นน้ำ+พัดลม = evaporative)
@@ -186,9 +188,10 @@ unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเป
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
 int  airSensorFailCount = 0;                   // นับ sensor อากาศอ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
-// 2 latch สภาพอากาศ (hysteresis คนละชุด) ใช้ร่วมกันทั้งพัดลมและปั๊ม — autoControl() คำนวณใหม่ทุกรอบแล้วเก็บกลับที่นี่
-bool airHotOn = false;                         // latch: อากาศร้อนอยู่ (≥temp_on จนกว่าจะ ≤temp_off)
-bool airDryOn = false;                         // latch: อากาศแห้งอยู่ (<humidity_min จนกว่าจะ ≥humidity_max)
+// 3 latch (hysteresis คนละชุด) — autoControl() คำนวณใหม่ทุกรอบแล้วเก็บกลับที่นี่
+bool airHotOn   = false;                       // latch: อากาศร้อนอยู่ (≥temp_on จนกว่าจะ ≤temp_off) — คุมพัดลม
+bool airDryOn   = false;                       // latch: อากาศแห้งอยู่ (<humidity_min จนกว่าจะ ≥humidity_max) — คุมทั้ง 2 ช่อง
+bool pumpHeatOn = false;                       // latch: ปั๊มไล่ร้อนอยู่ — เกณฑ์เดียวกับ airHotOn แต่ถูกล้างเมื่ออากาศอิ่มตัว (กันปั๊มกระพริบที่เส้น humidity_max)
 
 // ── Forward Declarations ──────────────────────────────
 void readSensors();
@@ -515,13 +518,13 @@ float avgCtrlAH() { float s=0; for (int i=0;i<ctrlBufATCount;i++) s+=ctrlBufAH[i
 
 // ─────────────────────────────────────────────────────
 // Auto Control — โมเดล v1.8.0 2026-07-15: พัดลม+ปั๊มทำงานคู่กันทั้ง 2 เกณฑ์
-//   2 latch สภาพอากาศ: ร้อน (≥temp_on..≤temp_off) · แห้ง (<humidity_min..≥humidity_max)
-//   พัดลม (CH3, ดูดเข้า) = ร้อน OR แห้ง            | ร้อน=ระบายความร้อน · แห้ง=ดูดอากาศชื้นนอกเข้า+กระจายละอองปั๊ม
-//   ปั๊ม  (CH4)          = (ร้อน AND ไม่อิ่มตัว) OR แห้ง | ร้อน+ชื้นเกิน(≥humidity_max) → ปั๊มปิด พัดลมยังเปิด
+//   3 latch: ร้อน (≥temp_on..≤temp_off) · แห้ง (<humidity_min..≥humidity_max) · ปั๊มไล่ร้อน (ร้อน + โดน gate ล้างได้)
+//   พัดลม (CH3, ดูดเข้า) = ร้อน OR แห้ง        | ร้อน=ระบายความร้อน · แห้ง=ดูดอากาศชื้นนอกเข้า+กระจายละอองปั๊ม
+//   ปั๊ม  (CH4)          = ปั๊มไล่ร้อน OR แห้ง   | ร้อน+ชื้นเกิน(≥humidity_max) → ปั๊มปิด พัดลมยังเปิด
 //                          (พ่นน้ำในอากาศอิ่มตัว = ไม่เย็น แค่ท่วม · แต่พัดลมระบายความร้อนได้ฟรี)
 //   น้ำ = แจ้งเตือนอย่างเดียว (ไม่คุมรีเลย์)
-// 2 latch เก็บสถานะข้ามรอบ (ทั้ง 2 ช่องมี 2 hysteresis loop ต่อ 1 รีเลย์ stateless ไม่ได้)
-// logic บริสุทธิ์อยู่ auto_control_logic.h
+// latch เก็บสถานะข้ามรอบ (ทั้ง 2 ช่องมี 2 hysteresis loop ต่อ 1 รีเลย์ stateless ไม่ได้)
+// logic บริสุทธิ์ + เหตุผลว่าทำไม gate ต้องอยู่ในlatch อยู่ auto_control_logic.h
 void autoControl() {
   float ton  = thresh_temp_on,  toff = thresh_temp_off;
   float hmin = thresh_hum_min,  hmax = thresh_hum_max;
@@ -537,36 +540,42 @@ void autoControl() {
   float avgAT = avgCtrlAT();
   float avgAH = avgCtrlAH();
   AutoControlDecisions dec = computeAutoDecisions(
-    {avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn});
-  airHotOn = dec.hotOn;    // เก็บ latch กลับไปใช้รอบหน้า
-  airDryOn = dec.dryOn;
+    {avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn});
+  airHotOn   = dec.hotOn;    // เก็บ latch กลับไปใช้รอบหน้า
+  airDryOn   = dec.dryOn;
+  pumpHeatOn = dec.pumpHeatOn;
 
-  // เหตุผลที่สั่ง (ใช้ log ทั้ง 2 ช่อง) — ร้อน/แห้ง/ทั้งคู่
-  const char* why = airHotOn ? (airDryOn ? "ร้อน+แห้ง" : "ร้อน") : "แห้ง";
+  // เหตุผลที่พัดลมเปิด — เรียกได้เฉพาะตอน dec.fanOn (การันตีว่า ร้อน หรือ แห้ง อย่างน้อย 1)
+  const char* fanWhy = airHotOn ? (airDryOn ? "ร้อน+แห้ง" : "ร้อน") : "แห้ง";
+  // เหตุผลที่ปั๊มเปิด — ปั๊มไล่ร้อนผ่าน gate แล้ว หรือ แห้ง
+  const char* pumpWhyOn = pumpHeatOn ? (airDryOn ? "ร้อน+แห้ง" : "ร้อน") : "แห้ง";
 
   // precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
   // CH3 พัดลม — เปิดตาม dec.fanOn (ร้อน หรือ แห้ง)
   if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
     if (dec.fanOn && !ch3_fanIn) {
       ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);
-      Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", why, avgAT, avgAH);
+      Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanWhy, avgAT, avgAH);
     }
     if (!dec.fanOn && ch3_fanIn) {
       ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false);
       Serial.printf("[AUTO] พัดลมปิด — อากาศ %.1f°C ความชื้น %.1f%%\n", avgAT, avgAH);
     }
   }
-  // CH4 ปั๊มน้ำ — เปิดตาม dec.pumpOn (ร้อนแบบไม่อิ่มตัว หรือ แห้ง) · เปิดได้เฉพาะพ้น safety lock (cooldown)
+  // CH4 ปั๊มน้ำ — เปิดตาม dec.pumpOn (ปั๊มไล่ร้อน หรือ แห้ง) · เปิดได้เฉพาะพ้น safety lock (cooldown)
   if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
     if (dec.pumpOn && !ch4_spare && millis() >= pumpLockUntil) {
       ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis();
-      Serial.printf("[AUTO] ปั๊มเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", why, avgAT, avgAH);
+      Serial.printf("[AUTO] ปั๊มเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOn, avgAT, avgAH);
     }
     if (!dec.pumpOn && ch4_spare) {
       ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis();
-      // ร้อนอยู่แต่ปั๊มปิด = โดน humid gate (พัดลมยังเปิด) — บอกให้ชัดว่าไม่ใช่บั๊ก
-      const char* pumpWhy = (airHotOn && !airDryOn) ? "อากาศชื้นเกิน พ่นน้ำไม่ช่วย" : "ไม่ร้อนไม่แห้ง";
-      Serial.printf("[AUTO] ปั๊มปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhy, avgAT, avgAH);
+      // แยกเหตุผลให้ตรง — เซนเซอร์ตายต้องไม่ถูกรายงานว่า "อากาศชื้นเกิน" (RH=0 คือแห้งสุด ไม่ใช่ชื้น)
+      const char* pumpWhyOff;
+      if      (avgAH == 0)            pumpWhyOff = "เซนเซอร์ความชื้นตาย";
+      else if (airHotOn && !airDryOn) pumpWhyOff = "อากาศชื้นเกิน พ่นน้ำไม่ช่วย (พัดลมยังเปิด)";
+      else                            pumpWhyOff = "ไม่ร้อนไม่แห้ง";
+      Serial.printf("[AUTO] ปั๊มปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOff, avgAT, avgAH);
     }
   }
 }
