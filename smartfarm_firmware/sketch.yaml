@@ -1,5 +1,10 @@
 # Build profile — ล็อก fqbn + partition + เวอร์ชัน core/library ให้ build ซ้ำได้เหมือนเดิมทุกเครื่อง
 #
+# ⚠️ clone ใหม่ต้องสร้าง config.h ก่อน ไม่งั้น build ไม่ผ่าน (missing header):
+#       cp smartfarm_firmware/config.h.example smartfarm_firmware/config.h
+#    แล้วใส่ WiFi SSID/รหัส + Firebase host/api key ของจริง
+#    (config.h อยู่ใน .gitignore เพราะมีความลับ — repo เก็บแค่ config.h.example)
+#
 # รัน:  arduino-cli compile                 (อยู่ในโฟลเดอร์นี้ — ใช้ default_profile อัตโนมัติ)
 #       arduino-cli compile smartfarm_firmware   (จาก root ของโปรเจกต์)
 #       arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware

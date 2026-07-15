@@ -2,7 +2,16 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.1.0
+  Version: 2.1.1
+  Changelog v2.1.1 (2026-07-15) — SSL guard ครอบไม่ครบ + เก็บ log spam ที่เหลือ:
+    - lastPushTime ตั้งเฉพาะหลัง pushToFirebase() ไม่ตั้งตอน pushStatus() → กด Manual แล้ว pushStatus()
+      ยิง SSL 13 ครั้ง แต่ guard "เว้น 2 วิก่อน poll" ไม่รู้ตัว → control poll รอบถัดไป (1.5 วิ) ชน SSL
+      = เคสที่ guard ตั้งใจกันพอดีแต่ครอบไม่ถึง · ย้ายไปตั้งใน pushStatus() จุดเดียว (ทุก caller ผ่านมันหมด)
+      มีมาตั้งแต่ v1.8.0 · ไม่ใช่สาเหตุที่ Serial Monitor ของ Arduino IDE ค้าง (อันนั้นเป็นฝั่ง IDE)
+    - latch log ที่เหลืออีก 3 ตัว (แนวเดียวกับ v2.0.0): "[DS18B20] ค่าน้ำผิดปกติ" (สายไม่ต่อ = ขึ้นทุก
+      30 วิ ตลอดกาล), "[Firebase] ยังไม่พร้อม" (เน็ตดับ), "[SCHED] นาฬิกายังไม่ sync" (NTP ไม่ติด)
+      ทั้ง 3 พิมพ์ครั้งเดียวตอนเข้าสถานะ + พิมพ์อีกครั้งตอนกลับมาปกติ
+    - sketch.yaml: บอกวิธีสร้าง config.h — clone ใหม่ build ไม่ผ่านเพราะไฟล์นี้อยู่ใน .gitignore
   Changelog v2.1.0 (2026-07-15) — ปิดช่องโหว่ตอน WiFi หลุด:
     - buzzer/alert เคยอยู่ในกรอบ `if (Firebase.ready())` = เน็ตดับแล้วอากาศร้อนวิกฤต คนหน้างานไม่ได้ยินอะไรเลย
       ทั้งที่ buzzer เป็นอุปกรณ์ local ไม่ต้องใช้เน็ต · ย้าย checkAlerts() ออกนอก guard
@@ -240,6 +249,11 @@ bool shtMissingLogged  = false;                // latch: พิมพ์ "ไม
 bool airNotReadyLogged = false;                // latch: พิมพ์ "sensor ยังไม่พร้อม" ไปแล้ว
 bool airStaleLatched   = false;                // latch: เข้าสถานะเซนเซอร์เสียแล้ว — ใช้จับ "ขอบ" ตอนเข้า/ออก
 unsigned long wifiOfflineSince = 0;            // millis() ตอน WiFi หลุด (0 = ออนไลน์อยู่) — ใช้นับครบ 30 นาทีก่อน restart
+unsigned long lastPushTime = 0;                // millis() ที่ push ขึ้น Firebase ครั้งล่าสุด — loop() เว้น 2 วิก่อน poll กัน SSL ชน
+                                               // ตั้งใน pushStatus() (จุดเดียว) เพราะทั้ง pushToFirebase() และ manual-change path เรียกผ่านมันหมด
+bool fbNotReadyLogged = false;                 // latch: พิมพ์ "Firebase not ready" ไปแล้ว (กัน log ท่วมตอนเน็ตดับ)
+bool waterBadLogged   = false;                 // latch: พิมพ์ "ค่าน้ำผิดปกติ" ไปแล้ว (สายไม่ต่อ = จะขึ้นทุก 30 วิ ตลอดกาล)
+bool schedNoTimeLogged = false;                // latch: พิมพ์ "นาฬิกายังไม่ sync" ไปแล้ว
 // 3 latch (hysteresis คนละชุด) — autoControl() คำนวณใหม่ทุกรอบแล้วเก็บกลับที่นี่
 bool airHotOn   = false;                       // latch: อากาศร้อนอยู่ (≥temp_on จนกว่าจะ ≤temp_off) — คุมพัดลม
 bool airDryOn   = false;                       // latch: อากาศแห้งอยู่ (<humidity_min จนกว่าจะ ≥humidity_max) — คุมทั้ง 2 ช่อง
@@ -269,7 +283,7 @@ float avgCtrlAH();
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.1.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.1.1 ===");
 
   // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -307,7 +321,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.1.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.1.1");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -418,7 +432,6 @@ void loop() {
   }
 
   // ทุก 30 วินาที: อ่าน sensor + auto control + push Firebase
-  static unsigned long lastPushTime = 0;
   if (now - lastSensorTime >= SENSOR_INTERVAL) {
     lastSensorTime = now;
     readSensors();
@@ -427,10 +440,11 @@ void loop() {
     // เดิมอยู่ในกรอบ Firebase.ready() = เน็ตดับแล้วอากาศร้อนวิกฤต คนหน้างานไม่ได้ยินอะไรเลย
     checkAlerts();
     if (Firebase.ready()) {
-      pushToFirebase();
-      lastPushTime = millis();
-    } else {
-      Serial.println("[Firebase] Not ready — skip push");
+      if (fbNotReadyLogged) { fbNotReadyLogged = false; Serial.println("[Firebase] กลับมา push ได้แล้ว"); }
+      pushToFirebase();   // ตั้ง lastPushTime ให้เองผ่าน pushStatus()
+    } else if (!fbNotReadyLogged) {
+      fbNotReadyLogged = true;
+      Serial.println("[Firebase] ยังไม่พร้อม — ข้าม push (auto control ยังทำงานต่อ)");
     }
   }
 
@@ -601,9 +615,14 @@ void readSensors() {
   if (wt >= DS_WATER_MIN && wt <= DS_WATER_MAX) {
     waterTemp = wt;          // เก็บเฉพาะค่าที่ใช้ได้ (ถ้าอ่านพลาด คงค่าเดิมไว้ ไม่เอาค่าขยะไปแสดง/log/alert)
     waterSensorOk = true;    // น้ำใช้แค่ แสดง/log/alert — ไม่คุมรีเลย์แล้ว จึงไม่มี control buffer
+    if (waterBadLogged) { waterBadLogged = false; Serial.printf("[DS18B20] กลับมาอ่านได้แล้ว (%.1f°C)\n", wt); }
   } else {
     waterSensorOk = false;
-    Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด)\n", wt);
+    // latch — ถ้ายังไม่ต่อสาย DS18B20 บรรทัดนี้จะขึ้นทุก 30 วิ ตลอดกาล กลบ log อื่นหมด
+    if (!waterBadLogged) {
+      waterBadLogged = true;
+      Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด) · จะไม่แจ้งซ้ำจนกว่าจะกลับมาอ่านได้\n", wt);
+    }
   }
 
   // สะสมข้อมูลอากาศ สำหรับ hourly log — ข้ามถ้า sensor อ่านไม่ได้ หรือรอบนี้ข้ามไปเพราะ pump quiet window
@@ -781,14 +800,19 @@ void pumpSafetyCheck() {
 
 // ─────────────────────────────────────────────────────
 // push เฉพาะสถานะ relay + health — เบา เรียกแยกเพื่อยืนยันผลให้ dashboard ทันที
+// ⚠️ ตั้ง lastPushTime ที่นี่จุดเดียว — ทั้ง pushToFirebase() และ manual-change path (loop) เรียกผ่านฟังก์ชันนี้หมด
+// เดิม lastPushTime ตั้งเฉพาะหลัง pushToFirebase() ทำให้ตอนกด Manual → pushStatus() ยิง SSL 13 ครั้ง
+// แต่ guard "เว้น 2 วิก่อน poll" ไม่รู้ตัว → control poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL ที่เพิ่งเขียนเสร็จ
+// = เคสที่ guard ตั้งใจกันพอดี แต่ครอบไม่ถึง
 void pushStatus() {
+  lastPushTime = millis();
   const String base = "/smartfarm/";
   Firebase.setBool  (fbData, base + "status/online",      true);
   Firebase.setBool  (fbData, base + "status/ch1_pump",    ch1_pump);
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.1.0");
+  Firebase.setString(fbData, base + "status/firmware",    "2.1.1");
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
   // แยกจาก sensor_ok: พลาด 1 ครั้ง = sensor_ok false แต่ auto ยังทำงานบนค่าล่าสุดอยู่
@@ -969,7 +993,12 @@ void syncNTP() {
 void checkSchedule() {
   struct tm t;
   if (!getLocalTime(&t)) return;
-  if (!timeValid()) { Serial.println("[SCHED] ข้าม — นาฬิกายังไม่ sync"); return; }
+  if (!timeValid()) {
+    // latch — NTP ไม่ติด = ขึ้นทุก 60 วิ ตลอดกาล
+    if (!schedNoTimeLogged) { schedNoTimeLogged = true; Serial.println("[SCHED] ข้าม — นาฬิกายังไม่ sync (schedule จะไม่ทำงานจนกว่า NTP จะติด)"); }
+    return;
+  }
+  if (schedNoTimeLogged) { schedNoTimeLogged = false; Serial.println("[SCHED] นาฬิกา sync แล้ว — schedule กลับมาทำงาน"); }
   char nowBuf[6]; strftime(nowBuf, sizeof(nowBuf), "%H:%M", &t);
   String now = String(nowBuf);
 
