@@ -16,7 +16,12 @@
 //   ปั๊มน้ำ (CH4) = ปั๊มไล่ร้อน OR แห้ง
 //       humid gate: ร้อนแต่ชื้นแล้ว (≥ pumpOffHum) → ล้าง latch ปั๊มไล่ร้อน เพราะพ่นน้ำในอากาศอิ่มตัว
 //       = ไม่เย็นลง แค่ท่วม (พัดลมยังเปิดอยู่ — นี่คือเคสเดียวที่ 2 ช่องแยกกัน)
-//       เซนเซอร์ความชื้นตาย (humidity == 0) → ปั๊มปิดเสมอ (safety) · พัดลมยังตามอุณหภูมิปกติ
+//
+//   เซนเซอร์เชื่อไม่ได้ (sensorOk == false) → ปิดทั้ง 2 ช่อง + ล้าง latch ทุกตัว
+//       SHT35 ให้ทั้งอุณหภูมิและความชื้นจากชิปเดียว — ถ้ามันอ่านไม่ได้ ค่าเก่าทั้งคู่ ไม่ใช่แค่ความชื้น
+//       จึงไม่มีอะไรให้ตัดสินใจได้เลย ปิดหมดปลอดภัยกว่าสั่งรีเลย์จากค่าเก่าเป็นชั่วโมง
+//       (ผู้ใช้เลือกเอง 2026-07-15 — ทางเลือกอื่นที่พิจารณา: พัดลมเปิดค้างกันพืชร้อน / คงสถานะเดิม)
+//       ล้าง latch ด้วย เพื่อให้ตอนเซนเซอร์ฟื้น ระบบเริ่มคิดใหม่จากค่าสด ไม่ใช่สานต่อ latch เก่า
 //
 // ⚠️ ทำไม humid gate ต้องอยู่ "ข้างใน" latch ไม่ใช่ AND ที่ output (บั๊ก v1.8.0 รอบแรก แก้ 2026-07-15):
 // gate แบบ stateless (pumpOn = ร้อน AND ไม่อิ่มตัว) ไม่มีความจำ — ความชื้นแกว่งข้าม pumpOffHum
@@ -32,8 +37,9 @@
 #define AUTO_CONTROL_LOGIC_H
 
 struct AutoControlInputs {
+  bool  sensorOk;     // เซนเซอร์อากาศเชื่อได้ไหม (false = อ่านพลาดติดกันนานเกิน → ค่าเก่า) · false = ปิดทุกช่อง
   float airTemp;      // ค่าเฉลี่ยอุณหภูมิอากาศ (°C) — คุม latch ร้อน
-  float airHumidity;  // ค่าเฉลี่ยความชื้นอากาศ (%RH) — คุม latch แห้ง + humid gate ของปั๊ม · 0 = เซนเซอร์ตาย
+  float airHumidity;  // ค่าเฉลี่ยความชื้นอากาศ (%RH) — คุม latch แห้ง + humid gate ของปั๊ม
   float fanOnTemp;    // ร้อน ≥ ค่านี้ → latch ร้อนเปิด
   float fanOffTemp;   // เย็น ≤ ค่านี้ → latch ร้อนปิด
   float pumpOnHum;    // แห้ง < ค่านี้ → latch แห้งเปิด
@@ -51,8 +57,16 @@ struct AutoControlDecisions {
 
 inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   AutoControlDecisions d;
-  const bool dead      = (in.airHumidity == 0);            // เซนเซอร์ความชื้นตาย
-  const bool saturated = !dead && (in.airHumidity >= in.pumpOffHum);  // อากาศชื้นเกินจะพ่นน้ำ
+
+  // เชื่อค่าเซนเซอร์ไม่ได้ → ปิดทุกช่อง ล้าง latch ทุกตัว ออกทันที
+  // (0%RH ก็ถือว่าเชื่อไม่ได้ — โรงเรือนจริงเป็นไปไม่ได้ ถ้าเห็นแปลว่าเซนเซอร์/สายมีปัญหา)
+  if (!in.sensorOk || in.airHumidity <= 0) {
+    d.hotOn = d.dryOn = d.pumpHeatOn = false;
+    d.fanOn = d.pumpOn = false;
+    return d;
+  }
+
+  const bool saturated = (in.airHumidity >= in.pumpOffHum);  // อากาศชื้นเกินจะพ่นน้ำ
 
   // latch ร้อน — อุณหภูมิอากาศ (ไม่ผูกกับความชื้น: พัดลมต้องระบายความร้อนได้เสมอ)
   bool hot = in.hotOn;
@@ -62,15 +76,14 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
 
   // latch แห้ง — ความชื้นอากาศ
   bool dry = in.dryOn;
-  if      (dead)                            dry = false;
-  else if (in.airHumidity <  in.pumpOnHum)  dry = true;
+  if      (in.airHumidity <  in.pumpOnHum)  dry = true;
   else if (in.airHumidity >= in.pumpOffHum) dry = false;
   // else: คงสถานะ
 
-  // latch ปั๊มไล่ร้อน — เกณฑ์อุณหภูมิเดียวกับ latch ร้อน แต่ humid gate/เซนเซอร์ตาย "ล้าง" ได้
+  // latch ปั๊มไล่ร้อน — เกณฑ์อุณหภูมิเดียวกับ latch ร้อน แต่ humid gate "ล้าง" ได้
   // ล้างแล้วต้องรอ airTemp ข้าม fanOnTemp ใหม่ถึงติดอีก — นี่คือสิ่งที่กันปั๊มกระพริบที่เส้น pumpOffHum
   bool pumpHeat = in.pumpHeatOn;
-  if      (dead || saturated)           pumpHeat = false;
+  if      (saturated)                   pumpHeat = false;
   else if (in.airTemp >= in.fanOnTemp)  pumpHeat = true;
   else if (in.airTemp <= in.fanOffTemp) pumpHeat = false;
   // else: คงสถานะ
@@ -79,13 +92,13 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   d.dryOn      = dry;
   d.pumpHeatOn = pumpHeat;
 
-  // พัดลม — ร้อนหรือแห้ง เปิดได้ทั้งคู่ (เซนเซอร์ความชื้นตายก็ยังตามอุณหภูมิได้)
+  // พัดลม — ร้อนหรือแห้ง เปิดได้ทั้งคู่
   d.fanOn = hot || dry;
 
-  // ปั๊ม — ไล่ร้อน (ผ่าน gate แล้ว) หรือ เพิ่มความชื้นตอนแห้ง · ตาย = ปิดเสมอ
+  // ปั๊ม — ไล่ร้อน (ผ่าน gate แล้ว) หรือ เพิ่มความชื้นตอนแห้ง
   // `hot &&` กัน latch 2 ตัวหลุด sync (ในทางปฏิบัติ pumpHeat ⊆ hot เพราะใช้เกณฑ์อุณหภูมิเดียวกัน)
   // — ค้ำ invariant "ปั๊มเปิด → พัดลมเปิด" ไว้ ไม่ให้ปั๊มพ่นน้ำตอนพัดลมดับ
-  d.pumpOn = !dead && ((hot && pumpHeat) || dry);
+  d.pumpOn = (hot && pumpHeat) || dry;
   return d;
 }
 

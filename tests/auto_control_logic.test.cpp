@@ -12,9 +12,9 @@ void check(bool cond, const char* name) {
 }
 
 // default จริง: fanOnTemp=35 fanOffTemp=32 pumpOnHum=60 pumpOffHum=75
-// {airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum, hotLatch, dryLatch, pumpHeatLatch}
+// {sensorOk, airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum, hotLatch, dryLatch, pumpHeatLatch}
 static AutoControlInputs base() {
-  return {30, 65, 35, 32, 60, 75, false, false, false};   // 30°C ชื้น 65% (ไม่ร้อน ไม่แห้ง) latch ปิดหมด
+  return {true, 30, 65, 35, 32, 60, 75, false, false, false};   // 30°C ชื้น 65% (ไม่ร้อน ไม่แห้ง) latch ปิดหมด
 }
 
 // ── Crossing harness ──────────────────────────────────
@@ -123,19 +123,36 @@ int main() {
     check(computeAutoDecisions(in).pumpOn, "ร้อนจัด+แห้งจัด -> pump ON (gate ไม่บล็อก)");
   }
 
-  printf("== Safety: เซนเซอร์ความชื้นตาย (0) ==\n");
+  printf("== Safety v2.0.0: เซนเซอร์เชื่อไม่ได้ -> ปิดทุกช่อง ล้าง latch ==\n");
   {
-    auto in = base(); in.airTemp = 40; in.airHumidity = 0;
-    in.hotOn = true; in.dryOn = true;                  // แม้ latch เปิดค้างอยู่
+    // เคสที่ v1.8.0 พลาด: เซนเซอร์เสียตอนอากาศร้อนจัด — ค่าเก่าบอก 40°C แต่เชื่อไม่ได้แล้ว
+    auto in = base(); in.sensorOk = false; in.airTemp = 40; in.airHumidity = 45;
+    in.hotOn = true; in.dryOn = true; in.pumpHeatOn = true;   // latch เปิดค้างทั้งหมด
     auto d = computeAutoDecisions(in);
-    check(!d.pumpOn, "humidity=0 -> pump ปิดเสมอ (safety)");
-    check(!d.dryOn,  "humidity=0 -> latch แห้งถูกล้าง (เชื่อค่าไม่ได้)");
-    check(d.fanOn && d.hotOn, "humidity=0 -> พัดลมยังตามอุณหภูมิได้ (40>=35 เปิด)");
+    check(!d.fanOn && !d.pumpOn, "sensorOk=false -> ปิดทั้ง 2 ช่อง (แม้ค่าเก่าบอกร้อน+แห้ง)");
+    check(!d.hotOn && !d.dryOn && !d.pumpHeatOn, "sensorOk=false -> ล้าง latch ทุกตัว (ฟื้นแล้วคิดใหม่จากค่าสด)");
   }
   {
-    auto in = base(); in.airTemp = 30; in.airHumidity = 0;
+    // 0%RH เป็นไปไม่ได้ในโรงเรือนจริง = เซนเซอร์/สายมีปัญหา ถึงแม้ sensorOk ยังไม่ทันตก
+    auto in = base(); in.airTemp = 40; in.airHumidity = 0;
+    in.hotOn = true; in.pumpHeatOn = true;
     auto d = computeAutoDecisions(in);
-    check(!d.fanOn && !d.pumpOn, "humidity=0 + ไม่ร้อน -> ดับทั้งคู่");
+    check(!d.fanOn && !d.pumpOn, "humidity=0 -> ปิดทั้ง 2 ช่อง (0%RH เชื่อไม่ได้)");
+  }
+  {
+    // เซนเซอร์ฟื้น: ต้องเริ่มจาก latch เปล่า ไม่สานต่อของเก่า — 34°C อยู่ dead-zone จึงยังไม่ปลุกพัดลม
+    auto in = base(); in.sensorOk = false; in.airTemp = 40; in.airHumidity = 45; in.hotOn = true;
+    auto dead = computeAutoDecisions(in);
+    in.sensorOk = true; in.airTemp = 34; in.airHumidity = 65;
+    in.hotOn = dead.hotOn; in.dryOn = dead.dryOn; in.pumpHeatOn = dead.pumpHeatOn;
+    auto back = computeAutoDecisions(in);
+    check(!back.fanOn, "ฟื้นที่ 34°C (dead-zone) -> ยังไม่เปิด ต้องรอข้าม 35 จริง (latch ไม่สานต่อ)");
+  }
+  {
+    // เซนเซอร์ฟื้นแล้วร้อนจริง -> กลับมาทำงานได้ ไม่ค้างดับถาวร
+    auto in = base(); in.sensorOk = true; in.airTemp = 37; in.airHumidity = 50;
+    auto d = computeAutoDecisions(in);
+    check(d.fanOn && d.pumpOn, "ฟื้นแล้วร้อน 37 + แห้ง 50 -> กลับมาเปิดทั้งคู่ (ไม่ค้างดับ)");
   }
 
   printf("== จุดคงที่: sweep temp x humidity ที่ค่าคงที่ latch ต้องนิ่ง ==\n");
@@ -146,7 +163,7 @@ int main() {
     for (int seed = 0; seed < 8; seed++) {
       for (float t = 20; t <= 45; t += 1.0f) {
         for (float h = 10; h <= 100; h += 5.0f) {
-          AutoControlInputs in = {t, h, 35, 32, 60, 75,
+          AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
                                   (seed & 1) != 0, (seed & 2) != 0, (seed & 4) != 0};
           auto a = computeAutoDecisions(in);
           in.hotOn = a.hotOn; in.dryOn = a.dryOn; in.pumpHeatOn = a.pumpHeatOn;
@@ -215,13 +232,29 @@ int main() {
     check(pumpAfter[3], "temp ขึ้น 36 -> ปั๊มติดใหม่ (re-arm ได้จริง ไม่ค้างดับถาวร)");
   }
 
+  printf("== sensorOk=false: ไม่มีชุดค่า/latch ใดปลุกรีเลย์ได้เลย (sweep ทั้งกริด) ==\n");
+  {
+    bool leaked = false;
+    for (float t = 20; t <= 45; t += 0.5f) {
+      for (float h = 0; h <= 100; h += 2.5f) {
+        for (int latch = 0; latch < 8; latch++) {
+          AutoControlInputs in = {false, t, h, 35, 32, 60, 75,
+                                  (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0};
+          auto d = computeAutoDecisions(in);
+          if (d.fanOn || d.pumpOn || d.hotOn || d.dryOn || d.pumpHeatOn) leaked = true;
+        }
+      }
+    }
+    check(!leaked, "sensorOk=false ทุก (temp,humidity,latch) -> รีเลย์ปิด + latch ล้างหมด");
+  }
+
   printf("== พัดลมเปิดเสมอเมื่อปั๊มเปิด (ปั๊มไม่มีทางทำงานลำพัง) ==\n");
   {
     bool violated = false;
     for (float t = 20; t <= 45; t += 0.5f) {
       for (float h = 0; h <= 100; h += 2.5f) {
         for (int latch = 0; latch < 8; latch++) {   // latch 3 ตัว = 8 combo (รวม combo ที่หลุด sync)
-          AutoControlInputs in = {t, h, 35, 32, 60, 75,
+          AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
                                   (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0};
           auto d = computeAutoDecisions(in);
           if (d.pumpOn && !d.fanOn) violated = true;   // พ่นน้ำโดยไม่มีลม = ท่วม ไม่ระเหย

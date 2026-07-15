@@ -2,7 +2,22 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 1.8.0
+  Version: 2.0.0
+  Changelog v2.0.0 (2026-07-15) — ปิดช่องโหว่ "เซนเซอร์เสียแล้วระบบยังสั่งรีเลย์จากค่าเก่า":
+    - ⚠️ BREAKING: เซนเซอร์อากาศอ่านพลาดติดกัน ≥ SENSOR_STALE_AFTER (12 ครั้ง ≈ 6 นาที)
+      → auto ปิดทั้งพัดลมและปั๊ม + ล้าง latch ทุกตัว + alert ขึ้น dashboard + buzzer
+      เดิม: ค่าที่อ่านพลาดไม่เคยเข้า control buffer เลย autoControl() จึงเห็นค่าดีค่าสุดท้ายค้างอยู่
+      ตลอดกาล และสั่งรีเลย์ต่อไปเรื่อยๆ บนข้อมูลที่อาจเก่าเป็นชั่วโมง — safety "humidity==0 → ปั๊มปิด"
+      ที่เขียนไว้ตั้งแต่ v1.7.0 ยิงไม่ออกจริง เพราะ 0 ตัวนั้นไม่มีทางไปถึง autoControl()
+    - SHT35 ให้ทั้งอุณหภูมิ+ความชื้นจากชิปเดียว → ถ้าพังคือค่าเก่าทั้งคู่ ไม่ใช่แค่ความชื้น
+      จึงปิดทั้ง 2 ช่อง (ผู้ใช้เลือก) แทน logic เดิมสมัย DHT22 ที่ให้พัดลมยังตามอุณหภูมิต่อ
+    - `sensorOk` เป็น input ใหม่ของ computeAutoDecisions() · เลิกใช้ `airHumidity == 0` เป็นสัญญาณ "ตาย"
+    - ล้าง latch ตอนเซนเซอร์เสีย เพื่อให้ตอนฟื้นคิดใหม่จากค่าสด ไม่สานต่อสถานะเก่า
+    - alert sensor_fail ต้องเช็คก่อน guard "sensor ยังไม่พร้อม" ใน checkAlerts() ไม่งั้นโดนกินทิ้ง
+      (readSensors ตั้ง airTemp/airHumidity=0 ตอนพลาด = เข้าเงื่อนไข guard พอดี)
+    - quiet window (ปั๊มเพิ่งสวิตช์) ไม่นับเป็น "พลาด" — มันข้ามการอ่าน ไม่ได้อ่านแล้วพัง
+    - แก้ log spam: "[Init] Loading control state... OK" พิมพ์ทุก 1.5 วิ (~16 บรรทัดขยะต่อ 1 บรรทัดจริง)
+      ท่วม serial จน [AUTO]/[MANUAL] จมหาย · ตอนนี้พิมพ์เฉพาะตอน fail หรือ mode เปลี่ยนจริง
   Changelog v1.8.0 (2026-07-15) — พัดลม+ปั๊มทำงานคู่กัน ทั้งคุมอุณหภูมิและคุมความชื้น:
     - พัดลม (CH3) เพิ่มหน้าที่ 2: เปิดตอนอากาศแห้ง (<humidity_min) ด้วย ไม่ใช่แค่ตอนร้อน
       พัดลมเป็นแบบ "ดูดเข้า" จึงดูดอากาศนอก (ความชื้นสูง) เข้ามา + กระจายละอองน้ำจากปั๊ม — ช่วยเพิ่มความชื้น ไม่ได้ไล่ทิ้ง
@@ -176,6 +191,9 @@ unsigned long lastNtpSync    = 0;
 // SHT35 ยังไม่ยืนยันว่าเจอปัญหาเดียวกันไหม (ขึ้นกับตำแหน่งที่ติดตั้งจริง) — คงกลไกนี้ไว้เป็นเซฟตี้เน็ตก่อน
 #define PUMP_SWITCH_QUIET_MS  3000             // เว้น 3 วิหลังปั๊มสวิตช์ ก่อนอ่าน sensor อากาศรอบถัดไป (รอ noise transient สงบ)
 #define SHT_REINIT_EVERY      3                 // ลอง sht35.begin() re-init ทุกๆ N ครั้งที่อ่านพลาด — self-heal เบาๆ ไม่ผูกกับ emergency mode ใดๆ
+#define SENSOR_STALE_AFTER    12                // อ่านพลาดติดกัน N ครั้ง (~30วิ/ครั้ง = 6 นาที) → ถือว่าเซนเซอร์เชื่อไม่ได้ → auto ปิดทุกช่อง
+                                                // เลือก 12 เพราะทนต่อ glitch ชั่วคราวได้ (noise/CRC พลาดเป็นครั้งคราว) แต่ค่าเก่าสุดไม่เกิน 6 นาที
+                                                // หมายเหตุ: quiet window (ปั๊มเพิ่งสวิตช์) ไม่นับเป็นพลาด — มันข้ามการอ่าน ไม่ได้อ่านแล้วพัง
 // Heartbeat LED (GPIO2 — ตรงกับ LED บนบอร์ด ESP32 DevKit V1 ส่วนใหญ่) — กระพริบ = loop() ยังรันอยู่
 // ถ้าเจอ "ค้าง" ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ)
 // หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
@@ -188,6 +206,7 @@ unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเป
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
 int  airSensorFailCount = 0;                   // นับ sensor อากาศอ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
+bool controlLoadFailed = false;                // latch: โหลด control จาก Firebase พลาดอยู่ (กัน log ท่วมตอนเน็ตหลุด)
 // 3 latch (hysteresis คนละชุด) — autoControl() คำนวณใหม่ทุกรอบแล้วเก็บกลับที่นี่
 bool airHotOn   = false;                       // latch: อากาศร้อนอยู่ (≥temp_on จนกว่าจะ ≤temp_off) — คุมพัดลม
 bool airDryOn   = false;                       // latch: อากาศแห้งอยู่ (<humidity_min จนกว่าจะ ≥humidity_max) — คุมทั้ง 2 ช่อง
@@ -217,7 +236,7 @@ float avgCtrlAH();
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v1.8.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.0.0 ===");
 
   // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -255,7 +274,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v1.8.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.0.0");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -408,22 +427,39 @@ void loop() {
 
 // ─────────────────────────────────────────────────────
 // โหลด control state ด้วย 1 call (getJSON) แทน 11 calls แยกกัน — ลด SSL reconnect
+// ⚠️ ฟังก์ชันนี้ poll ทุก CONTROL_POLL_MS (1.5 วิ) ไม่ใช่ init — ห้ามพิมพ์ log ทุกรอบ
+// เดิมพิมพ์ "[Init] Loading control state... OK" ทุกครั้ง = ~16 บรรทัดขยะต่อ 1 บรรทัดจริง
+// ท่วม serial จน [AUTO]/[MANUAL] จมหาย · พิมพ์เฉพาะตอน fail หรือ mode เปลี่ยนจริงเท่านั้น
 void loadControlFromFirebase() {
   if (!Firebase.ready()) return;
-  Serial.print("[Init] Loading control state...");
 
   FirebaseJson    json;
   FirebaseJsonData d;
 
   if (!Firebase.getJSON(fbData, "/smartfarm/control", &json)) {
-    Serial.println(" FAIL: " + fbData.errorReason());
+    // fail ติดกันหลายรอบ = ปัญหาจริง แต่พิมพ์ทุกรอบก็ท่วมอีก — พิมพ์ครั้งแรกครั้งเดียวจนกว่าจะกลับมาได้
+    if (!controlLoadFailed) {
+      controlLoadFailed = true;
+      Serial.println("[Control] โหลดจาก Firebase ไม่ได้ — ใช้ค่าเดิมต่อ: " + fbData.errorReason());
+    }
     return;
+  }
+  if (controlLoadFailed) {
+    controlLoadFailed = false;
+    Serial.println("[Control] โหลดจาก Firebase กลับมาได้แล้ว");
   }
 
   const char* chKeys[] = {"ch1_pump","ch2_fan_out","ch3_fan_in","ch4_spare"};
   for (int i = 0; i < 4; i++) {
     String b = String(chKeys[i]) + "/";
-    if (json.get(d, b + "mode"))          ch_isAuto[i]      = (d.stringValue == "auto");
+    if (json.get(d, b + "mode")) {
+      bool wasAuto = ch_isAuto[i];
+      ch_isAuto[i] = (d.stringValue == "auto");
+      // mode เปลี่ยน = เหตุการณ์จริงที่ควรเห็นใน log (ช่วยอธิบายว่าทำไม [AUTO] หยุด/เริ่ม)
+      if (ch_isAuto[i] != wasAuto) {
+        Serial.printf("[Control] %s → %s\n", chKeys[i], ch_isAuto[i] ? "AUTO" : "MANUAL");
+      }
+    }
     if (json.get(d, b + "manual_state"))  ch_manual[i]      = d.boolValue;
     if (json.get(d, b + "schedule/enabled"))  ch_schedEnabled[i] = d.boolValue;
     if (json.get(d, b + "schedule/on_time"))  { strncpy(ch_schedOn[i],  d.stringValue.c_str(), 5); ch_schedOn[i][5]='\0'; }
@@ -437,8 +473,6 @@ void loadControlFromFirebase() {
   if (json.get(d, "thresholds/humidity_alert"))   thresh_hum_alert        = d.floatValue;
   if (json.get(d, "thresholds/water_temp_alert")) thresh_water_temp_alert = d.floatValue;
   if (json.get(d, "buzzer_enabled"))              buzzerEnabled           = d.boolValue;
-
-  Serial.println(" OK");
 }
 
 // ─────────────────────────────────────────────────────
@@ -537,10 +571,14 @@ void autoControl() {
   // ยังไม่มี sample อากาศที่อ่านได้เลย (บูตใหม่/เซนเซอร์ยังไม่พร้อม) → อย่าเพิ่งสั่งรีเลย์
   if (ctrlBufATCount == 0) return;
 
+  // ค่าใน buffer เก่าแค่ไหน — readSensors() เก็บเฉพาะค่าดี ถ้าเซนเซอร์พังค่าจะค้างอยู่อย่างนั้น
+  // ไม่มีใครบอก computeAutoDecisions() ว่าค่ามันเก่า มันเลยสั่งรีเลย์ต่อไปเรื่อยๆ — ส่ง sensorOk เข้าไปกัน
+  bool sensorOk = (airSensorFailCount < SENSOR_STALE_AFTER);
+
   float avgAT = avgCtrlAT();
   float avgAH = avgCtrlAH();
   AutoControlDecisions dec = computeAutoDecisions(
-    {avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn});
+    {sensorOk, avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn});
   airHotOn   = dec.hotOn;    // เก็บ latch กลับไปใช้รอบหน้า
   airDryOn   = dec.dryOn;
   pumpHeatOn = dec.pumpHeatOn;
@@ -559,7 +597,8 @@ void autoControl() {
     }
     if (!dec.fanOn && ch3_fanIn) {
       ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false);
-      Serial.printf("[AUTO] พัดลมปิด — อากาศ %.1f°C ความชื้น %.1f%%\n", avgAT, avgAH);
+      if (!sensorOk) Serial.printf("[AUTO] พัดลมปิด (เซนเซอร์เชื่อไม่ได้ — พลาด %d ครั้งติด) — ค่าล่าสุด %.1f°C %.1f%%\n", airSensorFailCount, avgAT, avgAH);
+      else           Serial.printf("[AUTO] พัดลมปิด — อากาศ %.1f°C ความชื้น %.1f%%\n", avgAT, avgAH);
     }
   }
   // CH4 ปั๊มน้ำ — เปิดตาม dec.pumpOn (ปั๊มไล่ร้อน หรือ แห้ง) · เปิดได้เฉพาะพ้น safety lock (cooldown)
@@ -570,9 +609,9 @@ void autoControl() {
     }
     if (!dec.pumpOn && ch4_spare) {
       ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis();
-      // แยกเหตุผลให้ตรง — เซนเซอร์ตายต้องไม่ถูกรายงานว่า "อากาศชื้นเกิน" (RH=0 คือแห้งสุด ไม่ใช่ชื้น)
+      // แยกเหตุผลให้ตรง — เซนเซอร์เสียต้องไม่ถูกรายงานว่า "อากาศชื้นเกิน"
       const char* pumpWhyOff;
-      if      (avgAH == 0)            pumpWhyOff = "เซนเซอร์ความชื้นตาย";
+      if      (!sensorOk)             pumpWhyOff = "เซนเซอร์เชื่อไม่ได้";
       else if (airHotOn && !airDryOn) pumpWhyOff = "อากาศชื้นเกิน พ่นน้ำไม่ช่วย (พัดลมยังเปิด)";
       else                            pumpWhyOff = "ไม่ร้อนไม่แห้ง";
       Serial.printf("[AUTO] ปั๊มปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOff, avgAT, avgAH);
@@ -671,9 +710,12 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "1.8.0");
+  Firebase.setString(fbData, base + "status/firmware",    "2.0.0");
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
+  // แยกจาก sensor_ok: พลาด 1 ครั้ง = sensor_ok false แต่ auto ยังทำงานบนค่าล่าสุดอยู่
+  // sensor_stale = พลาดจนเลิกเชื่อแล้ว → auto ปิดทุกช่อง = เรื่องใหญ่กว่ามาก dashboard ต้องแยกให้เห็น
+  Firebase.setBool (fbData, base + "status/sensor_stale", (airSensorFailCount >= SENSOR_STALE_AFTER));
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
   Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
   Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
@@ -714,12 +756,27 @@ void buzzerBeep(int times, int onMs, int offMs) {
 // ─────────────────────────────────────────────────────
 void checkAlerts() {
   // ข้าม alert ถ้า sensor ยังอ่านไม่ได้
+  bool hasAlert = false;
+
+  // ⚠️ ต้องอยู่ "ก่อน" guard sensor-ยังไม่พร้อมด้านล่าง — readSensors() ตั้ง airTemp/airHumidity = 0
+  // ตอนอ่านพลาด ซึ่งเข้าเงื่อนไข guard พอดี ถ้าเช็คทีหลังจะโดนกินทิ้ง = เซนเซอร์เสียแล้วเงียบสนิท
+  // เซนเซอร์เชื่อไม่ได้ = auto ปิดทุกช่องแล้ว (ดู autoControl) — ต้องเตือนคน ไม่งั้นโรงเรือนหยุดทำงานเงียบๆ
+  if (airSensorFailCount >= SENSOR_STALE_AFTER) {
+    Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "sensor_fail");
+    Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   airSensorFailCount);
+    Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+      "เซนเซอร์อากาศอ่านไม่ได้ " + String(airSensorFailCount) + " ครั้งติด — ระบบอัตโนมัติหยุดทำงาน (ปิดพัดลม+ปั๊ม) กรุณาตรวจสอบ");
+    Serial.printf("[ALERT] เซนเซอร์อากาศเสีย — พลาด %d ครั้งติด, auto ปิดทุกช่อง\n", airSensorFailCount);
+    hasAlert = true;
+    if (buzzerEnabled) buzzerBeep(3);
+    return;   // ค่าอุณหภูมิ/ความชื้นเชื่อไม่ได้ → ไม่ต้องเช็ค alert ที่อิงค่าพวกนั้นต่อ
+  }
+
+  // sensor ยังไม่พร้อม (บูตใหม่) หรือ พลาดชั่วคราวแต่ยังไม่ถึงเกณฑ์ stale → ข้าม alert ที่อิงค่าอากาศ
   if (airTemp == 0 && airHumidity == 0) {
     Serial.println("[ALERT] ข้าม — sensor ยังไม่พร้อม");
     return;
   }
-
-  bool hasAlert = false;
 
   if (airTemp > thresh_temp_alert) {
     Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "high_temp");

@@ -837,7 +837,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v1.8.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.0.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1107,10 +1107,15 @@ function startListeners() {
     }
 
     // เซ็นเซอร์อากาศขัดข้อง (firmware แจ้ง sensor_ok=false) → ไม่เชื่อค่า 0 ที่ push มา
-    // กัน alert หลอก "ความชื้น 0% วิกฤต" ตอน DHT พัง
-    if (sysStatus.sensor_ok === false) {
-      setBadge('airTempBadge','badge-danger','ขัดข้อง'); setText('airTempStatus','🔧 เซ็นเซอร์อากาศขัดข้อง');
-      setBadge('airHumBadge', 'badge-danger','ขัดข้อง'); setText('airHumStatus','🔧 เซ็นเซอร์อากาศขัดข้อง');
+    // กัน alert หลอก "ความชื้น 0% วิกฤต" ตอนเซ็นเซอร์พัง
+    if (sysStatus.sensor_stale) {
+      // fw ≥2.0.0: พลาดนานจน auto ปิดทุกช่องแล้ว — ต้องบอกให้ชัดว่าโรงเรือน "หยุดคุมเอง" ไม่ใช่แค่ค่าหาย
+      setBadge('airTempBadge','badge-danger','เสีย'); setText('airTempStatus','🛑 เซ็นเซอร์เสีย — ระบบอัตโนมัติหยุด (ปิดพัดลม+ปั๊ม)');
+      setBadge('airHumBadge', 'badge-danger','เสีย'); setText('airHumStatus','🛑 เซ็นเซอร์เสีย — ระบบอัตโนมัติหยุด (ปิดพัดลม+ปั๊ม)');
+      checkAlerts(null, null);
+    } else if (sysStatus.sensor_ok === false) {
+      setBadge('airTempBadge','badge-warn','ขัดข้อง'); setText('airTempStatus','🔧 อ่านค่าไม่ได้ชั่วคราว — auto ยังทำงานบนค่าล่าสุด');
+      setBadge('airHumBadge', 'badge-warn','ขัดข้อง'); setText('airHumStatus','🔧 อ่านค่าไม่ได้ชั่วคราว — auto ยังทำงานบนค่าล่าสุด');
       checkAlerts(null, null);
     } else {
       checkAlerts(t, rh);
@@ -1124,6 +1129,7 @@ function startListeners() {
     sysStatus = {
       online:      d.online === true,
       sensor_ok:   d.sensor_ok   !== false,   // ถ้าไม่มี field = ถือว่าปกติ (firmware เก่า)
+      sensor_stale: d.sensor_stale === true,  // fw ≥2.0.0 เท่านั้น — ไม่มี field = false (fw เก่าไม่มีกลไกนี้)
       water_ok:    d.water_ok    !== false,
       failsafe:    d.failsafe    === true,
       pump_locked: d.pump_locked === true,
@@ -1243,8 +1249,10 @@ function updateHealth() {
     sev = 'warn'; msg = '🌐 เครื่องนี้ไม่ได้เชื่อมต่ออินเทอร์เน็ต — ข้อมูลอาจไม่อัปเดต';
   } else if (lastSensorTs && ageMs > 120000) {
     sev = 'crit'; msg = `📡 ESP32 ออฟไลน์ — ไม่มีข้อมูลใหม่ ${ageMin} นาที · ตรวจสอบไฟ/WiFi`;
+  } else if (sysStatus.sensor_stale) {
+    sev = 'crit'; msg = '🛑 เซ็นเซอร์อากาศเสีย — ระบบอัตโนมัติหยุดทำงาน ปิดพัดลม+ปั๊มไว้แล้ว · ต้องตรวจสอบเซ็นเซอร์/สาย';
   } else if (sysStatus.sensor_ok === false) {
-    sev = 'warn'; msg = '⚠️ Sensor อากาศอ่านค่าไม่ได้ชั่วคราว — กำลังลองใหม่';
+    sev = 'warn'; msg = '⚠️ Sensor อากาศอ่านค่าไม่ได้ชั่วคราว — กำลังลองใหม่ (auto ยังทำงานบนค่าล่าสุด)';
   } else if (lastSensorTs && ageMs > 90000) {
     sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
   } else if (sysStatus.pump_locked) {

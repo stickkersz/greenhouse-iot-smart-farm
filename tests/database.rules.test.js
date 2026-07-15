@@ -241,6 +241,19 @@ describe("status — field validation + $other rejection", () => {
     await assertFails(db.ref("/smartfarm/status/typo_field").set(true));
   });
 
+  // fw 2.0.0 — $other:false เงียบๆ reject field ใหม่ทุกตัว ถ้าลืมมาเพิ่มที่ rules
+  // sensor_stale = สัญญาณว่า auto ปิดทุกช่องแล้ว ถ้ามันไม่ผ่าน dashboard จะไม่มีวันบอกคนว่าโรงเรือนหยุดคุมเอง
+  test("anonymous auth CAN write sensor_stale (fw 2.0.0 — auto shutdown signal)", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/status/sensor_stale").set(true));
+    await assertSucceeds(db.ref("/smartfarm/status/sensor_stale").set(false));
+  });
+
+  test("REJECTS non-boolean sensor_stale", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status/sensor_stale").set("yes"));
+  });
+
   test("REJECTS unauthenticated write to status", async () => {
     const db = noAuth().database();
     await assertFails(db.ref("/smartfarm/status/online").set(true));
