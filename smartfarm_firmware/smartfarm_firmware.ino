@@ -2,7 +2,18 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.0.0
+  Version: 2.1.0
+  Changelog v2.1.0 (2026-07-15) — ปิดช่องโหว่ตอน WiFi หลุด:
+    - buzzer/alert เคยอยู่ในกรอบ `if (Firebase.ready())` = เน็ตดับแล้วอากาศร้อนวิกฤต คนหน้างานไม่ได้ยินอะไรเลย
+      ทั้งที่ buzzer เป็นอุปกรณ์ local ไม่ต้องใช้เน็ต · ย้าย checkAlerts() ออกนอก guard
+      แยกเป็น reportAlert(): serial+buzzer ทำเสมอ · Firebase ส่งเฉพาะตอนมีเน็ต (ยุบ copy-paste 4 ชุดด้วย)
+    - WiFi หลุดหลังบูตแล้วต่อไม่กลับ: core auto-reconnect ลองเฉพาะ SSID "ตัวเดิม" เท่านั้น
+      ถ้าเราเตอร์ตัวนั้นหายถาวร มันไม่ลองตัวสำรองใน config.h ให้เลย · loop() เรียก wifiMulti.run()
+      ทุก 30 วิ ตอนหลุด (ไล่ทุก SSID) → ต่อไม่ติดครบ 30 นาที → ESP.restart()
+    - ⚠️ restart นี้เป็นข้อยกเว้นของการถอด runtime recovery layer (2026-07-03): จำกัดเฉพาะ WiFi
+      ไม่แตะ sensor/relay, เกณฑ์ยาว 30 นาที, auto control ทำงานต่อได้ตลอดช่วงนั้น (ผู้ใช้ตัดสินใจ 2026-07-15)
+    - หมายเหตุ: auto control ไม่พึ่ง WiFi อยู่แล้ว (อ่าน SHT35 + threshold ใน RAM) โรงเรือนคุมตัวเองต่อได้
+      ที่หายตอนเน็ตดับคือ: สั่งจาก dashboard, push, hourly log ของชั่วโมงนั้น, NTP resync
   Changelog v2.0.0 (2026-07-15) — ปิดช่องโหว่ "เซนเซอร์เสียแล้วระบบยังสั่งรีเลย์จากค่าเก่า":
     - ⚠️ BREAKING: เซนเซอร์อากาศอ่านพลาดติดกัน ≥ SENSOR_STALE_AFTER (12 ครั้ง ≈ 6 นาที)
       → auto ปิดทั้งพัดลมและปั๊ม + ล้าง latch ทุกตัว + alert ขึ้น dashboard + buzzer
@@ -204,6 +215,13 @@ unsigned long lastNtpSync    = 0;
                                                 // หมายเหตุ: quiet window (ปั๊มเพิ่งสวิตช์) ไม่นับเป็นพลาด — มันข้ามการอ่าน ไม่ได้อ่านแล้วพัง
 #define SENSOR_ALERT_REPEAT_MS (10UL*60*1000)   // เซนเซอร์เสียแล้วไม่หายเอง (ต่างจาก alert ร้อน/แห้งที่หายเองได้) — ย้ำเตือนทุก 10 นาที
                                                 // ไม่ใช่ทุกรอบ 30 วิ ไม่งั้น buzzer ดังทั้งคืนและเขียน Firebase ซ้ำข้อความเดิมเป็นพันครั้ง
+// WiFi — ESP32 core auto-reconnect เองได้ แต่เฉพาะ SSID "ตัวเดิม" ที่เคยต่อ ถ้าตัวนั้นหายถาวร
+// (เราเตอร์เจ๊ง/เปลี่ยนชื่อ) มันจะไม่ลองตัวสำรองใน config.h ให้เลย ต้อง wifiMulti.run() เท่านั้น
+#define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: ลอง wifiMulti.run() (ไล่ทุก SSID) ทุก 30 วิ
+#define WIFI_OFFLINE_RESTART_MS (30UL*60*1000)  // ลองแล้วไม่ติดครบ 30 นาที → ESP.restart() (ผู้ใช้ตัดสินใจ 2026-07-15)
+                                                // เป็นข้อยกเว้นของการถอด runtime recovery layer เมื่อ 2026-07-03: จำกัดเฉพาะ WiFi
+                                                // (ไม่ใช่ sensor/relay) เกณฑ์ยาว 30 นาที และ auto control ทำงานต่อได้ตลอดช่วงนั้น
+                                                // — reboot คือทางเดียวที่แก้ WiFi stack ค้างจริง แต่ราคาคือ relay ดับชั่วครู่ตอนบูต
 // Heartbeat LED (GPIO2 — ตรงกับ LED บนบอร์ด ESP32 DevKit V1 ส่วนใหญ่) — กระพริบ = loop() ยังรันอยู่
 // ถ้าเจอ "ค้าง" ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ)
 // หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
@@ -221,6 +239,7 @@ String controlLoadError = "";                  // เหตุผลที่โ
 bool shtMissingLogged  = false;                // latch: พิมพ์ "ไม่พบเซนเซอร์" ไปแล้ว (กัน log ท่วมทุก 30 วิ)
 bool airNotReadyLogged = false;                // latch: พิมพ์ "sensor ยังไม่พร้อม" ไปแล้ว
 bool airStaleLatched   = false;                // latch: เข้าสถานะเซนเซอร์เสียแล้ว — ใช้จับ "ขอบ" ตอนเข้า/ออก
+unsigned long wifiOfflineSince = 0;            // millis() ตอน WiFi หลุด (0 = ออนไลน์อยู่) — ใช้นับครบ 30 นาทีก่อน restart
 // 3 latch (hysteresis คนละชุด) — autoControl() คำนวณใหม่ทุกรอบแล้วเก็บกลับที่นี่
 bool airHotOn   = false;                       // latch: อากาศร้อนอยู่ (≥temp_on จนกว่าจะ ≤temp_off) — คุมพัดลม
 bool airDryOn   = false;                       // latch: อากาศแห้งอยู่ (<humidity_min จนกว่าจะ ≥humidity_max) — คุมทั้ง 2 ช่อง
@@ -250,7 +269,7 @@ float avgCtrlAH();
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.0.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.1.0 ===");
 
   // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -288,7 +307,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.0.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.1.0");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -374,15 +393,41 @@ void loop() {
 
   esp_task_wdt_reset();   // ป้อน watchdog — ถ้า loop ไม่วน watchdog จะ reboot ให้
 
+  // ── WiFi ─────────────────────────────────────────────
+  // auto control ไม่พึ่ง WiFi (อ่าน sensor + threshold ใน RAM) → โรงเรือนคุมตัวเองต่อได้ตลอดช่วงหลุด
+  // ที่หายคือ: สั่งจาก dashboard, push, hourly log · buzzer ยังดัง (checkAlerts อยู่นอก Firebase guard)
+  static unsigned long lastWifiRetry = 0;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (wifiOfflineSince == 0) {
+      wifiOfflineSince = now;
+      Serial.println("[WiFi] หลุด — ลองต่อใหม่ทุก 30 วิ · auto control ยังทำงานต่อบนค่า threshold เดิม");
+    }
+    if (now - lastWifiRetry >= WIFI_RETRY_EVERY_MS) {
+      lastWifiRetry = now;
+      wifiMulti.run();   // ไล่ทุก SSID ใน config.h — core auto-reconnect ลองแค่ตัวเดิม
+    }
+    if (now - wifiOfflineSince >= WIFI_OFFLINE_RESTART_MS) {
+      Serial.println("[WiFi] ต่อไม่ติดครบ 30 นาที — รีสตาร์ท (เคสเดียวที่เหลือคือ WiFi stack ค้าง)");
+      delay(300);   // ให้ Serial ส่งข้อความออกให้จบก่อน
+      ESP.restart();
+    }
+  } else if (wifiOfflineSince != 0) {
+    Serial.printf("[WiFi] กลับมาแล้ว (หลุดไป %lu วินาที) — SSID: %s\n",
+                  (now - wifiOfflineSince) / 1000, WiFi.SSID().c_str());
+    wifiOfflineSince = 0;
+  }
+
   // ทุก 30 วินาที: อ่าน sensor + auto control + push Firebase
   static unsigned long lastPushTime = 0;
   if (now - lastSensorTime >= SENSOR_INTERVAL) {
     lastSensorTime = now;
     readSensors();
     autoControl();
+    // checkAlerts() อยู่นอก guard เจตนา — buzzer เป็นอุปกรณ์ local ที่ไม่ต้องใช้เน็ต
+    // เดิมอยู่ในกรอบ Firebase.ready() = เน็ตดับแล้วอากาศร้อนวิกฤต คนหน้างานไม่ได้ยินอะไรเลย
+    checkAlerts();
     if (Firebase.ready()) {
       pushToFirebase();
-      checkAlerts();
       lastPushTime = millis();
     } else {
       Serial.println("[Firebase] Not ready — skip push");
@@ -743,7 +788,7 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.0.0");
+  Firebase.setString(fbData, base + "status/firmware",    "2.1.0");
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
   // แยกจาก sensor_ok: พลาด 1 ครั้ง = sensor_ok false แต่ auto ยังทำงานบนค่าล่าสุดอยู่
@@ -787,6 +832,16 @@ void buzzerBeep(int times, int onMs, int offMs) {
 }
 
 // ─────────────────────────────────────────────────────
+// ส่ง alert 1 ตัว — serial พิมพ์เสมอ, Firebase ส่งเฉพาะตอนเน็ตมี
+// แยกแบบนี้เพราะ buzzer/serial เป็น local ทำงานได้แม้เน็ตดับ ส่วน Firebase คือ "ส่งออก" เท่านั้น
+static void reportAlert(const char* type, float value, const String& message) {
+  Serial.println("[ALERT] " + String(type) + " — " + message);
+  if (!Firebase.ready()) return;   // เน็ตดับ = ไม่มีที่ส่ง แต่ผู้เรียกยังตั้ง hasAlert → buzzer ดังอยู่ดี
+  Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    type);
+  Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   value);
+  Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message", message);
+}
+
 void checkAlerts() {
   bool hasAlert = false;   // ตั้ง true = ให้ buzzer ดังท้ายฟังก์ชัน (ที่เดียว ไม่ก๊อป)
 
@@ -801,11 +856,8 @@ void checkAlerts() {
     airStaleLatched = true;
     if (firstTime || millis() - lastStaleAlertMs >= SENSOR_ALERT_REPEAT_MS) {
       lastStaleAlertMs = millis();
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "sensor_fail");
-      Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   airSensorFailCount);
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+      reportAlert("sensor_fail", airSensorFailCount,
         "เซนเซอร์อากาศอ่านไม่ได้ " + String(airSensorFailCount) + " ครั้งติด — ระบบอัตโนมัติหยุดทำงาน (ปิดพัดลม+ปั๊ม) กรุณาตรวจสอบ");
-      Serial.printf("[ALERT] เซนเซอร์อากาศเสีย — พลาด %d ครั้งติด, auto ปิดทุกช่อง\n", airSensorFailCount);
       hasAlert = true;
     }
   } else if (airTemp == 0 && airHumidity == 0) {
@@ -817,19 +869,13 @@ void checkAlerts() {
     airNotReadyLogged = false;
 
     if (airTemp > thresh_temp_alert) {
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "high_temp");
-      Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   airTemp);
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+      reportAlert("high_temp", airTemp,
         "อุณหภูมิสูงเกิน " + String(thresh_temp_alert, 0) + "°C! (" + String(airTemp, 1) + "°C)");
-      Serial.println("[ALERT] High Temp: " + String(airTemp, 1) + "°C");
       hasAlert = true;
     }
     if (airHumidity > 0 && airHumidity < thresh_hum_alert) {
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "low_humidity");
-      Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   airHumidity);
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+      reportAlert("low_humidity", airHumidity,
         "ความชื้นต่ำกว่า " + String(thresh_hum_alert, 0) + "%! (" + String(airHumidity, 1) + "%)");
-      Serial.println("[ALERT] Low Humidity: " + String(airHumidity, 1) + "%");
       hasAlert = true;
     }
   }
@@ -838,11 +884,8 @@ void checkAlerts() {
   // คนละเซนเซอร์กับ SHT35 — SHT35 พังไม่ได้แปลว่าค่าน้ำเชื่อไม่ได้ จึงต้องอยู่นอกบล็อกอากาศทั้งหมด
   // (เดิม early-return ในบล็อกเซนเซอร์เสียกลืน alert นี้ทิ้ง = น้ำร้อนเกินตอน SHT35 เสีย → ไม่มีเตือน)
   if (waterSensorOk && waterTemp > thresh_water_temp_alert) {
-    Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "high_water_temp");
-    Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   waterTemp);
-    Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+    reportAlert("high_water_temp", waterTemp,
       "อุณหภูมิน้ำสูงเกิน " + String(thresh_water_temp_alert, 0) + "°C! (" + String(waterTemp, 1) + "°C)");
-    Serial.println("[ALERT] High Water Temp: " + String(waterTemp, 1) + "°C");
     hasAlert = true;
   }
 
