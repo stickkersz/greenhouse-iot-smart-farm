@@ -9,7 +9,7 @@
 ```
 /Greenhouse IoT Smart Farm/
 ├── smartfarm_firmware/
-│   ├── smartfarm_firmware.ino   ← Firmware หลัก (v1.5.0)
+│   ├── smartfarm_firmware.ino   ← Firmware หลัก (v2.2.1)
 │   └── config.h                 ← Pin mapping, WiFi, Firebase
 ├── dashboard/
 │   ├── index.html               ← Web Dashboard (Green Nature theme)
@@ -107,6 +107,8 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
 ```
 
 ### Database Structure
+> สรุปย่อ — **สัญญาข้อมูลเต็ม + field ครบชุดอยู่ที่ `Firebase_Database_Structure.md`** (อัปเดตให้ตรง firmware v2.2.1 แล้ว)
+> block ด้านล่างไม่ครบทุก field (เช่น sensor_ok/sensor_stale/water_ok/pump_locked/time_ok/wifi_rssi + boot diagnostics v2.2.0)
 ```
 /smartfarm/
   sensors/
@@ -120,14 +122,20 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
     ch2_fan_out       bool    ← ไม่ได้ใช้
     ch3_fan_in        bool    ← พัดลม 220V
     ch4_spare         bool    ← ปั๊มน้ำ (ชื่อ key เก่า)
-    firmware          string  "1.5.0"
+    sensor_ok/ sensor_stale/ water_ok/ failsafe/ pump_locked/ time_ok  bool
+    wifi_rssi         int
+    firmware          string  "2.2.1"
+    last_reset_reason string  ← [v2.2.0] boot diagnostics
+    boot_count/ free_heap/ max_alloc_heap  int  ← [v2.2.0] ต้องมีใน database.rules.json ไม่งั้นโดน reject เงียบ
   control/
     thresholds/
       temp_on         float   (35.0)  ← เปิด auto
       temp_off        float   (32.0)  ← ปิด auto
       humidity_min    float   (60.0)  ← เปิดปั๊ม
+      humidity_max    float   (75.0)  ← ปิดปั๊ม (hysteresis)
       temp_alert      float   (38.0)  ← ส่งแจ้งเตือน Buzzer
-      hum_alert       float   (40.0)  ← ส่งแจ้งเตือน Buzzer
+      humidity_alert  float   (40.0)  ← ส่งแจ้งเตือน Buzzer
+      water_temp_alert float  (35.0)  ← alert อุณหภูมิน้ำ
     ch1_pump/ ch2_fan_out/ ch3_fan_in/ ch4_spare/
       mode            string  "auto"/"manual"
       manual_state    bool

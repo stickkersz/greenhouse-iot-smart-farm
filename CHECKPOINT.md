@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-02  
 **Status:** ⚠️ Dashboard deployed + committed — Firmware flash ยังไม่ยืนยัน (ดู Next Steps)  
-**Version:** 1.5.0 (bump แล้ว 2026-07-11 — ดู PROJECT_MEMORY.md สำหรับสถานะปัจจุบันจริง ไฟล์นี้ค่อนข้าง stale)  
+**Version:** firmware ปัจจุบัน = **v2.2.1** (2026-07-16) — ⚠️ ไฟล์ CHECKPOINT นี้ค่อนข้าง stale (เนื้อหาเป็นยุค v1.5.0) ดู PROJECT_MEMORY.md + changelog ใน `.ino` สำหรับสถานะปัจจุบันจริง  
 **GitHub:** https://github.com/stickkersz/greenhouse-iot-smart-farm (private)  
 **Deployed:** https://greenhouse-iot-smart-farm.web.app  
 **Last Commit:** `cc45618 feat: auto control v2 — water-temp fan assist + pump hysteresis + finer precision`

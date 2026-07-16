@@ -171,7 +171,7 @@ Control Box IP65 (ผนังนอกโรงเรือน ด้าน 460
 | สาย | ชนิด | เส้นทาง |
 |-----|------|---------|
 | DC 12V → LED | 2.5mm² | จาก PG16 Gland → Rail เหล็กหลังคา → branch แต่ละ Tier |
-| SHT40 (I2C) | 28AWG 4 เส้น | ยึดกับ frame ด้วย cable tie |
+| SHT35 (I2C) | 28AWG 4 เส้น | ยึดกับ frame ด้วย cable tie |
 | DS18B20 (1-Wire) | 22AWG | จากกล่องควบคุม → ถังน้ำด้านนอก |
 | Soil Moisture (Analog) | 3 เส้น | ปักใน Tier ที่เลือก |
 
@@ -239,7 +239,7 @@ Control Box IP65 (ผนังนอกโรงเรือน ด้าน 460
 | 15 | **LED Grow Bar 120cm 12V DC** | Full Spectrum | 13 (12+1 สำรอง) | ซื้อใหม่ |
 | 16 | Timer Module | DC 12V | 1 | ซื้อใหม่ |
 | 17 | **Fan 10" Gravity Shutter** | AC 220V | 2 | ซื้อใหม่ |
-| 18 | SHT40 | I2C | 1 | ซื้อใหม่ |
+| 18 | SHT35 | I2C | 1 | ซื้อใหม่ |
 | 19 | DS18B20 | Waterproof IP68 | 1 | ซื้อใหม่ |
 | 20 | Capacitive Soil Moisture | 3.3V/5V | 1 | มีแล้ว |
 | 21 | กล่อง IP65 | ≥250×300mm | 1 | ซื้อใหม่ |
@@ -270,7 +270,7 @@ Control Box IP65 (ผนังนอกโรงเรือน ด้าน 460
 5. **เดินท่อ PE** Header ตาม 240cm → T แยก 3 เส้น × 460cm → ใส่หัวฉีด 6 หัว/เส้น
 6. **วางถัง + ปั๊ม** นอกโรงเรือน มุมหลัง → ต่อท่อ PE ผ่าน PG16
 7. **ติด Fan** ผนัง 240cm ซ้าย-ขวา → เดินท่อ PVC 220V ด้านนอก
-8. **ติดเซนเซอร์** SHT40 (ระดับ 120cm กลางโรง), DS18B20 (ในถัง), Soil Moisture
+8. **ติดเซนเซอร์** SHT35 (ระดับ 120cm กลางโรง), DS18B20 (ในถัง), Soil Moisture
 9. **Wiring ESP32 + Relay** ใน Control Box → Upload Firmware
 10. **ทดสอบ** ทีละ Channel → ตรวจหัวฉีด, LED, Fan, เซนเซอร์
 

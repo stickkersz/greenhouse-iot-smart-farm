@@ -34,20 +34,20 @@
 
 ---
 
-## Firmware v1.5.0
+## Firmware v2.2.1
 
 **ไฟล์:** `smartfarm_firmware/smartfarm_firmware.ino` + `config.h`
 
 **Libraries ที่ต้องติดตั้ง:**
 - Firebase ESP32 Client by Mobizt
 - OneWire + DallasTemperature (DS18B20)
-- DHT sensor library by Adafruit (DHT22)
+- Adafruit SHT31 Library (รองรับ SHT30/31/35 — เซนเซอร์อากาศ SHT35 I2C) + Adafruit BusIO
 - LiquidCrystal I2C by Frank de Brabander
 
-**สิ่งที่ยกเลิกแล้ว:** SHT35, Line Notify, Telegram Bot Alert (ถอด 2026-07-03 — ไม่ใช้แล้ว), Capacitive Soil Moisture (ยกเลิกถาวร) — ถูกลบออกจาก firmware/dashboard ทั้งหมดแล้ว
+**สิ่งที่ยกเลิกแล้ว:** DHT22 (เปลี่ยนไปใช้ SHT35 I2C แล้ว 2026-07-11), Line Notify, Telegram Bot Alert (ถอด 2026-07-03 — ไม่ใช้แล้ว), Capacitive Soil Moisture (ยกเลิกถาวร) — ถูกลบออกจาก firmware/dashboard ทั้งหมดแล้ว
 
 **Auto-Control Thresholds (default, ปรับได้จาก Dashboard Settings):**
-- TEMP_ON = 35°C / TEMP_OFF = 32°C → พัดลม CH3 (หรือ water_temp_on=30°C/water_temp_off=27°C ก็เปิดพัดลมได้เช่นกัน — evaporative cooling ช่วยด้วยอุณหภูมิน้ำ)
+- TEMP_ON = 35°C / TEMP_OFF = 32°C → พัดลม CH3 (คุมด้วย "อุณหภูมิอากาศ" อย่างเดียว — ถอดการผูกกับอุณหภูมิน้ำออกแล้ว v1.6.0 · น้ำเหลือหน้าที่ แสดง/log/alert)
 - HUMIDITY_MIN = 60% / humidity_max = 75% → ปั๊ม CH4 (hysteresis กันปั๊มกระพริบ)
 - thresh_temp_alert = 38°C, thresh_hum_alert = 40% → เกณฑ์แจ้งเตือน (buzzer + banner บน dashboard)
 - Pump Safety: เดินต่อเนื่องได้สูงสุด **10 นาที** (ตัดสินใจสุดท้าย 2026-07-07, เดิม 5 นาที), พัก 5 นาที
@@ -115,8 +115,8 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 ## TODO ที่ยังค้างอยู่
 
 ดู PROJECT_MEMORY.md หัวข้อ 15 สำหรับรายการล่าสุด/ละเอียด — สรุปสั้นๆ ณ 2026-07-08:
-- 🔴 ด่วนสุด (hardware): แก้ noise มอเตอร์ปั๊มรบกวน DHT22 — เพิ่ม cap คร่อมมอเตอร์ปั๊ม + RC snubber ที่ relay CH4 + **ย้ายสาย/ตัวเซนเซอร์ DHT22 ออกห่างจากกลุ่ม relay** (มีหลักฐานยืนยันแล้วว่าระยะห่างสำคัญกว่าคุณภาพจุดต่อ — ดู PROJECT_MEMORY §15)
-- ตรวจสาย DHT22 VCC ว่าต่อกลับเข้า power rail ปกติแล้ว (ไม่ใช่ช่อง D19)
+- 🔴 ด่วนสุด (hardware): แก้ noise มอเตอร์ปั๊มรบกวนเซนเซอร์ — เพิ่ม cap คร่อมมอเตอร์ปั๊ม + RC snubber ที่ relay CH4 + **ย้ายสาย/ตัวเซนเซอร์ SHT35 ออกห่างจากกลุ่ม relay** (หลักฐานยืนยันว่าระยะห่างสำคัญกว่าคุณภาพจุดต่อ — เดิมเจอกับ DHT22, SHT35 ที่ต่อใกล้ relay ก็เสี่ยงเจอแบบเดียวกัน — ดู PROJECT_MEMORY §15)
+- (moot แล้ว) เคยมีปัญหาสาย DHT22 VCC ต่อผิดช่อง D19 — DHT22 ถอดออกแล้ว 2026-07-11 เปลี่ยนเป็น SHT35 (I2C)
 - ✅ LCD I2C แก้แล้ว (2026-07-08) — จอตัวเดิมเสีย เปลี่ยนจอใหม่ทำงานปกติ
 - Revoke Telegram Bot Token เก่าผ่าน @BotFather (เคยหลุดเข้า git history แม้ลบโค้ดออกแล้ว)
 - `firebase deploy` ทุกครั้งที่แก้ `dashboard/index.html` เพื่ออัปเดตเว็บที่ deploy ไว้ (`greenhouse-iot-smart-farm.web.app`)
@@ -128,7 +128,7 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 ```
 /Greenhouse IoT Smart Farm/
 ├── smartfarm_firmware/
-│   ├── smartfarm_firmware.ino   (v1.5.0)
+│   ├── smartfarm_firmware.ino   (v2.2.1)
 │   └── config.h
 ├── dashboard/
 │   ├── index.html

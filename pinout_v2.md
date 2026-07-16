@@ -1,8 +1,8 @@
 # Pinout — Greenhouse IoT Smart Farm
 
 **Board:** ESP32 DevKit V1 (30-pin) บน Expansion Board HW-777
-**Firmware:** v1.5.0 (`smartfarm_firmware.ino` + `config.h`)
-**อัปเดตล่าสุด:** 2026-07-08 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า), sync กับ PROJECT_INSTRUCTION.md/PROJECT_MEMORY.md แล้ว
+**Firmware:** v2.2.1 (`smartfarm_firmware.ino` + `config.h`)
+**อัปเดตล่าสุด:** 2026-07-16 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า) · pin mapping ไม่เปลี่ยนตั้งแต่ v1.5.0 (บั๊ก v2.x เป็นเรื่อง logic/network ไม่แตะขา)
 
 > ✅ **เปลี่ยนเซนเซอร์อากาศจาก DHT22 (GPIO18) → SHT35 (I2C) แล้ว (2026-07-11)** — GPIO18 ว่างแล้ว, SHT35
 > ใช้บัส I2C ร่วมกับ LCD (GPIO21/22) แทน address auto-detect 0x44/0x45 — ดูตารางด้านล่าง + PROJECT_MEMORY.md §15
