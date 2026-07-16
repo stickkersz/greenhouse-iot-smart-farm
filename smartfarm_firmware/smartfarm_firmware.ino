@@ -2,7 +2,64 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.1.1
+  Version: 2.2.1
+  Changelog v2.2.1 (2026-07-16) — DS18B20 ไม่เคยฟื้นถ้าบูตแล้วไม่เจอ (บั๊กจริง ไม่ใช่แค่สาย) + ปิด regression NTP:
+    - ⚠️ regression จาก v2.2.0 (code review จับได้): บูตแบบ offline setup() ข้าม syncNTP() แต่ยังเซ็ต
+      lastNtpSync=millis() → loop() รอ 6 ชม.ก่อน sync · เมื่อก่อน v2.2.0 reboot ทิ้งเคสนี้ไปเลยจึงไม่เคยเจอ
+      แต่ v2.2.0 ตั้งใจให้วิ่งต่อแบบ offline = เคสนี้กลายเป็นทางปกติ · ระหว่างรอ 6 ชม. timeValid()=false
+      → schedule (พัดลม/ปั๊มตามเวลา) ไม่ทำงาน + hourly log ถูกทิ้งทุกชั่วโมง (getHourlyPath คืน "")
+      แก้: นาฬิกายังไม่ valid → retry NTP ทุก 60 วิ (NTP_RETRY_INVALID_MS) ไม่ใช่รอ 6 ชม.
+      ครอบเคส "บูต online แต่ NTP ช้า/ไม่ตอบ" ด้วย · gate ด้วย WiFi connected ก่อนเช็ค interval
+    - ⚠️ hourly log ผูกกับ "ขอบชั่วโมงนาฬิกาจริง" แทน millis LOG_INTERVAL (code review finding #2):
+      millis รีเซ็ตตอน reboot แต่ accumulator ย้ายไป RTC (v2.2.0) ไม่รีเซ็ต = เข้ากันไม่ได้ · ถ้าบอร์ด
+      reboot ก่อนครบชั่วโมง (เช่นยังหาสาเหตุ restart ไม่เจอ) → `now - lastLogTime` ไม่มีวันครบ = ไม่เคย
+      flush เลย + accumulator (RTC) โตข้าม reboot ไปเรื่อยๆ แล้วสุดท้ายตกถัง %H ผิดชั่วโมง
+      แก้: จำ path ของชั่วโมงที่กำลังสะสมไว้ใน RTC (rtcLogPath) · loop flush เมื่อ getHourlyPath() เปลี่ยน
+      → ตกถังถูกชั่วโมงเสมอไม่ว่า reboot กี่ครั้ง · ลบ lastLogTime ทิ้ง (LOG_INTERVAL ใน config.h เลิกใช้)
+    - ⚠️ pushHourlyLog() reset accumulator ทุกทางออก (code review finding #3): เดิม h_count==0 return
+      โดยไม่ reset → เซนเซอร์อากาศตายแต่ค่าน้ำยังสะสม = น้ำโตไม่หยุด ไม่ถูกเขียน ไม่ถูกล้าง (แย่ขึ้นเพราะ RTC
+      ทำให้ค้างข้าม reboot ด้วย) · ตอนนี้แยกเขียนอากาศ/น้ำอิสระ เขียนเท่าที่มี sample จริง แล้ว reset เสมอ
+  Changelog v2.2.1-ds (2026-07-16) — DS18B20 ไม่เคยฟื้นถ้าบูตแล้วไม่เจอ (บั๊กจริง ไม่ใช่แค่สาย):
+    - ⚠️ DallasTemperature 4.0.6 · getAddress() ขึ้นต้นด้วย `if (index < devices)` โดย `devices`
+      ถูกตั้งจาก begin() ที่เดียวเท่านั้น · เราเรียก begin() ครั้งเดียวตอน setup()
+      → บูตแล้วไม่เจอเซนเซอร์ (สายหลวม/ยังไม่ได้ต่อ/บัสสะดุดจังหวะนั้น) = devices ค้าง 0 ตลอดกาล
+      → getTempCByIndex(0) คืน -127 ทันทีโดย "ไม่แตะบัสเลย" แม้ต่อสายคืนถูกต้องแล้วก็ตาม
+      = เสียบสายตอนบอร์ดรันอยู่ไม่มีวันขึ้น ต้องรีบูตเท่านั้น · ทำให้ไล่ปัญหาสายหลงทางหนักมาก
+      (แก้สายถูกแล้วแต่ระบบยังบอกพัง → เข้าใจผิดว่าสายยังผิด → รื้อสายที่ถูกอยู่แล้วทิ้ง)
+    - requestTemperatures() ใช้ skip() (broadcast) จึงยิง convert ได้ปกติ — เซนเซอร์อาจทำงานถูกต้องอยู่
+      ทุกประการ แต่ฝั่ง "อ่าน" ถูกปิดประตูด้วย devices ที่ค้างมาตั้งแต่บูต
+    - แก้: อ่านน้ำไม่ได้ติดกัน DS_REINIT_EVERY (3 รอบ ≈ 90 วิ) → ds18b20.begin() สแกนบัสใหม่
+      + log จำนวนที่เจอ · เป็นกลไกเดียวกับที่ SHT35 ได้ไปตั้งแต่ v2.0.0 (SHT_REINIT_EVERY) — DS18B20 ตกสำรวจ
+    - log ค่าเสียบอกวิธีอ่านแล้ว: -127 = ไม่มีใครตอบบนบัส (สาย/pull-up/เซนเซอร์ตาย) · 85 = เจอตัวแล้ว
+      แต่ convert ไม่จบ = ไฟเลี้ยงไม่พอ · 2 ค่านี้ชี้คนละปัญหาคนละทางแก้
+    - หมายเหตุฮาร์ดแวร์ (ไม่ใช่โค้ด): วัดได้ 4V ทั้งขา data และ VCC = ไม่ใช่รางไฟที่มีจริงบนบอร์ดนี้
+      (3V3=3.3V, VIN≈4.5-4.7V) · ~3.9V คือค่าที่ได้เมื่อ pull-up ไปเกาะราง 5V/VIN แล้วโดน ESD diode
+      ของ GPIO4 clamp ลงมาที่ VDD+0.6 — เกินสเปค GPIO (abs max 3.6V) · pull-up 4.7k ต้องไป 3V3 เท่านั้น
+  Changelog v2.2.0 (2026-07-16) — "ระบบไม่ต่อเนื่อง": reboot คือทางออกสุดท้าย ไม่ใช่ตัวจัดการ error:
+    - ⚠️ ต้นเหตุหลักของอาการ "รีสตาร์ทแล้ววนต่อ WiFi error ซ้ำๆ": setup() reboot ตอนต่อ WiFi ไม่ติด
+      (และตอน Firebase auth ไม่ผ่าน 4 ครั้ง) — ขัดกับ loop() ที่ทน offline ได้ 30 นาทีและคุมโรงเรือนต่อได้ทั้งช่วง
+      ผลคือ restart 1 ครั้งจากสาเหตุอะไรก็ตาม + เราเตอร์ยังไม่ฟื้น = reboot loop ไม่รู้จบ
+      ทุกรอบ relay ดับ + hourly accumulator หาย · setup() ไม่ reboot อีกแล้ว วิ่งต่อแบบ offline
+    - wifiMulti.run() ไม่ใช่ poll ราคาถูก — ข้างในมัน scanNetworks() (~2-4 วิ) + disconnect() + begin()
+      แล้วรอจนครบ timeout ตัวเอง · เดิมเรียก 40 ครั้ง + delay(500) = แต่ละรอบไปฆ่า attempt ของรอบก่อนทิ้ง
+      churn ได้ถึง ~6 นาที และต่อติดแบบสุ่ม (= อาการ "บางทีติดบางทีไม่ติด") → เรียกครั้งเดียว ใส่ timeout จริง
+    - Firebase.reconnectWiFi(false) — ตั้งแต่ v2.1.0 เราจัดการ WiFi เองด้วย wifiMulti แล้ว
+      ปล่อย true ไว้ = มี 2 ตัวแย่งกันจัดการวิทยุตัวเดียว (lib เรียก WiFi.reconnect() SSID เดิม สวนทาง wifiMulti)
+    - Firebase auth ย้ายไป retry ใน loop() ทุก 60 วิ แทนการ reboot — ยังกันเคสที่ v1.5.0 ตั้งใจกัน
+      ("บอร์ดวิ่งต่อแบบไม่ auth ตลอดไป เงียบสนิท") ด้วยการ retry จริง + log ไม่ใช่ด้วยการ reboot
+    - WiFi offline 30 นาที → restart "ครั้งเดียว" (RTC จำข้าม reboot) ไม่ใช่ทุก 30 นาทีตลอดกาล
+      เราเตอร์เจ๊งยาว 5 ชม. = reboot 1 ครั้ง ไม่ใช่ 10 ครั้ง (ผู้ใช้ตัดสินใจ 2026-07-16 แทนของเดิม 2026-07-15)
+      ต่อ WiFi ได้เมื่อไหร่ = คืนสิทธิ์ restart ให้เคสค้างครั้งหน้า
+    - hourly accumulator ย้ายไป RTC_NOINIT_ATTR — รอด panic/WDT/ESP.restart() (ไม่รอดไฟดับ/brownout
+      ซึ่ง RTC RAM ไม่การันตี) · มี magic number ตรวจ ถ้าเจอขยะ = เริ่มนับใหม่
+      ⚠️ RTC_DATA_ATTR ใช้ไม่ได้ที่นี่ — bootloader โหลด segment .rtc.data ทับทุก reset ที่ไม่ใช่ deep-sleep
+    - เพิ่ม boot diagnostics: esp_reset_reason() + heap + boot count — เดิมไม่เคย log เลย
+      "บอร์ดรีสตาร์ทเอง" จึงไล่ไม่ได้ว่า brownout (ไฟตกตอน relay สวิตช์) / PANIC (โค้ด crash) /
+      TASK_WDT (loop ค้าง) — คนละสาเหตุคนละวิธีแก้ · ขึ้น Firebase ด้วย (dashboard เห็นย้อนหลัง)
+    - log free heap + largest free block ทุก push — จับ fragmentation (Firebase client จอง String/SSL
+      ทุกรอบ · ถ้า largest block หดทั้งที่ free ยังเยอะ = fragment → malloc พลาด → crash หลังรันหลายชั่วโมง)
+    - หมายเหตุ: hourly log ยังใช้ millis-based LOG_INTERVAL อยู่ — reboot ทำให้ขอบชั่วโมงเลื่อน
+      (accumulator รอดแล้ว แต่ไปตกถัง %H ของตอน push) · ยังไม่แก้รอบนี้ ทำทีละอย่างตามหลักโปรเจกต์
   Changelog v2.1.1 (2026-07-15) — SSL guard ครอบไม่ครบ + เก็บ log spam ที่เหลือ:
     - lastPushTime ตั้งเฉพาะหลัง pushToFirebase() ไม่ตั้งตอน pushStatus() → กด Manual แล้ว pushStatus()
       ยิง SSL 13 ครั้ง แต่ guard "เว้น 2 วิก่อน poll" ไม่รู้ตัว → control poll รอบถัดไป (1.5 วิ) ชน SSL
@@ -111,6 +168,7 @@ WiFiMulti wifiMulti;
 #include <LiquidCrystal_I2C.h>
 #include <time.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #include "config.h"
 #include "auto_control_logic.h"
 
@@ -185,12 +243,29 @@ volatile bool ch_schedEnabled[4] = {false, false, false, false};
 char ch_schedOn[4][6]  = {"07:00","07:00","07:00","07:00"};
 char ch_schedOff[4][6] = {"18:00","18:00","18:00","18:00"};
 
-// ── Hourly Log Accumulators ───────────────────────────
-float h_sumAT = 0, h_maxAT = -999, h_minAT = 999;
-float h_sumAH = 0, h_maxAH = -999, h_minAH = 999;
-float h_sumWT = 0, h_maxWT = -999, h_minWT = 999;
-int   h_count   = 0;   // จำนวน sample อากาศ
-int   h_countWT = 0;   // จำนวน sample น้ำที่อ่านได้ (แยกต่างหาก — DS18B20 สายยาวอาจอ่านพลาดบางครั้ง)
+// ── Hourly Log Accumulators (RTC memory — รอดข้าม reset) ──
+// เดิมเป็น global ธรรมดา = reset ทีนึงข้อมูลสะสมทั้งชั่วโมงหายเกลี้ยง (อาการที่รายงานมา 2026-07-16)
+// ⚠️ ต้องเป็น RTC_NOINIT_ATTR ไม่ใช่ RTC_DATA_ATTR — RTC_DATA_ATTR อยู่ใน segment .rtc.data ซึ่ง
+//    bootloader โหลดทับจากแฟลชทุก reset ที่ไม่ใช่ deep-sleep wake = ค่าหายอยู่ดี ไม่ได้แก้อะไรเลย
+//    RTC_NOINIT_ATTR ไม่ถูกแตะเลย → รอด panic/WDT/ESP.restart() · แลกกับว่าห้ามมี initializer
+//    และตอนไฟดับ/brownout เนื้อในเป็นขยะ → ต้องมี magic ตรวจ (ดู setup())
+// รอด: PANIC, TASK_WDT, ESP.restart() · ไม่รอด: ไฟดับ, brownout (RTC RAM ไม่การันตีตอนไฟตก)
+#define RTC_MAGIC 0x5A17FA02   // เปลี่ยนเลขนี้ = บังคับให้ accumulator เริ่มใหม่หลัง flash firmware ที่ layout เปลี่ยน
+RTC_NOINIT_ATTR uint32_t rtcMagic;
+RTC_NOINIT_ATTR float h_sumAT, h_maxAT, h_minAT;
+RTC_NOINIT_ATTR float h_sumAH, h_maxAH, h_minAH;
+RTC_NOINIT_ATTR float h_sumWT, h_maxWT, h_minWT;
+RTC_NOINIT_ATTR int   h_count;     // จำนวน sample อากาศ
+RTC_NOINIT_ATTR int   h_countWT;   // จำนวน sample น้ำที่อ่านได้ (แยกต่างหาก — DS18B20 สายยาวอาจอ่านพลาดบางครั้ง)
+// ลอง restart แก้ WiFi stack ค้างไปแล้วหรือยัง — จำข้าม reboot เพื่อไม่ให้ reboot ซ้ำทุก 30 นาทีตลอดกาล
+// ตอนเราเตอร์เจ๊งจริง (ผู้ใช้เลือก "one-shot" 2026-07-16)
+RTC_NOINIT_ATTR bool     rtcWifiRestartDone;
+RTC_NOINIT_ATTR uint32_t rtcBootCount;   // บูตกี่ครั้งนับตั้งแต่ไฟดับล่าสุด — เลขนี้พุ่ง = กำลัง reboot loop
+// path ของ "ชั่วโมงที่ accumulator กำลังสะสมอยู่" ("" = ยังไม่เริ่ม/นาฬิกายังไม่ติด) — ต้องอยู่ RTC คู่กับ accumulator
+// hourly log เลิกใช้ millis (LOG_INTERVAL) แล้ว: millis รีเซ็ตตอน reboot แต่ accumulator อยู่ RTC ไม่รีเซ็ต =
+// เข้ากันไม่ได้ · reboot ก่อนครบชั่วโมง → ไม่เคย flush + สะสมข้ามชั่วโมง/ข้าม reboot แล้วตกถังผิดชั่วโมง
+// เปลี่ยนมา flush ตาม "ขอบชั่วโมงนาฬิกาจริง" แทน — reboot กี่ครั้งก็ยังตกถังถูกชั่วโมง (path จำไว้ใน RTC)
+RTC_NOINIT_ATTR char rtcLogPath[24];     // "/logs/YYYY-MM-DD/HH" (ยาวสุด 19 ตัว +null) — 24 เผื่อเหลือ
 
 // ── Control-loop Averaging (แยกจาก hourly-log accumulator ด้านบนโดยสิ้นเชิง) ──
 // N=3 รอบ — กัน relay สั่งเปลี่ยนจากค่าเพี้ยนชั่วครู่ครั้งเดียว
@@ -202,7 +277,6 @@ int   ctrlBufATCount = 0, ctrlBufIdx = 0;   // อากาศ+ความช�
 
 // ── Timing ────────────────────────────────────────────
 unsigned long lastSensorTime = 0;
-unsigned long lastLogTime    = 0;
 unsigned long lastNtpSync    = 0;
 
 // ── Safety / Worst-case Protection (v1.3.0) ───────────
@@ -215,6 +289,13 @@ unsigned long lastNtpSync    = 0;
 #define DS_WATER_MIN        -20.0
 #define DS_WATER_MAX         80.0              // น้ำในฟาร์มไม่เกินนี้ → 85.0 (sentinel) ถูกตัดออกอัตโนมัติ
 #define DS_READ_RETRY        2                 // อ่าน DS18B20 ซ้ำได้กี่ครั้งถ้าค่าเสีย (สายยาว 4m รบกวน)
+#define DS_REINIT_EVERY      3                 // อ่านน้ำไม่ได้ติดกัน N รอบ → ds18b20.begin() สแกนบัส 1-Wire ใหม่
+                                               // ⚠️ จำเป็น ไม่ใช่ของแถม — DallasTemperature::getAddress() มีบรรทัด
+                                               // `if (index < devices)` โดย devices ถูกตั้งจาก begin() ที่เดียว
+                                               // begin() ตอนบูตไม่เจอ (สายหลวม/ยังไม่ได้ต่อ) → devices=0 ตลอดกาล
+                                               // → getTempCByIndex(0) คืน -127 ทันทีโดยไม่แตะบัสเลย แม้เสียบสายคืนแล้ว
+                                               // = เสียบสายตอนบอร์ดรันอยู่แล้วไม่มีวันขึ้น ต้องรีบูตเท่านั้น (แนวเดียวกับ
+                                               // เคส SHT35 ที่ v2.0.0 แก้ไป — DS18B20 ตกสำรวจ) · begin() ~150ms worst case
 // เดิม DHT22 อยู่ใกล้ relay/สาย pump บน expansion board มาก — noise ตอน pump switch ทำอ่านพลาด
 // SHT35 ยังไม่ยืนยันว่าเจอปัญหาเดียวกันไหม (ขึ้นกับตำแหน่งที่ติดตั้งจริง) — คงกลไกนี้ไว้เป็นเซฟตี้เน็ตก่อน
 #define PUMP_SWITCH_QUIET_MS  3000             // เว้น 3 วิหลังปั๊มสวิตช์ ก่อนอ่าน sensor อากาศรอบถัดไป (รอ noise transient สงบ)
@@ -227,22 +308,35 @@ unsigned long lastNtpSync    = 0;
 // WiFi — ESP32 core auto-reconnect เองได้ แต่เฉพาะ SSID "ตัวเดิม" ที่เคยต่อ ถ้าตัวนั้นหายถาวร
 // (เราเตอร์เจ๊ง/เปลี่ยนชื่อ) มันจะไม่ลองตัวสำรองใน config.h ให้เลย ต้อง wifiMulti.run() เท่านั้น
 #define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: ลอง wifiMulti.run() (ไล่ทุก SSID) ทุก 30 วิ
-#define WIFI_OFFLINE_RESTART_MS (30UL*60*1000)  // ลองแล้วไม่ติดครบ 30 นาที → ESP.restart() (ผู้ใช้ตัดสินใจ 2026-07-15)
+#define WIFI_CONNECT_TIMEOUT_MS 15000           // timeout ที่ส่งเข้า wifiMulti.run() ตอนบูต — ให้ "มัน" รอ อย่าไปวนเรียกซ้ำ
+                                                // run() ข้างในทำ scanNetworks()+disconnect()+begin()+รอ ครบชุดอยู่แล้ว
+                                                // เรียกซ้ำๆ = แต่ละรอบ disconnect() ฆ่า attempt ของรอบก่อนทิ้ง → ต่อติดแบบสุ่ม
+#define WIFI_OFFLINE_RESTART_MS (30UL*60*1000)  // ไม่ติดครบ 30 นาที → ESP.restart() "ครั้งเดียว" (ผู้ใช้ตัดสินใจ 2026-07-16)
                                                 // เป็นข้อยกเว้นของการถอด runtime recovery layer เมื่อ 2026-07-03: จำกัดเฉพาะ WiFi
                                                 // (ไม่ใช่ sensor/relay) เกณฑ์ยาว 30 นาที และ auto control ทำงานต่อได้ตลอดช่วงนั้น
-                                                // — reboot คือทางเดียวที่แก้ WiFi stack ค้างจริง แต่ราคาคือ relay ดับชั่วครู่ตอนบูต
+                                                // reboot คือทางเดียวที่แก้ WiFi stack ค้างจริง — แต่แก้ "เราเตอร์เจ๊ง" ไม่ได้เลย
+                                                // ⚠️ จึงยิงได้ครั้งเดียว (rtcWifiRestartDone) ไม่งั้นเราเตอร์ดับยาว = reboot ทุก 30 นาที
+                                                // ตลอดกาล ทุกรอบ relay ดับ + hourly หาย = ทำลายความต่อเนื่องที่ตั้งใจจะปกป้อง
+                                                // ต่อ WiFi ได้เมื่อไหร่ = เคลียร์ flag คืนสิทธิ์ให้เคสค้างครั้งหน้า
+#define FB_AUTH_RETRY_MS        (60UL*1000)     // Firebase auth ไม่ผ่าน → retry ทุก 60 วิ (ไม่ reboot — ดู v2.2.0)
 // Heartbeat LED (GPIO2 — ตรงกับ LED บนบอร์ด ESP32 DevKit V1 ส่วนใหญ่) — กระพริบ = loop() ยังรันอยู่
 // ถ้าเจอ "ค้าง" ให้ดู LED นี้: กระพริบต่อ = loop() ไม่ตาย (ปัญหาอยู่ที่ฟังก์ชันใดฟังก์ชันหนึ่งค้างเงียบๆ)
 // หยุดกระพริบ/ดับสนิท = loop() ตายจริง หรือชิป reset วนเร็วจนไม่เห็นจังหวะ
 #define PIN_STATUS_LED        2
 #define HEARTBEAT_BLINK_MS    500
-#define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม.
+#define NTP_RESYNC_MS        (6UL*3600*1000)   // sync NTP ใหม่ทุก 6 ชม. (นาฬิกาปกติดีอยู่แล้ว แค่กันเพี้ยนสะสม)
+#define NTP_RETRY_INVALID_MS (60UL*1000)       // แต่ถ้านาฬิกายัง "ไม่ valid" เลย → retry ทุก 60 วิ ไม่ใช่รอ 6 ชม.
+                                               // ⚠️ v2.2.0 ทำให้เคสนี้เกิดจริงเป็นครั้งแรก: setup() ข้าม syncNTP() ตอนบูตแบบ
+                                               // offline (เมื่อก่อน reboot ทิ้ง) แต่ยังเซ็ต lastNtpSync=millis() → loop รอ 6 ชม.
+                                               // ระหว่างนั้น timeValid()=false → schedule ไม่ทำงาน + hourly log ถูกทิ้งทุกชั่วโมง
+                                               // ครอบเคส "บูต online แต่ NTP server ช้า/ไม่ตอบตอนนั้น" ด้วย (นาฬิกาไม่ติดเหมือนกัน)
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
 int  airSensorFailCount = 0;                   // นับ sensor อากาศอ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
+int  waterFailCount = 0;                       // นับรอบที่อ่านน้ำไม่ได้ติดกัน — trigger สแกนบัส 1-Wire ใหม่ (ดู DS_REINIT_EVERY)
 String controlLoadError = "";                  // เหตุผลที่โหลด control พลาดล่าสุด ("" = ปกติ) — เก็บ "เหตุผล" ไม่ใช่แค่ bool
                                                // เพื่อให้ log ใหม่เมื่อ "สาเหตุเปลี่ยน" (เน็ตหลุด → auth พัง) ไม่ใช่เงียบยาวจนไล่ผิดทาง
 bool shtMissingLogged  = false;                // latch: พิมพ์ "ไม่พบเซนเซอร์" ไปแล้ว (กัน log ท่วมทุก 30 วิ)
@@ -252,6 +346,9 @@ unsigned long wifiOfflineSince = 0;            // millis() ตอน WiFi หล
 unsigned long lastPushTime = 0;                // millis() ที่ push ขึ้น Firebase ครั้งล่าสุด — loop() เว้น 2 วิก่อน poll กัน SSL ชน
                                                // ตั้งใน pushStatus() (จุดเดียว) เพราะทั้ง pushToFirebase() และ manual-change path เรียกผ่านมันหมด
 bool fbNotReadyLogged = false;                 // latch: พิมพ์ "Firebase not ready" ไปแล้ว (กัน log ท่วมตอนเน็ตดับ)
+bool firebaseAuthed = false;                   // signUp ผ่าน + Firebase.begin() แล้ว (2 อย่างเกิดคู่กันเสมอ ใช้ flag เดียว)
+                                               // ตั้ง true ครั้งเดียวใน tryFirebaseAuth() ไม่เคยกลับเป็น false — begin() จึงถูกเรียกครั้งเดียว
+esp_reset_reason_t bootResetReason = ESP_RST_UNKNOWN;   // สาเหตุ reset รอบนี้ — เก็บไว้ push ขึ้น dashboard
 bool waterBadLogged   = false;                 // latch: พิมพ์ "ค่าน้ำผิดปกติ" ไปแล้ว (สายไม่ต่อ = จะขึ้นทุก 30 วิ ตลอดกาล)
 bool schedNoTimeLogged = false;                // latch: พิมพ์ "นาฬิกายังไม่ sync" ไปแล้ว
 // 3 latch (hysteresis คนละชุด) — autoControl() คำนวณใหม่ทุกรอบแล้วเก็บกลับที่นี่
@@ -267,7 +364,7 @@ void pushStatus();
 void setRelay(int pin, bool state);
 void pushToFirebase();
 void checkAlerts();
-void pushHourlyLog();
+void pushHourlyLog(const String& path);
 void resetAccumulators();
 void loadControlFromFirebase();
 void syncNTP();
@@ -279,11 +376,86 @@ void pumpSafetyCheck();
 bool timeValid();
 float avgCtrlAT();
 float avgCtrlAH();
+bool tryFirebaseAuth();
+
+// ─────────────────────────────────────────────────────
+// ⚠️ ใช้ตัวนี้แทน Firebase.ready() ทุกที่
+// v2.2.0 เลิก reboot ตอน auth ไม่ผ่าน = เกิดสถานะใหม่ที่เมื่อก่อนเป็นไปไม่ได้เลย: บอร์ดวิ่งอยู่ทั้งที่
+// Firebase.begin() ยังไม่เคยถูกเรียก (เดิม setup() การันตีว่าถ้าถึง loop() แปลว่า begin() ผ่านแล้วเสมอ
+// เพราะไม่ผ่านมันก็ ESP.restart() ไปแล้ว) · ไม่พึ่งว่า lib จะเช็ค config==nullptr ให้ — เช็คเองตรงนี้
+static inline bool fbReady() { return firebaseAuthed && Firebase.ready(); }
+
+// ─────────────────────────────────────────────────────
+// สาเหตุ reset รอบล่าสุด — เดิมโค้ดไม่เคยถามค่านี้เลย ทั้งที่ ESP32 เก็บให้ฟรีตั้งแต่บูต
+// "บอร์ดรีสตาร์ทเอง" จึงไล่ไม่ได้ว่าเป็นอะไร ซึ่งแต่ละอย่างแก้คนละทางสิ้นเชิง:
+//   BROWNOUT  → ปัญหาไฟ (relay/ปั๊มสวิตช์ดึงกระแสจนแรงดันตก) — แก้ที่ฮาร์ดแวร์ ไม่ใช่โค้ด
+//   PANIC     → โค้ด crash (exception/stack overflow/heap หมด) — ดู backtrace + heap trend
+//   TASK_WDT  → loop() ค้างเกิน 60 วิ (SSL/I2C ค้าง) — หาว่าค้างที่ไหน
+//   SW        → ESP.restart() ของเราเอง (WiFi 30 นาที) — ไม่ใช่บั๊ก
+//   POWERON   → ไฟดับจริง/กด EN — ไม่ใช่บั๊ก
+static const char* resetReasonStr(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "POWERON (เสียบไฟใหม่/กดปุ่ม EN)";
+    case ESP_RST_EXT:       return "EXT (reset จากขาภายนอก)";
+    case ESP_RST_SW:        return "SW (ESP.restart() จากโค้ดเราเอง)";
+    case ESP_RST_PANIC:     return "PANIC *** โค้ด crash (exception/stack overflow) ***";
+    case ESP_RST_INT_WDT:   return "INT_WDT *** interrupt watchdog ***";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT *** loop() ค้างเกิน 60 วิ ***";
+    case ESP_RST_WDT:       return "WDT *** watchdog อื่น ***";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT *** ไฟตก — สงสัย relay/ปั๊มสวิตช์ดึงกระแส ***";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP (ไม่ควรเจอ — เราไม่ได้ใช้ deep sleep)";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "UNKNOWN";
+  }
+}
+
+// ─────────────────────────────────────────────────────
+// Firebase Auth (Anonymous) — เรียกได้ทั้งตอน setup() และ retry จาก loop()
+// เดิม: auth พลาด 4 ครั้งตอนบูต → ESP.restart() · เจตนาดี (กันบอร์ดวิ่งต่อแบบไม่ auth ตลอดไป เงียบสนิท)
+// แต่ผลจริงคือ reboot loop ตอนเน็ต/Firebase มาช้ากว่าบอร์ด — ซึ่งเป็นเรื่องปกติมากตอนไฟกลับมาทั้งตึก
+// ตอนนี้กันเคสเดิมด้วยการ "retry จริงทุก 60 วิ + log" แทนการ reboot · auto control ไม่ต้องใช้ Firebase อยู่แล้ว
+bool tryFirebaseAuth() {
+  if (!Firebase.signUp(&fbConfig, &fbAuth, "", "")) return false;
+  if (!firebaseAuthed) {   // ครั้งแรกที่ auth ผ่าน → begin() ครั้งเดียว (flag ไม่เคยกลับเป็น false)
+    Firebase.begin(&fbConfig, &fbAuth);
+    // ⚠️ false โดยเจตนา — ตั้งแต่ v2.1.0 loop() จัดการ WiFi เองด้วย wifiMulti.run() (ไล่ทุก SSID)
+    // ถ้าเปิด true ไว้ Firebase lib จะไล่ reconnect SSID เดิมของมันเองสวนกัน = 2 ตัวแย่งวิทยุตัวเดียว
+    // อาการ: ต่อติดๆ หลุดๆ แบบสุ่ม อธิบายไม่ได้
+    Firebase.reconnectWiFi(false);
+    fbData.setBSSLBufferSize(512, 512);
+    firebaseAuthed = true;
+  }
+  return true;
+}
 
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.1.1 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.2.1 ===");
+
+  // ── Boot diagnostics ───────────────────────────────
+  // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
+  bootResetReason = esp_reset_reason();
+  Serial.printf("[BOOT] สาเหตุ reset: %s\n", resetReasonStr(bootResetReason));
+  Serial.printf("[BOOT] Heap ว่าง %u bytes (ก้อนต่อเนื่องใหญ่สุด %u)\n",
+                ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+  // ── กู้ hourly accumulator จาก RTC memory ──────────
+  // magic ไม่ตรง = RTC RAM เป็นขยะ (ไฟดับ/brownout/flash firmware ใหม่) → เริ่มนับใหม่
+  if (rtcMagic != RTC_MAGIC) {
+    rtcMagic = RTC_MAGIC;
+    resetAccumulators();
+    rtcWifiRestartDone = false;
+    rtcBootCount = 0;
+    rtcLogPath[0] = '\0';   // ยังไม่รู้ว่าสะสมของชั่วโมงไหน — loop() ตั้งให้เองเมื่อนาฬิกาติด
+    Serial.println("[BOOT] RTC memory ว่าง/เป็นขยะ (ไฟดับ, brownout หรือ flash ใหม่) — เริ่มสะสม hourly ใหม่");
+  } else {
+    Serial.printf("[BOOT] กู้ hourly accumulator จาก RTC ได้ — สะสมไว้แล้ว %d sample อากาศ / %d น้ำ (ไม่ต้องเริ่มนับใหม่)\n",
+                  h_count, h_countWT);
+  }
+  rtcBootCount++;
+  Serial.printf("[BOOT] บูตครั้งที่ %lu นับตั้งแต่ไฟดับล่าสุด%s\n", (unsigned long)rtcBootCount,
+                rtcBootCount >= 5 ? "  *** เลขนี้พุ่ง = กำลัง reboot loop ให้ดูสาเหตุ reset ด้านบน ***" : "");
 
   // Heartbeat LED — เริ่มกระพริบตั้งแต่ต้น setup() เพื่อ debug ว่าติดค้างช่วงไหนของการบูต
   pinMode(PIN_STATUS_LED, OUTPUT);
@@ -321,57 +493,65 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.1.1");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.2.1");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
 
   // WiFi (WiFiMulti — ลองทุกเครือข่ายใน config.h อัตโนมัติ)
+  // ⚠️ wifiMulti.run() ไม่ใช่ poll ราคาถูก — ข้างในมันทำ scanNetworks() (~2-4 วิ) → WiFi.disconnect()
+  //    → WiFi.begin() → รอจนครบ timeout ของมันเอง ครบชุดในการเรียกครั้งเดียว
+  //    เดิมวน run() 40 ครั้ง + delay(500): แต่ละรอบ disconnect() ไปฆ่า attempt ของรอบก่อนที่กำลังจะติดพอดี
+  //    = churn ได้ถึง ~6 นาที และผลลัพธ์สุ่ม ("บางทีติดบางทีไม่ติด") → เรียกครั้งเดียว ให้ "มัน" รอเอง
+  WiFi.mode(WIFI_STA);
   for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
-  Serial.print("Connecting WiFi");
-  int retry = 0;
-  while (wifiMulti.run() != WL_CONNECTED && retry < 40) {
-    delay(500); Serial.print("."); retry++;
-  }
+  Serial.print("Connecting WiFi... ");
+  wifiMulti.run(WIFI_CONNECT_TIMEOUT_MS);
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
+    Serial.println("OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
   } else {
-    Serial.println("\nWiFi FAILED — รีสตาร์ท");
-    ESP.restart();
+    // ⚠️ ห้าม ESP.restart() ตรงนี้เด็ดขาด — loop() ออกแบบมาให้ทน offline ได้ 30 นาทีและคุมโรงเรือน
+    // ต่อได้ตลอดช่วงนั้น (auto control อ่าน SHT35 + threshold ใน RAM ไม่ต้องใช้เน็ตเลย)
+    // setup() ที่ reboot ตอนต่อไม่ติด = ขัดกับ loop() เอง และทำให้ restart ครั้งเดียวจากสาเหตุอะไรก็ตาม
+    // + เราเตอร์ยังไม่ฟื้น → reboot loop ไม่รู้จบ ทุกรอบ relay ดับ + accumulator หาย
+    // = ต้นเหตุอาการ "ระบบไม่ต่อเนื่อง" ที่รายงานมา 2026-07-16 · loop() จะไล่ต่อให้เองทุก 30 วิ
+    Serial.println("FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ทุก 30 วิ");
   }
 
   // NTP (UTC+7 ประเทศไทย) — ต้องการสำหรับ path ของ hourly log
-  syncNTP();
+  // ข้ามถ้าไม่มีเน็ต — ไม่งั้นเสียเวลาบูตฟรี 10 วิ (syncNTP วน 20 × 500ms) ทั้งที่รู้อยู่แล้วว่าไม่ติด
+  if (WiFi.status() == WL_CONNECTED) syncNTP();
+  else Serial.println("NTP ข้าม — ยังไม่มี WiFi (loop() sync ให้เองตอนเน็ตกลับมา)");
   lastNtpSync = millis();
 
-  // Firebase Auth (Anonymous) — ลองซ้ำถ้าล้มเหลว (เน็ต/Firebase สะดุดชั่วคราวตอนบูต) แทนที่จะ
-  // ปล่อยให้บอร์ดวิ่งต่อแบบไม่ auth ตลอดไป (ดูปกติทุกอย่าง แต่ไม่มีข้อมูลขึ้น dashboard เลย จนกว่าจะไฟดับ/รีสตาร์ทเอง)
-  // ทำเฉพาะตอนบูต (ไม่ใช่ runtime recovery loop) — ยังไม่แตะ watchdog เพราะ esp_task_wdt_add() ยังไม่ถูกเรียก ณ จุดนี้
+  // Firebase Auth (Anonymous) — ลองซ้ำถ้าล้มเหลว (เน็ต/Firebase สะดุดชั่วคราวตอนบูต)
+  // เจตนาเดิม (v1.5.0) คือกันบอร์ดวิ่งต่อแบบไม่ auth ตลอดไป = ดูปกติทุกอย่างแต่ไม่มีข้อมูลขึ้น dashboard เลย
+  // ⚠️ เจตนานั้นยังอยู่ แต่เปลี่ยนวิธี: เดิมใช้ ESP.restart() ซึ่งกลายเป็น reboot loop ตอน Firebase มาช้ากว่าบอร์ด
+  // (เกิดประจำตอนไฟกลับมาทั้งตึก: ESP32 บูตเร็วกว่าเราเตอร์) · ตอนนี้ loop() retry ทุก 60 วิ + log แทน
   fbConfig.database_url = FIREBASE_HOST;
   fbConfig.api_key      = FIREBASE_API_KEY;
-  bool authOk = false;
-  for (int a = 1; a <= 4 && !authOk; a++) {
-    authOk = Firebase.signUp(&fbConfig, &fbAuth, "", "");
-    if (authOk) {
-      Serial.println("Firebase Auth OK (anonymous)");
-    } else {
-      Serial.printf("Firebase Auth FAILED (ครั้งที่ %d/4): %s\n", a, fbConfig.signer.signupError.message.c_str());
-      if (a < 4) delay(2000);
+  if (WiFi.status() == WL_CONNECTED) {
+    for (int a = 1; a <= 4 && !firebaseAuthed; a++) {
+      if (tryFirebaseAuth()) {
+        Serial.println("Firebase Auth OK (anonymous) — Firebase Ready");
+      } else {
+        Serial.printf("Firebase Auth FAILED (ครั้งที่ %d/4): %s\n", a, fbConfig.signer.signupError.message.c_str());
+        if (a < 4) delay(2000);
+      }
     }
   }
-  if (!authOk) {
-    Serial.println("Firebase Auth ล้มเหลวติดต่อกัน 4 ครั้ง — รีสตาร์ท (กันบอร์ดวิ่งต่อแบบไม่มีข้อมูลขึ้น Firebase)");
-    delay(300);
-    ESP.restart();
+  if (!firebaseAuthed) {
+    Serial.println("Firebase ยังไม่ auth — วิ่งต่อ (ไม่ reboot) · loop() จะลองใหม่ทุก 60 วิ จนกว่าจะผ่าน");
   }
-  Firebase.begin(&fbConfig, &fbAuth);
-  Firebase.reconnectWiFi(true);
-  fbData.setBSSLBufferSize(512, 512);
-  Serial.println("Firebase Ready");
 
-  // DS18B20
+  // DS18B20 — ไม่เจอตอนนี้ก็ไม่เป็นไรแล้ว readSensors() สแกนบัสใหม่ให้เองทุก ~90 วิ (ดู DS_REINIT_EVERY)
   ds18b20.begin();
-  Serial.printf("DS18B20 พบ %d ตัว\n", ds18b20.getDeviceCount());
+  if (ds18b20.getDeviceCount() > 0) {
+    Serial.printf("DS18B20 พบ %d ตัว\n", ds18b20.getDeviceCount());
+  } else {
+    Serial.println("[DS18B20] ไม่พบเซนเซอร์บนบัส 1-Wire (GPIO4) — เช็ค: pull-up 4.7k ระหว่าง data กับ 3V3,");
+    Serial.println("[DS18B20] VCC ต้องเป็น 3V3 ไม่ใช่ VIN/5V, GND ร่วมกับบอร์ด · จะสแกนใหม่เรื่อยๆ ไม่ต้องรีบูต");
+  }
 
   // SHT35 — ใช้ address ที่เจอจาก I2C scan ด้านบน (Wire.begin() เรียกไปแล้วตอนสแกน LCD ไม่ต้องเรียกซ้ำ)
   if (shtAddrFound != 0 && sht35.begin(shtAddrFound)) {
@@ -420,15 +600,47 @@ void loop() {
       lastWifiRetry = now;
       wifiMulti.run();   // ไล่ทุก SSID ใน config.h — core auto-reconnect ลองแค่ตัวเดิม
     }
-    if (now - wifiOfflineSince >= WIFI_OFFLINE_RESTART_MS) {
-      Serial.println("[WiFi] ต่อไม่ติดครบ 30 นาที — รีสตาร์ท (เคสเดียวที่เหลือคือ WiFi stack ค้าง)");
+    // restart ได้ครั้งเดียวเท่านั้น (rtcWifiRestartDone จำข้าม reboot ผ่าน RTC memory)
+    // เหตุผล: reboot แก้ได้แค่ "WiFi stack ค้าง" — แก้ "เราเตอร์เจ๊ง/ไฟดับทั้งตึก" ไม่ได้เลย
+    // ถ้าปล่อยให้ยิงทุก 30 นาที เราเตอร์ดับยาว 5 ชม. = reboot 10 ครั้ง ทุกรอบ relay ดับ + hourly หาย
+    // = ทำลายความต่อเนื่องที่ตัวมันเองตั้งใจจะปกป้อง (ผู้ใช้เลือก one-shot 2026-07-16)
+    if (!rtcWifiRestartDone && now - wifiOfflineSince >= WIFI_OFFLINE_RESTART_MS) {
+      rtcWifiRestartDone = true;   // ตั้ง "ก่อน" restart — ไม่งั้นลืมว่าเคยลองแล้ว วนไม่จบ
+      Serial.println("[WiFi] ต่อไม่ติดครบ 30 นาที — restart 1 ครั้ง เผื่อ WiFi stack ค้าง (ครั้งเดียว ไม่วนซ้ำ)");
       delay(300);   // ให้ Serial ส่งข้อความออกให้จบก่อน
       ESP.restart();
     }
-  } else if (wifiOfflineSince != 0) {
-    Serial.printf("[WiFi] กลับมาแล้ว (หลุดไป %lu วินาที) — SSID: %s\n",
-                  (now - wifiOfflineSince) / 1000, WiFi.SSID().c_str());
-    wifiOfflineSince = 0;
+  } else {
+    if (wifiOfflineSince != 0) {
+      Serial.printf("[WiFi] กลับมาแล้ว (หลุดไป %lu วินาที) — SSID: %s\n",
+                    (now - wifiOfflineSince) / 1000, WiFi.SSID().c_str());
+      wifiOfflineSince = 0;
+    }
+    // ต่อได้แล้ว = คืนสิทธิ์ restart ให้เคส stack ค้างครั้งหน้า
+    // ⚠️ ต้องเคลียร์ตรงนี้ ไม่ใช่ในบล็อก "กลับมาแล้ว" ด้านบน — บล็อกนั้นยิงเฉพาะตอนมี "ขอบ" offline→online
+    // ถ้า restart แล้ว setup() ต่อ WiFi ติดเลย จะไม่มีขอบให้จับ → flag ค้าง true ตลอดกาล = เคสค้างครั้งหน้าไม่ได้ restart
+    if (rtcWifiRestartDone) rtcWifiRestartDone = false;
+
+    // Firebase auth retry — แทนที่ ESP.restart() ที่เคยอยู่ใน setup()
+    // เจตนาเดิมยังอยู่ (ห้ามวิ่งต่อแบบไม่ auth เงียบๆ ตลอดไป) แต่แก้ด้วยการ retry จริง ไม่ใช่ reboot
+    static unsigned long lastAuthRetry = 0;
+    static String lastAuthErr = "";
+    if (!firebaseAuthed && now - lastAuthRetry >= FB_AUTH_RETRY_MS) {
+      lastAuthRetry = now;
+      if (tryFirebaseAuth()) {
+        lastAuthErr = "";
+        Serial.println("[Firebase] Auth สำเร็จแล้ว — เริ่ม push ขึ้น dashboard ได้");
+      } else {
+        // พิมพ์เมื่อ "เหตุผลเปลี่ยน" เท่านั้น — retry ทุก 60 วิ ถ้าพิมพ์ทุกรอบก็ท่วม serial (แนวเดียวกับ controlLoadError)
+        // เทียบกับ const char* ตรงๆ — String lastAuthErr copy เฉพาะตอนเปลี่ยน · เดิม String(c_str()) จอง heap
+        // ทุก 60 วิ ทั้งที่ค่าไม่เปลี่ยน (heap fragmentation คือผู้ต้องสงสัยหลักของอาการ restart)
+        const char* e = fbConfig.signer.signupError.message.c_str();
+        if (lastAuthErr != e) {
+          lastAuthErr = e;
+          Serial.printf("[Firebase] Auth ยังไม่ผ่าน — retry ทุก 60 วิ (auto control ทำงานปกติ): %s\n", e);
+        }
+      }
+    }
   }
 
   // ทุก 30 วินาที: อ่าน sensor + auto control + push Firebase
@@ -439,7 +651,7 @@ void loop() {
     // checkAlerts() อยู่นอก guard เจตนา — buzzer เป็นอุปกรณ์ local ที่ไม่ต้องใช้เน็ต
     // เดิมอยู่ในกรอบ Firebase.ready() = เน็ตดับแล้วอากาศร้อนวิกฤต คนหน้างานไม่ได้ยินอะไรเลย
     checkAlerts();
-    if (Firebase.ready()) {
+    if (fbReady()) {
       if (fbNotReadyLogged) { fbNotReadyLogged = false; Serial.println("[Firebase] กลับมา push ได้แล้ว"); }
       pushToFirebase();   // ตั้ง lastPushTime ให้เองผ่าน pushStatus()
     } else if (!fbNotReadyLogged) {
@@ -453,23 +665,41 @@ void loop() {
 
   // poll คำสั่งควบคุมทุก CONTROL_POLL_MS (1.5 วิ) — รอ 2 วิหลัง push กัน SSL ชน
   static unsigned long lastControlPoll = 0;
-  if (now - lastControlPoll >= CONTROL_POLL_MS && Firebase.ready() && (millis() - lastPushTime >= 2000)) {
+  if (now - lastControlPoll >= CONTROL_POLL_MS && fbReady() && (millis() - lastPushTime >= 2000)) {
     lastControlPoll = now;
     loadControlFromFirebase();
     bool changed = applyManualControl();
     if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
   }
 
-  // ทุก 1 ชั่วโมง: push hourly log แล้ว reset accumulator
-  if (now - lastLogTime >= LOG_INTERVAL) {
-    lastLogTime = now;
-    if (Firebase.ready()) pushHourlyLog();
+  // Hourly log — flush เมื่อ "ชั่วโมงตามนาฬิกาจริง" เปลี่ยน (ไม่ใช่ทุก 60 นาที millis เดิม)
+  // เดิม millis-based เข้ากันไม่ได้กับ accumulator ที่ย้ายไป RTC: reboot ก่อนครบชั่วโมง = ไม่เคย flush +
+  // สะสมข้าม reboot ไปเรื่อยๆ แล้วตกถังผิดชั่วโมง · ตอนนี้ผูกกับขอบชั่วโมงจริง reboot กี่ครั้งก็ตกถังถูก
+  if (timeValid()) {
+    String curPath = getHourlyPath();   // "/logs/YYYY-MM-DD/HH" ของชั่วโมงปัจจุบัน
+    if (curPath.length()) {
+      if (rtcLogPath[0] == '\0') {
+        // เพิ่งมีนาฬิกาครั้งแรก — จองชั่วโมงนี้เป็นถังที่กำลังสะสม (ยังไม่ flush)
+        strncpy(rtcLogPath, curPath.c_str(), sizeof(rtcLogPath) - 1);
+        rtcLogPath[sizeof(rtcLogPath) - 1] = '\0';
+      } else if (curPath != rtcLogPath) {
+        // ข้ามขอบชั่วโมง → flush ของ "ชั่วโมงเก่า" ไปถังของชั่วโมงเก่า (ไม่ใช่ถังปัจจุบัน) แล้วเลื่อนไปชั่วโมงใหม่
+        // pushHourlyLog() reset accumulator ให้เสมอทุกทางออก (รวมเคสไม่มีข้อมูล/เน็ตดับ) กันค้างข้ามชั่วโมง
+        pushHourlyLog(String(rtcLogPath));
+        strncpy(rtcLogPath, curPath.c_str(), sizeof(rtcLogPath) - 1);
+        rtcLogPath[sizeof(rtcLogPath) - 1] = '\0';
+      }
+    }
   }
 
-  // sync NTP ใหม่ทุก 6 ชม. (กันนาฬิกาเพี้ยน → schedule ผิดเวลา)
-  if (now - lastNtpSync >= NTP_RESYNC_MS) {
+  // sync NTP — ปกติทุก 6 ชม. (กันนาฬิกาเพี้ยน) · แต่ถ้านาฬิกายังไม่ valid เลย retry ทุก 60 วิ จนกว่าจะติด
+  // (เดิมรอ 6 ชม. เท่ากันหมด → บูต offline แล้วเน็ตกลับมา 1 นาที นาฬิกาก็ยังไม่ติดไปอีก 6 ชม.)
+  // ⚠️ gate ด้วย WiFi connected ก่อน แล้วค่อยเช็ค interval — ไม่งั้น lastNtpSync ถูกรีเซ็ตตอน offline
+  // ทำให้พอเน็ตกลับมาต้องนับ interval ใหม่ทั้งก้อน (เลื่อน sync ออกไปอีกโดยไม่จำเป็น)
+  unsigned long ntpInterval = timeValid() ? NTP_RESYNC_MS : NTP_RETRY_INVALID_MS;
+  if (WiFi.status() == WL_CONNECTED && now - lastNtpSync >= ntpInterval) {
     lastNtpSync = now;
-    if (WiFi.status() == WL_CONNECTED) syncNTP();
+    syncNTP();   // configTime() อยู่ข้างใน — เคสบูต offline configTime() ยังไม่เคยถูกเรียกเลย ตรงนี้เรียกให้
   }
 
   // ทุก 60 วินาที: ตรวจสอบตารางเวลา (schedule) — เรียกเสมอ เหตุผลเดียวกับ applyManualControl()
@@ -504,7 +734,7 @@ void loop() {
 // เดิมพิมพ์ "[Init] Loading control state... OK" ทุกครั้ง = ~16 บรรทัดขยะต่อ 1 บรรทัดจริง
 // ท่วม serial จน [AUTO]/[MANUAL] จมหาย · พิมพ์เฉพาะตอน fail หรือ mode เปลี่ยนจริงเท่านั้น
 void loadControlFromFirebase() {
-  if (!Firebase.ready()) return;
+  if (!fbReady()) return;
 
   FirebaseJson    json;
   FirebaseJsonData d;
@@ -595,6 +825,12 @@ void readSensors() {
         sht35.begin(shtAddr);
       }
     } else {
+      // เพิ่งฟื้นจากสถานะ stale (เคยพลาดจนเลิกเชื่อ) → ล้าง buffer ทิ้งค่าเก่า (อาจเก่าเป็นชั่วโมง)
+      // ก่อนใส่ค่าสด · ไม่งั้น avg 2-3 รอบแรกหลังฟื้นจะปน 2 ค่าเก่า + 1 ค่าใหม่ = ตัดสินใจจากอากาศก่อนพัง
+      // (v2.0.0 ล้าง latch ให้แล้ว แต่ยังไม่ได้ล้าง buffer ที่ป้อน avg เข้า computeAutoDecisions)
+      // ⚠️ ล้างตรง "ขอบฟื้น" เท่านั้น ห้ามล้างระหว่าง stale — ระหว่าง stale ต้องคง count>0 ไว้
+      // ไม่งั้น autoControl() ติด guard `ctrlBufATCount==0` return ก่อน = ไม่ได้สั่งปิดรีเลย์ตอนเซนเซอร์เสีย
+      if (airSensorFailCount >= SENSOR_STALE_AFTER) { ctrlBufATCount = 0; ctrlBufIdx = 0; }
       airSensorFailCount = 0;
       // เก็บเฉพาะค่าดีเข้า control-averaging buffer (กัน autoControl() ตัดสินใจจากค่าเพี้ยน)
       ctrlBufAT[ctrlBufIdx] = airTemp;
@@ -615,25 +851,41 @@ void readSensors() {
   if (wt >= DS_WATER_MIN && wt <= DS_WATER_MAX) {
     waterTemp = wt;          // เก็บเฉพาะค่าที่ใช้ได้ (ถ้าอ่านพลาด คงค่าเดิมไว้ ไม่เอาค่าขยะไปแสดง/log/alert)
     waterSensorOk = true;    // น้ำใช้แค่ แสดง/log/alert — ไม่คุมรีเลย์แล้ว จึงไม่มี control buffer
+    waterFailCount = 0;
     if (waterBadLogged) { waterBadLogged = false; Serial.printf("[DS18B20] กลับมาอ่านได้แล้ว (%.1f°C)\n", wt); }
   } else {
     waterSensorOk = false;
+    waterFailCount++;
     // latch — ถ้ายังไม่ต่อสาย DS18B20 บรรทัดนี้จะขึ้นทุก 30 วิ ตลอดกาล กลบ log อื่นหมด
+    // ค่าในวงเล็บคือตัวไล่ปัญหา: -127.0 = ไม่มีใครตอบบนบัส (สาย/pull-up/เซนเซอร์ตาย)
+    //                           85.0  = เจอตัวแล้วแต่ convert ไม่จบ = ไฟเลี้ยงไม่พอ (VCC ไม่ถึง/หลวม)
     if (!waterBadLogged) {
       waterBadLogged = true;
-      Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม (สายยาว/รบกวน/สายหลุด) · จะไม่แจ้งซ้ำจนกว่าจะกลับมาอ่านได้\n", wt);
+      Serial.printf("[DS18B20] ค่าน้ำผิดปกติ (%.1f) — ข้าม · -127=ไม่มีใครตอบบนบัส · 85=ไฟเลี้ยงไม่พอ · จะไม่แจ้งซ้ำจนกว่าจะกลับมาอ่านได้\n", wt);
+    }
+    // สแกนบัสใหม่ — ต้องมี ไม่งั้นเสียบสายคืนตอนบอร์ดรันอยู่ไม่มีวันฟื้น (devices ค้าง 0 ตั้งแต่บูต ดู DS_REINIT_EVERY)
+    if (waterFailCount % DS_REINIT_EVERY == 0) {
+      ds18b20.begin();
+      Serial.printf("[DS18B20] อ่านไม่ได้ %d รอบติด — สแกนบัส 1-Wire ใหม่: เจอ %d ตัว%s\n",
+                    waterFailCount, ds18b20.getDeviceCount(),
+                    ds18b20.getDeviceCount() == 0 ? " (0 = บัสเงียบสนิท → เช็ค pull-up 4.7k ไป 3V3 + สาย)" : " → รอบหน้าอ่านได้แล้ว");
     }
   }
 
-  // สะสมข้อมูลอากาศ สำหรับ hourly log — ข้ามถ้า sensor อ่านไม่ได้ หรือรอบนี้ข้ามไปเพราะ pump quiet window
-  // (กันเอาค่าเก่าจากรอบก่อนมานับซ้ำ ทำ hourly average เพี้ยน)
-  if (!inPumpQuietWindow && (airTemp > 0 || airHumidity > 0)) {
+  // สะสมข้อมูลสำหรับ hourly log — สะสมเฉพาะตอน "นาฬิกาติดแล้ว" เท่านั้น
+  // ⚠️ ถ้าสะสมตอนนาฬิกายังไม่ติด (บูต offline) ค่าพวกนี้จะถูกเหมาไปตกถังชั่วโมงที่ NTP เพิ่ง sync พอดี
+  //    = ข้อมูล 13:xx ไปโผล่ในถังชั่วโมง 14 · และถ้านาฬิกาไม่ sync เลย accumulator โตไม่หยุด (precision เพี้ยน)
+  //    hourly log ต้องรู้ว่าเป็นของชั่วโมงไหน — ไม่มีนาฬิกา = ไม่มีถังให้ลง จึงข้ามการสะสมไปเลย
+  //    (timeValid() ไม่บล็อกแล้ว จึงเรียกตรงนี้ทุก 30 วิ ได้ไม่มีปัญหา)
+  bool canLog = timeValid();
+  // อากาศ — ข้ามถ้า sensor อ่านไม่ได้ หรือรอบนี้ข้ามเพราะ pump quiet window (กันนับค่าเก่าซ้ำ)
+  if (canLog && !inPumpQuietWindow && (airTemp > 0 || airHumidity > 0)) {
     h_sumAT += airTemp;     h_maxAT = max(h_maxAT, airTemp);     h_minAT = min(h_minAT, airTemp);
     h_sumAH += airHumidity; h_maxAH = max(h_maxAH, airHumidity); h_minAH = min(h_minAH, airHumidity);
     h_count++;
   }
   // น้ำ: สะสมเฉพาะตอนอ่านได้ (กันค่าขยะจากสายยาวทำ avg/max/min เพี้ยน)
-  if (waterSensorOk) {
+  if (canLog && waterSensorOk) {
     h_sumWT += waterTemp;   h_maxWT = max(h_maxWT, waterTemp);   h_minWT = min(h_minWT, waterTemp);
     h_countWT++;
   }
@@ -764,9 +1016,13 @@ void setRelay(int pin, bool state) {
 
 // ─────────────────────────────────────────────────────
 // นาฬิกาถูกต้องไหม (ปี >= 2024 = NTP sync แล้ว)
+// ⚠️ getLocalTime(&t, 0) — timeout 0 = ไม่บล็อก · default คือ 5000ms ซึ่งจะ busy-wait 5 วินาทีทุกครั้งที่
+// นาฬิกายัง "ไม่ติด" (tm_year < 2016) · loop() เรียก timeValid() ทุกรอบ (เลือก NTP interval + gate hourly)
+// ถ้าใช้ default = บูต offline แล้วนาฬิกายังไม่ sync → loop บล็อก ~10 วิ/รอบ (2 call) ทั้งช่วง = ระบบอืดหนัก
+// ระหว่างที่ควรตอบสนองไวที่สุด · ค่าเวลามีอยู่ใน RTC อยู่แล้ว อ่านทันที ไม่ต้องรอ
 bool timeValid() {
   struct tm t;
-  if (!getLocalTime(&t)) return false;
+  if (!getLocalTime(&t, 0)) return false;
   return (t.tm_year + 1900) >= 2024;
 }
 
@@ -786,7 +1042,7 @@ void pumpSafetyCheck() {
       pumpOnSince   = 0;
       pumpLockUntil = now + PUMP_COOLDOWN_MS;
       Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 10 นาที (พัก 5 นาที)");
-      if (Firebase.ready()) {
+      if (fbReady()) {
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
           "ตัดปั๊มอัตโนมัติ — ทำงานต่อเนื่องเกิน 10 นาที (พัก 5 นาที) ตรวจสอบระดับน้ำ");
@@ -812,7 +1068,15 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.1.1");
+  Firebase.setString(fbData, base + "status/firmware",    "2.2.1");
+  // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
+  // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
+  Firebase.setString(fbData, base + "status/last_reset_reason", resetReasonStr(bootResetReason));
+  Firebase.setInt  (fbData, base + "status/boot_count",   (int)rtcBootCount);
+  // heap: เฝ้า fragmentation — ถ้า max_alloc_heap หดลงเรื่อยๆ ทั้งที่ free_heap ยังเยอะ = heap แตกเป็นเสี่ยง
+  // → malloc ก้อนใหญ่ (SSL buffer) พลาด → crash หลังรันไปหลายชั่วโมง = ผู้ต้องสงสัยอันดับ 1 ของอาการนี้
+  Firebase.setInt  (fbData, base + "status/free_heap",      (int)ESP.getFreeHeap());
+  Firebase.setInt  (fbData, base + "status/max_alloc_heap", (int)ESP.getMaxAllocHeap());
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
   Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
   // แยกจาก sensor_ok: พลาด 1 ครั้ง = sensor_ok false แต่ auto ยังทำงานบนค่าล่าสุดอยู่
@@ -840,7 +1104,10 @@ void pushToFirebase() {
   if (fbData.errorReason() != "") {
     Serial.println("[Firebase] Error: " + fbData.errorReason());
   } else {
-    Serial.println("[Firebase] Push OK");
+    // heap ทุก push (30 วิ) — เอาไว้ไล่ว่า "รันไปสักพักแล้วรีสตาร์ท" เกิดจาก heap ค่อยๆ หมด/แตกเป็นเสี่ยงไหม
+    // free ลดเรื่อยๆ = leak · free นิ่งแต่ ก้อนใหญ่สุด หด = fragmentation (อันนี้อันตรายกว่า เพราะดูเหมือนปกติ)
+    Serial.printf("[Firebase] Push OK · heap ว่าง %u (ก้อนใหญ่สุด %u)\n",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 }
 
@@ -860,7 +1127,7 @@ void buzzerBeep(int times, int onMs, int offMs) {
 // แยกแบบนี้เพราะ buzzer/serial เป็น local ทำงานได้แม้เน็ตดับ ส่วน Firebase คือ "ส่งออก" เท่านั้น
 static void reportAlert(const char* type, float value, const String& message) {
   Serial.println("[ALERT] " + String(type) + " — " + message);
-  if (!Firebase.ready()) return;   // เน็ตดับ = ไม่มีที่ส่ง แต่ผู้เรียกยังตั้ง hasAlert → buzzer ดังอยู่ดี
+  if (!fbReady()) return;   // เน็ตดับ = ไม่มีที่ส่ง แต่ผู้เรียกยังตั้ง hasAlert → buzzer ดังอยู่ดี
   Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    type);
   Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   value);
   Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message", message);
@@ -919,34 +1186,39 @@ void checkAlerts() {
 }
 
 // ─────────────────────────────────────────────────────
-// Hourly Log — บันทึก avg/max/min ขึ้น /logs/YYYY-MM-DD/HH
-void pushHourlyLog() {
-  if (h_count == 0) {
-    Serial.println("[Log] ไม่มีข้อมูลสะสม — ข้าม");
+// Hourly Log — บันทึก avg/max/min ของ "ชั่วโมงที่เพิ่งจบ" ขึ้น path ที่ผู้เรียกส่งมา (/logs/YYYY-MM-DD/HH)
+// ⚠️ reset accumulator ทุกทางออกเสมอ — เพราะ accumulator อยู่ RTC (รอด reboot) ถ้าไม่ reset จะค้างข้ามชั่วโมง
+//    เดิม h_count==0 return โดยไม่ reset = เซนเซอร์อากาศตายแต่ค่าน้ำยังสะสม → น้ำโตไม่หยุด ไม่ถูกเขียน ไม่ถูกล้าง
+// อากาศกับน้ำแยกกัน: เขียนอันที่มี sample จริง (อากาศดีแต่น้ำสายหลุด หรือกลับกัน = เขียนเท่าที่มี)
+void pushHourlyLog(const String& path) {
+  bool haveAir   = (h_count   > 0);
+  bool haveWater = (h_countWT > 0);
+
+  if (!haveAir && !haveWater) {   // ชั่วโมงนี้ไม่มีข้อมูลเลย (เซนเซอร์ตายทั้งคู่/บูตกลางชั่วโมง) — เคลียร์แล้วจบ
+    Serial.printf("[Log] %s ไม่มีข้อมูลสะสม — ข้าม (เคลียร์ accumulator)\n", path.c_str());
+    resetAccumulators();
     return;
   }
-
-  String path = getHourlyPath();
-  if (path == "") {
-    Serial.println("[Log] NTP ยังไม่ sync — ข้ามบันทึก hourly log");
+  if (!fbReady()) {   // push ไม่ได้ (เน็ตดับตอนขอบชั่วโมง) — ทิ้งชั่วโมงนี้ ไม่งั้นข้อมูลปนข้ามชั่วโมง
+    Serial.printf("[Log] %s ข้าม — Firebase ไม่พร้อม (ทิ้งชั่วโมงนี้ กันข้อมูลปนข้ามชั่วโมง)\n", path.c_str());
     resetAccumulators();
     return;
   }
 
-  float avgAT = h_sumAT / h_count;
-  float avgAH = h_sumAH / h_count;
-
-  Firebase.setFloat(fbData, path + "/air_temp_avg",     avgAT);
-  Firebase.setFloat(fbData, path + "/air_temp_max",     h_maxAT);
-  Firebase.setFloat(fbData, path + "/air_temp_min",     h_minAT);
-  Firebase.setFloat(fbData, path + "/air_humidity_avg", avgAH);
-  Firebase.setFloat(fbData, path + "/air_humidity_max", h_maxAH);
-  Firebase.setFloat(fbData, path + "/air_humidity_min", h_minAH);
-  Firebase.setInt  (fbData, path + "/sample_count",     h_count);
-
-  // น้ำ: เขียนเฉพาะเมื่อมี sample ที่อ่านได้ (กันค่าขยะ/ช่องว่างจากสายยาว)
-  float avgWT = (h_countWT > 0) ? (h_sumWT / h_countWT) : 0;
-  if (h_countWT > 0) {
+  float avgAT = 0, avgAH = 0, avgWT = 0;
+  if (haveAir) {
+    avgAT = h_sumAT / h_count;
+    avgAH = h_sumAH / h_count;
+    Firebase.setFloat(fbData, path + "/air_temp_avg",     avgAT);
+    Firebase.setFloat(fbData, path + "/air_temp_max",     h_maxAT);
+    Firebase.setFloat(fbData, path + "/air_temp_min",     h_minAT);
+    Firebase.setFloat(fbData, path + "/air_humidity_avg", avgAH);
+    Firebase.setFloat(fbData, path + "/air_humidity_max", h_maxAH);
+    Firebase.setFloat(fbData, path + "/air_humidity_min", h_minAH);
+    Firebase.setInt  (fbData, path + "/sample_count",     h_count);
+  }
+  if (haveWater) {   // เขียนเฉพาะเมื่อมี sample ที่อ่านได้ (กันค่าขยะ/ช่องว่างจากสายยาว)
+    avgWT = h_sumWT / h_countWT;
     Firebase.setFloat(fbData, path + "/water_temp_avg",   avgWT);
     Firebase.setFloat(fbData, path + "/water_temp_max",   h_maxWT);
     Firebase.setFloat(fbData, path + "/water_temp_min",   h_minWT);
@@ -954,6 +1226,10 @@ void pushHourlyLog() {
 
   Serial.printf("[Log] Hourly → %s | T:%.1f°C RH:%.1f%% WT:%.1f°C (n=%d, nWT=%d)\n",
     path.c_str(), avgAT, avgAH, avgWT, h_count, h_countWT);
+
+  // burst SSL ~7-10 write เพิ่งจบ — ตั้ง lastPushTime ให้ control poll เว้น 2 วิก่อนยิง getJSON
+  // ไม่งั้น poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL session เดียวกัน = เคสเดียวกับที่ v2.1.1 แก้ให้ pushStatus()
+  lastPushTime = millis();
 
   resetAccumulators();
 }
@@ -992,7 +1268,7 @@ void syncNTP() {
 // ถ้า on_time > off_time = ข้ามคืน (เช่น 22:00–06:00)
 void checkSchedule() {
   struct tm t;
-  if (!getLocalTime(&t)) return;
+  if (!getLocalTime(&t, 0)) return;   // ms=0 = ไม่บล็อก (ดู timeValid) — เดิม default 5000 บล็อก 5 วิ/นาที ตอนนาฬิกายังไม่ติด
   if (!timeValid()) {
     // latch — NTP ไม่ติด = ขึ้นทุก 60 วิ ตลอดกาล
     if (!schedNoTimeLogged) { schedNoTimeLogged = true; Serial.println("[SCHED] ข้าม — นาฬิกายังไม่ sync (schedule จะไม่ทำงานจนกว่า NTP จะติด)"); }
@@ -1082,7 +1358,8 @@ void updateLCD() {
 // คืนค่า path สำหรับ hourly log เช่น "/logs/2026-06-19/14"
 String getHourlyPath() {
   struct tm t;
-  if (!getLocalTime(&t)) return "";
+  if (!getLocalTime(&t, 0)) return "";   // ms=0 = ไม่บล็อก (ดู timeValid) — ถูกเรียกทุกรอบ loop ตอน timeValid()
+  // ปกติ caller เรียกตอน timeValid ผ่านแล้ว (นาฬิกาติด) จึงคืนค่าทันที ไม่แตะ 5 วิ default
   char path[48];
   strftime(path, sizeof(path), "/logs/%Y-%m-%d/%H", &t);
   return String(path);

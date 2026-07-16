@@ -26,6 +26,10 @@
         "time_ok":     { ".validate": "newData.isBoolean()" },
         "firmware":    { ".validate": "newData.isString() && newData.val().length < 16" },
         "wifi_rssi":   { ".validate": "newData.isNumber()" },
+        "last_reset_reason": { ".validate": "newData.isString() && newData.val().length < 128" },
+        "boot_count":     { ".validate": "newData.isNumber()" },
+        "free_heap":      { ".validate": "newData.isNumber()" },
+        "max_alloc_heap": { ".validate": "newData.isNumber()" },
         "$other":      { ".validate": false }
       },
       "control": {

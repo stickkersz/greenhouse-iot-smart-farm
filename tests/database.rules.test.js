@@ -249,6 +249,16 @@ describe("status — field validation + $other rejection", () => {
     await assertSucceeds(db.ref("/smartfarm/status/sensor_stale").set(false));
   });
 
+  // fw 2.2.0 — boot diagnostics · $other:false เคย reject 4 field นี้เงียบๆ (pushStatus จบด้วย wifi_rssi ที่ valid
+  // → errorReason ว่าง → "Push OK" ทั้งที่ 4 ตัวนี้ตกไป) = อาการที่ทำให้ field ไล่สาเหตุ restart ไม่เคยขึ้น dashboard
+  test("anonymous auth CAN write boot diagnostics (fw 2.2.0 — restart forensics)", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/status/last_reset_reason").set("BROWNOUT *** ไฟตก ***"));
+    await assertSucceeds(db.ref("/smartfarm/status/boot_count").set(7));
+    await assertSucceeds(db.ref("/smartfarm/status/free_heap").set(210000));
+    await assertSucceeds(db.ref("/smartfarm/status/max_alloc_heap").set(110000));
+  });
+
   test("REJECTS non-boolean sensor_stale", async () => {
     const db = anonUser().database();
     await assertFails(db.ref("/smartfarm/status/sensor_stale").set("yes"));
