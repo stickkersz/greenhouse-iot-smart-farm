@@ -1040,10 +1040,15 @@ function fillEmptyGauges() {
 }
 
 // ── Offline Detection ─────────────────────────────────
+// ⚠️ วัดจาก pageLoadTs เมื่อยังไม่เคยได้ข้อมูลเลย — เดิม `if(!lastSensorTs) return` ทำให้บอร์ดที่ตาย/ไฟดับ
+// อยู่ "ก่อน" เปิดหน้า (lastSensorTs ค้าง 0) ไม่มีวันถูกจับว่า offline · ขณะที่ Firebase replay ค่าเก่า
+// status/online=true ตอนโหลด → dashboard โชว์ "Online" ค้างตลอดกาลบนบอร์ดที่ตายไปแล้ว
+// ตอนนี้: ไม่มีข้อมูลใหม่ภายใน 120 วิ นับจากตอนเปิดหน้า (ไม่ใช่แค่ตอนเคยได้ข้อมูล) → offline
 let lastSensorTs = 0;
+const pageLoadTs = Date.now();
 setInterval(() => {
-  if (!lastSensorTs) return;
-  if (Date.now() - lastSensorTs > 120000) {
+  const since = lastSensorTs || pageLoadTs;
+  if (Date.now() - since > 120000) {
     setOnlineState(false);
     updateHealth();   // healthBanner แสดงสถานะออฟไลน์ให้แล้ว
     sendNotif('SmartFarm ⚠️', 'ESP32 ไม่ส่งข้อมูลมานานกว่า 2 นาที — ตรวจสอบอุปกรณ์');
@@ -1240,20 +1245,23 @@ function onListenerError(name, err) {
 }
 
 function updateHealth() {
-  const ageMs  = lastSensorTs ? (Date.now() - lastSensorTs) : Infinity;
+  // เดิมใช้ Infinity เมื่อ lastSensorTs=0 แต่ 2 branch ล่างก็ยัง gate ด้วย `lastSensorTs &&` = บอร์ดที่ตาย
+  // ก่อนเปิดหน้าไม่เคยขึ้น banner offline เลย · วัดจาก pageLoadTs แทน (สอดคล้องกับ offline timer ด้านบน)
+  const effTs  = lastSensorTs || pageLoadTs;
+  const ageMs  = Date.now() - effTs;
   const ageSec = Math.floor(ageMs / 1000);
   const ageMin = Math.floor(ageMs / 60000);
   let sev = null, msg = '';
 
   if (!connectedToFb) {
     sev = 'warn'; msg = '🌐 เครื่องนี้ไม่ได้เชื่อมต่ออินเทอร์เน็ต — ข้อมูลอาจไม่อัปเดต';
-  } else if (lastSensorTs && ageMs > 120000) {
+  } else if (ageMs > 120000) {
     sev = 'crit'; msg = `📡 ESP32 ออฟไลน์ — ไม่มีข้อมูลใหม่ ${ageMin} นาที · ตรวจสอบไฟ/WiFi`;
   } else if (sysStatus.sensor_stale) {
     sev = 'crit'; msg = '🛑 เซ็นเซอร์อากาศเสีย — ระบบอัตโนมัติหยุดทำงาน ปิดพัดลม+ปั๊มไว้แล้ว · ต้องตรวจสอบเซ็นเซอร์/สาย';
   } else if (sysStatus.sensor_ok === false) {
     sev = 'warn'; msg = '⚠️ Sensor อากาศอ่านค่าไม่ได้ชั่วคราว — กำลังลองใหม่ (auto ยังทำงานบนค่าล่าสุด)';
-  } else if (lastSensorTs && ageMs > 90000) {
+  } else if (ageMs > 90000) {
     sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
   } else if (sysStatus.pump_locked) {
     sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) หลังเดินครบ 10 นาที — จะกลับมาทำงานเอง';
