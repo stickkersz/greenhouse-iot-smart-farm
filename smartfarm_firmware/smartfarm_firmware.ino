@@ -2,7 +2,44 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.2.1
+  Version: 2.6.0
+  Changelog v2.6.0 (2026-07-23) — แยกพัดลมออกจาก pump safety lock (fan-lock decouple):
+    - ปัญหา: v2.3.0 ตอน pump safety cutoff (เดิน 15 นาที) ตัดพัดลม (CH3) ด้วย + ล็อกพักคู่กัน 5 นาที
+      หลักฐาน CSV 2026-07-20: ร้อน ≥34°C ต่อเนื่อง 7 ชม. อากาศแห้ง (43-49%) แต่ระบบดับไป-มา
+      ~33% ของเวลา (10-15 เดิน + 5 พัก คู่กัน) = ต้นเหตุ overshoot อุณหภูมิคุมไม่อยู่
+    - แก้: pumpSafetyCheck() ตัด "เฉพาะปั๊ม" — พัดลมไม่ถูกแตะ · ถอด fanLockUntil + gate ใน autoControl()
+      พัดลมทำงานตาม latch (ร้อน/แห้ง) อิสระ พักเองเมื่อ latch เคลียร์ (ไม่มี forced rest — ผู้ใช้เลือก 2026-07-23)
+    - ปลอดภัย: invariant pumpOn→fanOn ยังครบ · "fan วิ่งลำพัง" มีอยู่แล้วในเคส ร้อน+ชื้นเกิน (auto_control_logic.h เดิม)
+      กฎ "พัดลมพักคู่ปั๊ม" เป็นแค่ add-on ระดับ .ino (v2.3.0) ไม่ใช่ pure logic — ถอดได้ไม่แตะ decision math
+    - status/fan_locked คงไว้เป็น false เสมอ (กัน dashboard พังจาก field หาย) · pump cutoff log/alert แก้เป็น "ตัดปั๊ม" อย่างเดียว
+    - ไม่แตะ auto_control_logic.h / tests — decision logic fan/pump ไม่เปลี่ยน · PUMP_MAX_RUNTIME_MS ยัง 15 นาที (v2.5.0)
+  Changelog v2.5.0 (2026-07-20) — ยืดเวลาปั๊มเดินต่อเนื่อง 10 → 15 นาที:
+    - หลักฐาน: smartfarm_24h_2026-07-20*.csv จริง — อุณหภูมิ ≥34°C ต่อเนื่อง 11:00-16:00 เฉลี่ย 38.4°C
+      สูงสุด 41.1°C ทั้งที่ความชื้นช่วงนั้นแค่ 38-49% (แห้ง เข้าเงื่อนไข evaporative cooling ที่ควรได้ผลดีสุด)
+    - แก้: PUMP_MAX_RUNTIME_MS (10UL→15UL นาที) — ให้ความชื้นสะสม/ระบายความร้อนได้นานขึ้นก่อนถูกบังคับตัด
+      PUMP_COOLDOWN_MS (พัก 5 นาที) ไม่เปลี่ยน · ค่าเป็น #define ต้อง reflash (ไม่ใช่ threshold ปรับสดจาก dashboard)
+    - ⚠️ พัดลม "ยังพักคู่ปั๊ม" hard ตอน safety cutoff เหมือนเดิม (v2.3.0 — ตัดสินใจ 2026-07-17 คงไว้)
+      เคยพิจารณาแยกพัดลมออกจาก lock กันช่วง blackout แต่ผู้ใช้เลือกคงพฤติกรรมพักคู่กัน (2026-07-20)
+    - ไม่แตะ auto_control_logic.h / tests — decision logic fan/pump ไม่เปลี่ยน มีแค่ตัวเลข timeout
+  Changelog v2.4.0 (2026-07-17) — ออฟไลน์แล้วอุปกรณ์ไม่ดับ (persist config ข้าม reboot/ไฟดับ):
+    - อาการหน้างาน: WiFi หลุด → relay ที่คนสั่ง manual ดับหมด · เหตุ 2 อย่างรวมกัน:
+      1) WiFi หลุด 30 นาที → ESP.restart() (หรือ brownout) → setup() รีเซ็ต ch_isAuto/ch_manual/threshold
+         กลับเป็น compile default → อุปกรณ์ manual-ON ดับ + threshold ที่ตั้งจาก dashboard หาย
+      2) applyManualControl() ถูกเรียกเฉพาะใน poll block ที่ gate ด้วย fbReady() → ออฟไลน์ = manual ไม่เคยถูกขับ
+    - แก้ 1: เก็บ control config ลง NVS (flash) ทุกครั้งที่ dashboard เปลี่ยนค่า (saveControlState) แล้ว
+      restore ตอนบูตก่อนต่อ WiFi (loadControlState) → reboot/ไฟดับ ไม่ทำลายสถานะ (RTC memory ไม่รอดไฟตก แต่ NVS รอด)
+      · เขียนเฉพาะตอนค่าเปลี่ยนจริง (controlDirty) กัน NVS wear
+    - แก้ 2: เรียก applyManualControl() ใน sensor block ทุก 30 วิ (ไม่ผูก fbReady) + เรียกใน setup() หลัง restore
+      → manual channel ถูกบังคับสถานะจริงทั้งตอนออฟไลน์และหลัง reboot · poll 1.5 วิ ยังคุมตอนออนไลน์ให้ตอบไว
+    - หมายเหตุ: auto control ทำงานออฟไลน์อยู่แล้ว (อ่าน SHT35 + threshold ใน RAM) — v2.4.0 เพิ่มให้ manual +
+      ค่า threshold ที่คนตั้งไว้รอดข้าม reboot ด้วย · pump 10-นาที safety ยังคุม manual-ON pump เหมือนเดิม
+  Changelog v2.3.0 (2026-07-17) — พัดลมพักพร้อมปั๊มตอน safety cutoff:
+    - เดิม: pump safety ตัดปั๊มเมื่อเดินเกิน 10 นาที + พัก 5 นาที (pumpLockUntil) แต่ "พัดลม" วิ่งต่อทั้งช่วงพัก
+    - ใหม่: ตอน cutoff ตัดพัดลม (CH3) ด้วย + ล็อกพักพร้อมกัน 5 นาที (fanLockUntil) — พัดลม+ปั๊มพักคู่กัน
+    - พักแบบ hard: ระหว่าง 5 นาที พัดลมไม่เปิดกลับแม้ยังร้อน (ผู้ใช้เลือก 2026-07-17 — ไม่มี hot override)
+      · autoControl() gate ฝั่ง fan-ON ด้วย millis() >= fanLockUntil (คู่ขนานกับ pump gate เดิม)
+    - manual ยังสั่งพัดลมฝืน lock ได้ (สอดคล้องหลักเดิม: ผู้ใช้ไม่ถูกล็อกออกจากระบบตัวเอง) เหมือน pump
+    - push status/fan_locked ขึ้น dashboard (คู่กับ pump_locked เดิม)
   Changelog v2.2.1 (2026-07-16) — DS18B20 ไม่เคยฟื้นถ้าบูตแล้วไม่เจอ (บั๊กจริง ไม่ใช่แค่สาย) + ปิด regression NTP:
     - ⚠️ regression จาก v2.2.0 (code review จับได้): บูตแบบ offline setup() ข้าม syncNTP() แต่ยังเซ็ต
       lastNtpSync=millis() → loop() รอ 6 ชม.ก่อน sync · เมื่อก่อน v2.2.0 reboot ทิ้งเคสนี้ไปเลยจึงไม่เคยเจอ
@@ -169,6 +206,7 @@ WiFiMulti wifiMulti;
 #include <time.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <Preferences.h>
 #include "config.h"
 #include "auto_control_logic.h"
 
@@ -281,7 +319,7 @@ unsigned long lastNtpSync    = 0;
 
 // ── Safety / Worst-case Protection (v1.3.0) ───────────
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
-#define PUMP_MAX_RUNTIME_MS  (10UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 10 นาที (auto/schedule) — ค่าสุดท้าย ตัดสินใจแล้ว 2026-07-07 (เดิม 5 นาที)
+#define PUMP_MAX_RUNTIME_MS  (15UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 15 นาที (auto/schedule) — ยืดจาก 10 นาที ให้ความชื้นสะสมได้นานขึ้น 2026-07-20 (เดิม 10 นาที / ก่อนหน้า 5)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
 #define AIR_TEMP_MIN         -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
 #define AIR_TEMP_MAX          70.0
@@ -333,6 +371,9 @@ unsigned long lastNtpSync    = 0;
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
+// fanLockUntil ถูกถอดออก v2.6.0 — พัดลมไม่พักคู่ปั๊มอีกต่อไป (ทำงานตาม latch อิสระ)
+Preferences   ctrlPrefs;                       // NVS (flash) เก็บ control config ให้รอด reboot + ไฟดับ (v2.4.0)
+bool          controlDirty   = false;          // มี config เปลี่ยนจาก dashboard รอบนี้ → เซฟลง NVS (กันเขียนทุก poll = NVS wear)
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
 int  airSensorFailCount = 0;                   // นับ sensor อากาศอ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
@@ -431,7 +472,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.2.1 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.6.0 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -465,6 +506,13 @@ void setup() {
   const int relayPins[] = {PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4};
   for (int p : relayPins) { pinMode(p, OUTPUT); digitalWrite(p, RELAY_ACTIVE_LOW ? HIGH : LOW); }
 
+  // ── restore control config จาก NVS (v2.4.0) ──────────
+  // ก่อนต่อ WiFi — ถ้าบูตแบบ offline (ไฟดับกลับมาแต่เน็ตยังไม่มา หรือ WiFi 30 นาที restart) จะคุมด้วย
+  // ค่าล่าสุดที่คนตั้งไว้ ไม่ใช่ compile default · แล้วขับ relay ตาม manual state ที่ restore ทันที
+  // (applyManualControl ปกติอยู่หลัง fbReady gate = ออฟไลน์ไม่เคยทำงาน → ต้องเรียกตรงนี้ให้สถานะ manual ติดตั้งแต่บูต)
+  loadControlState();
+  applyManualControl();
+
   // Buzzer — boot-safe: ตั้งเป็น "เงียบ" ก่อน แล้วทดสอบดังสั้นๆ 1 ครั้ง แล้วกลับไปเงียบ
   pinMode(PIN_BUZZER, OUTPUT);
   digitalWrite(PIN_BUZZER, BUZZER_ACTIVE_LOW ? HIGH : LOW);   // เงียบ
@@ -493,7 +541,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.2.1");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.6.0");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -648,6 +696,9 @@ void loop() {
     lastSensorTime = now;
     readSensors();
     autoControl();
+    // v2.6.0: ขับ manual channel เฉพาะตอนออฟไลน์ — ออนไลน์ poll block (ทุก 1.5 วิ) คุมให้อยู่แล้ว
+    // เรียกซ้ำตอนออนไลน์ = งานซ้ำเปล่า · ออฟไลน์/หลัง reboot: การันตี relay ที่คนสั่ง manual-ON ไม่ค้างดับ
+    if (!fbReady()) applyManualControl();
     // checkAlerts() อยู่นอก guard เจตนา — buzzer เป็นอุปกรณ์ local ที่ไม่ต้องใช้เน็ต
     // เดิมอยู่ในกรอบ Firebase.ready() = เน็ตดับแล้วอากาศร้อนวิกฤต คนหน้างานไม่ได้ยินอะไรเลย
     checkAlerts();
@@ -660,7 +711,7 @@ void loop() {
     }
   }
 
-  // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 10 นาทีในโหมดอัตโนมัติ)
+  // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 15 นาทีในโหมดอัตโนมัติ)
   pumpSafetyCheck();
 
   // poll คำสั่งควบคุมทุก CONTROL_POLL_MS (1.5 วิ) — รอ 2 วิหลัง push กัน SSL ชน
@@ -729,6 +780,84 @@ void loop() {
 
 
 // ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────
+// PERSIST control config ลง NVS (flash) — รอดทั้ง reboot และ "ไฟดับ/brownout" (ต่างจาก RTC memory ที่ไม่รอดไฟตก)
+// เหตุผล v2.4.0: WiFi หลุด 30 นาที → ESP.restart() (หรือ brownout) แล้ว setup() รีเซ็ต ch_isAuto/ch_manual/
+//   threshold กลับเป็นค่า compile default → อุปกรณ์ที่คนสั่ง manual-ON ดับหมด = อาการ "ออฟไลน์แล้วทุกอย่างดับ"
+//   เก็บ config ลง NVS ทุกครั้งที่ dashboard เปลี่ยนค่า แล้ว restore ตอนบูตก่อนต่อ WiFi → reboot ไม่ทำลายสถานะ
+// เขียนเฉพาะตอนค่าเปลี่ยนจริง (controlDirty) — กัน NVS wear (flash ~100k write cycle)
+void saveControlState() {
+  ctrlPrefs.begin("sf_ctrl", false);
+  bool a[4], m[4], s[4];
+  for (int i = 0; i < 4; i++) { a[i] = ch_isAuto[i]; m[i] = ch_manual[i]; s[i] = ch_schedEnabled[i]; }
+  ctrlPrefs.putBytes("isAuto",  a, sizeof(a));
+  ctrlPrefs.putBytes("manual",  m, sizeof(m));
+  ctrlPrefs.putBytes("sched",   s, sizeof(s));
+  ctrlPrefs.putBytes("schedOn",  ch_schedOn,  sizeof(ch_schedOn));
+  ctrlPrefs.putBytes("schedOff", ch_schedOff, sizeof(ch_schedOff));
+  ctrlPrefs.putFloat("tOn",    thresh_temp_on);
+  ctrlPrefs.putFloat("tOff",   thresh_temp_off);
+  ctrlPrefs.putFloat("hMin",   thresh_hum_min);
+  ctrlPrefs.putFloat("hMax",   thresh_hum_max);
+  ctrlPrefs.putFloat("tAlert", thresh_temp_alert);
+  ctrlPrefs.putFloat("hAlert", thresh_hum_alert);
+  ctrlPrefs.putFloat("wAlert", thresh_water_temp_alert);
+  ctrlPrefs.putBool ("buzzer", buzzerEnabled);
+  ctrlPrefs.putBool ("valid",  true);
+  ctrlPrefs.end();
+  Serial.println("[NVS] เซฟ control config ลง flash แล้ว — จะ restore อัตโนมัติถ้าบอร์ด reboot/ไฟดับ");
+}
+
+// restore ตอนบูต — ก่อนต่อ WiFi · "valid"=false แปลว่ายังไม่เคยเซฟ (บูตแรก/หลัง flash ใหม่) → คงค่า compile default
+void loadControlState() {
+  ctrlPrefs.begin("sf_ctrl", true);   // read-only
+  if (!ctrlPrefs.getBool("valid", false)) {
+    ctrlPrefs.end();
+    Serial.println("[NVS] ยังไม่มี control config ที่เซฟไว้ — ใช้ค่า default (บูตครั้งแรก หรือหลัง flash ใหม่)");
+    return;
+  }
+  // ⚠️ seed locals จากค่า default ปัจจุบันก่อน — ถ้า getBytes อ่านไม่ครบ (key หาย/ขนาดเพี้ยน จาก
+  //    partial write, brownout กลางเซฟ, layout เก่าข้ามเวอร์ชัน) มันจะ "ไม่แตะ buffer" คืน 0
+  //    ถ้าไม่ seed = stack garbage เข้า ch_isAuto/ch_manual = โหมดรีเลย์มั่วตอนบูต · เขียนเฉพาะ array ที่อ่านครบ
+  bool a[4], m[4], s[4];
+  for (int i = 0; i < 4; i++) { a[i] = ch_isAuto[i]; m[i] = ch_manual[i]; s[i] = ch_schedEnabled[i]; }
+  bool okAuto  = ctrlPrefs.getBytes("isAuto", a, sizeof(a)) == sizeof(a);
+  bool okMan   = ctrlPrefs.getBytes("manual", m, sizeof(m)) == sizeof(m);
+  bool okSched = ctrlPrefs.getBytes("sched",  s, sizeof(s)) == sizeof(s);
+  for (int i = 0; i < 4; i++) {
+    if (okAuto)  ch_isAuto[i]       = a[i];
+    if (okMan)   ch_manual[i]       = m[i];
+    if (okSched) ch_schedEnabled[i] = s[i];
+  }
+  // schedOn/schedOff: อ่านลง temp ก่อน เขียนทับ ch_ เฉพาะตอนอ่านครบ (ไม่ครบ = คงค่า default เดิม)
+  char sOn[4][6], sOff[4][6];
+  if (ctrlPrefs.getBytes("schedOn",  sOn,  sizeof(sOn))  == sizeof(sOn))  memcpy(ch_schedOn,  sOn,  sizeof(sOn));
+  if (ctrlPrefs.getBytes("schedOff", sOff, sizeof(sOff)) == sizeof(sOff)) memcpy(ch_schedOff, sOff, sizeof(sOff));
+  if (!okAuto || !okMan || !okSched)
+    Serial.println("[NVS] ⚠️ control config บางส่วนอ่านไม่ครบ — ใช้ค่า default สำหรับส่วนที่หาย (NVS อาจเสียหาย)");
+  thresh_temp_on          = ctrlPrefs.getFloat("tOn",    thresh_temp_on);
+  thresh_temp_off         = ctrlPrefs.getFloat("tOff",   thresh_temp_off);
+  thresh_hum_min          = ctrlPrefs.getFloat("hMin",   thresh_hum_min);
+  thresh_hum_max          = ctrlPrefs.getFloat("hMax",   thresh_hum_max);
+  thresh_temp_alert       = ctrlPrefs.getFloat("tAlert", thresh_temp_alert);
+  thresh_hum_alert        = ctrlPrefs.getFloat("hAlert", thresh_hum_alert);
+  thresh_water_temp_alert = ctrlPrefs.getFloat("wAlert", thresh_water_temp_alert);
+  buzzerEnabled           = ctrlPrefs.getBool ("buzzer", buzzerEnabled);
+  ctrlPrefs.end();
+  Serial.printf("[NVS] restore control config สำเร็จ — พัดลม=%s ปั๊ม=%s · temp_on=%.1f temp_off=%.1f\n",
+                ch_isAuto[IDX_FAN] ? "AUTO" : "MANUAL", ch_isAuto[IDX_PUMP] ? "AUTO" : "MANUAL",
+                thresh_temp_on, thresh_temp_off);
+}
+
+// อัปเดต threshold float 1 ตัวจาก JSON — คืน true ถ้าเปลี่ยนจริง (ตั้ง controlDirty)
+// ⚠️ epsilon compare (ไม่ใช่ !=): thresholds ปรับทีละ 0.1 จาก dashboard · float จาก Firebase parse
+//    อาจไม่ bit-identical กับค่าใน NVS → != จะ true ทุก poll (1.5 วิ) = เขียน NVS รัว = flash wear
+//    0.01 ต่ำกว่าการปรับจริงมาก แต่กัน noise ระดับ rounding ได้
+static bool applyFloatThresh(FirebaseJson& json, FirebaseJsonData& d, const char* key, volatile float& var) {
+  if (json.get(d, key) && fabsf((float)var - d.floatValue) > 0.01f) { var = d.floatValue; return true; }
+  return false;
+}
+
 // โหลด control state ด้วย 1 call (getJSON) แทน 11 calls แยกกัน — ลด SSL reconnect
 // ⚠️ ฟังก์ชันนี้ poll ทุก CONTROL_POLL_MS (1.5 วิ) ไม่ใช่ init — ห้ามพิมพ์ log ทุกรอบ
 // เดิมพิมพ์ "[Init] Loading control state... OK" ทุกครั้ง = ~16 บรรทัดขยะต่อ 1 บรรทัดจริง
@@ -763,21 +892,35 @@ void loadControlFromFirebase() {
       // mode เปลี่ยน = เหตุการณ์จริงที่ควรเห็นใน log (ช่วยอธิบายว่าทำไม [AUTO] หยุด/เริ่ม)
       if (ch_isAuto[i] != wasAuto) {
         Serial.printf("[Control] %s → %s\n", chKeys[i], ch_isAuto[i] ? "AUTO" : "MANUAL");
+        controlDirty = true;   // v2.4.0: mode เปลี่ยน → เซฟลง NVS ให้รอด reboot
       }
     }
-    if (json.get(d, b + "manual_state"))  ch_manual[i]      = d.boolValue;
-    if (json.get(d, b + "schedule/enabled"))  ch_schedEnabled[i] = d.boolValue;
-    if (json.get(d, b + "schedule/on_time"))  { strncpy(ch_schedOn[i],  d.stringValue.c_str(), 5); ch_schedOn[i][5]='\0'; }
-    if (json.get(d, b + "schedule/off_time")) { strncpy(ch_schedOff[i], d.stringValue.c_str(), 5); ch_schedOff[i][5]='\0'; }
+    // เทียบก่อนเขียน — ตั้ง controlDirty เฉพาะตอนค่าต่างจริง (กัน NVS wear จาก poll ทุก 1.5 วิ)
+    if (json.get(d, b + "manual_state") && ch_manual[i] != d.boolValue) {
+      ch_manual[i] = d.boolValue; controlDirty = true;
+    }
+    if (json.get(d, b + "schedule/enabled") && ch_schedEnabled[i] != d.boolValue) {
+      ch_schedEnabled[i] = d.boolValue; controlDirty = true;
+    }
+    if (json.get(d, b + "schedule/on_time")  && strncmp(ch_schedOn[i],  d.stringValue.c_str(), 5) != 0) {
+      strncpy(ch_schedOn[i],  d.stringValue.c_str(), 5); ch_schedOn[i][5]='\0';  controlDirty = true;
+    }
+    if (json.get(d, b + "schedule/off_time") && strncmp(ch_schedOff[i], d.stringValue.c_str(), 5) != 0) {
+      strncpy(ch_schedOff[i], d.stringValue.c_str(), 5); ch_schedOff[i][5]='\0'; controlDirty = true;
+    }
   }
-  if (json.get(d, "thresholds/temp_on"))     thresh_temp_on  = d.floatValue;
-  if (json.get(d, "thresholds/temp_off"))    thresh_temp_off = d.floatValue;
-  if (json.get(d, "thresholds/humidity_min")) thresh_hum_min = d.floatValue;
-  if (json.get(d, "thresholds/humidity_max")) thresh_hum_max = d.floatValue;
-  if (json.get(d, "thresholds/temp_alert"))        thresh_temp_alert       = d.floatValue;
-  if (json.get(d, "thresholds/humidity_alert"))   thresh_hum_alert        = d.floatValue;
-  if (json.get(d, "thresholds/water_temp_alert")) thresh_water_temp_alert = d.floatValue;
-  if (json.get(d, "buzzer_enabled"))              buzzerEnabled           = d.boolValue;
+  // threshold floats — helper คุมการ pair key↔var + epsilon compare ที่เดียว (กัน mis-pair + NVS thrash)
+  if (applyFloatThresh(json, d, "thresholds/temp_on",          thresh_temp_on))          controlDirty = true;
+  if (applyFloatThresh(json, d, "thresholds/temp_off",         thresh_temp_off))         controlDirty = true;
+  if (applyFloatThresh(json, d, "thresholds/humidity_min",     thresh_hum_min))          controlDirty = true;
+  if (applyFloatThresh(json, d, "thresholds/humidity_max",     thresh_hum_max))          controlDirty = true;
+  if (applyFloatThresh(json, d, "thresholds/temp_alert",       thresh_temp_alert))       controlDirty = true;
+  if (applyFloatThresh(json, d, "thresholds/humidity_alert",   thresh_hum_alert))        controlDirty = true;
+  if (applyFloatThresh(json, d, "thresholds/water_temp_alert", thresh_water_temp_alert)) controlDirty = true;
+  if (json.get(d, "buzzer_enabled") && buzzerEnabled != d.boolValue) { buzzerEnabled = d.boolValue; controlDirty = true; }
+
+  // เซฟครั้งเดียวท้ายฟังก์ชัน ถ้ามีอะไรเปลี่ยน — dashboard เปลี่ยนค่า = คนกดเอง (ไม่บ่อย) NVS เขียนไหว
+  if (controlDirty) { saveControlState(); controlDirty = false; }
 }
 
 // ─────────────────────────────────────────────────────
@@ -940,6 +1083,9 @@ void autoControl() {
   // precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
   // CH3 พัดลม — เปิดตาม dec.fanOn (ร้อน หรือ แห้ง)
   if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
+    // พัดลมทำงานตาม latch อิสระ ไม่ผูกกับ pump safety cutoff (v2.6.0 — ยกเลิก fanLockUntil)
+    // เหตุผล: พัดลมไม่พ่นน้ำ ไม่มีเหตุผลด้านความปลอดภัยต้องพัก · CSV 2026-07-20 พิสูจน์ว่าการพักคู่ปั๊ม
+    // ทำให้พัดลมดับ 33% ของเวลาช่วงร้อน 7 ชม. = ต้นเหตุ overshoot · พัดลมพักเองเมื่อ latch ร้อน/แห้งเคลียร์
     if (dec.fanOn && !ch3_fanIn) {
       ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);
       Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanWhy, avgAT, avgAH);
@@ -1027,7 +1173,7 @@ bool timeValid() {
 }
 
 // ─────────────────────────────────────────────────────
-// PUMP SAFETY — ตัดปั๊มถ้าเดินต่อเนื่องเกิน 10 นาที (เฉพาะ auto/schedule)
+// PUMP SAFETY — ตัดปั๊มถ้าเดินต่อเนื่องเกิน 15 นาที (เฉพาะ auto/schedule)
 // กันน้ำท่วม / ปั๊มไหม้แห้ง · โหมด manual = คนคุมเอง ไม่ตัดอัตโนมัติ
 void pumpSafetyCheck() {
   unsigned long now = millis();
@@ -1041,11 +1187,12 @@ void pumpSafetyCheck() {
       lastPumpSwitchTime = now;
       pumpOnSince   = 0;
       pumpLockUntil = now + PUMP_COOLDOWN_MS;
-      Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 10 นาที (พัก 5 นาที)");
+      // v2.6.0: ตัดเฉพาะปั๊ม — พัดลมไม่ถูกแตะ ทำงานต่อตาม latch (ยกเลิกการพักคู่ v2.3.0)
+      Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 15 นาที (พักปั๊ม 5 นาที · พัดลมทำงานต่อ)");
       if (fbReady()) {
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-          "ตัดปั๊มอัตโนมัติ — ทำงานต่อเนื่องเกิน 10 นาที (พัก 5 นาที) ตรวจสอบระดับน้ำ");
+          "ตัดปั๊มอัตโนมัติ — ปั๊มทำงานต่อเนื่องเกิน 15 นาที (พักปั๊ม 5 นาที) ตรวจสอบระดับน้ำ");
       }
       if (buzzerEnabled) buzzerBeep(2);
     }
@@ -1068,7 +1215,7 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.2.1");
+  Firebase.setString(fbData, base + "status/firmware",    "2.6.0");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   Firebase.setString(fbData, base + "status/last_reset_reason", resetReasonStr(bootResetReason));
@@ -1085,6 +1232,7 @@ void pushStatus() {
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
   Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
   Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
+  Firebase.setBool (fbData, base + "status/fan_locked",  false);   // v2.6.0: พัดลมไม่ล็อกแล้ว — คงไว้เป็น false กัน dashboard พังจาก field หาย
   Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
   Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
 }
