@@ -844,7 +844,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v2.1.1 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.7.1 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1096,7 +1096,9 @@ function startListeners() {
       document.getElementById('airHumGauge').innerHTML = buildGauge(rh, 0, 100, '#2563eb', '%');
       if      (rh < T.humidity_alert) { setBadge('airHumBadge','badge-danger','แห้งมาก'); setText('airHumStatus',`🔴 ความชื้นต่ำมาก (ต่ำกว่า ${T.humidity_alert}%)`); }
       else if (rh < T.humidity_min)   { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus',`🟡 แห้ง <${T.humidity_min}% — ปั๊ม+พัดลมทำงาน`); }
-      else if (T.humidity_vent > 0 && rh >= T.humidity_vent) { setBadge('airHumBadge','badge-warn','ชื้นมาก'); setText('airHumStatus',`🌬️ ชื้นมาก ≥${T.humidity_vent}% — พัดลมไล่ความชื้น (ปั๊มพัก)`); }
+      // ต้องเช็คเงื่อนไขเดียวกับ ventIsUsable() ใน firmware — ไม่งั้นหน้าจอบอกว่า "พัดลมไล่ความชื้น"
+      // ทั้งที่บอร์ดปิดฟีเจอร์ทิ้งไปแล้ว (และยังบัง badge "ปั๊มพัก" ที่ตรงกับของจริงด้วย)
+      else if (ventUsable(T) && rh >= T.humidity_vent) { setBadge('airHumBadge','badge-warn','ชื้นมาก'); setText('airHumStatus',`🌬️ ชื้นมาก ≥${T.humidity_vent}% — พัดลมไล่ความชื้น (ปั๊มพัก)`); }
       else if (rh >= T.humidity_max)  { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus',`💧 ความชื้นสูง ≥${T.humidity_max}% — ปั๊มพัก (พ่นน้ำไม่ช่วยแล้ว)`); }
       else                            { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
     }
@@ -1180,22 +1182,11 @@ function startListeners() {
         humidity_alert:   th.humidity_alert   ?? alertThresholds.humidity_alert,
         water_temp_alert: th.water_temp_alert ?? alertThresholds.water_temp_alert,
       };
-      // ไฮไลต์ preset ที่ตรง
-      let matched = false;
-      Object.entries(PRESETS).forEach(([k,p]) => {
-        if (p.temp_on===th.temp_on && p.temp_off===th.temp_off && p.humidity_min===th.humidity_min
-            && p.humidity_max===th.humidity_max && (th.humidity_vent ?? p.humidity_vent)===p.humidity_vent
-            && p.temp_alert===th.temp_alert
-            && p.humidity_alert===th.humidity_alert && p.water_temp_alert===th.water_temp_alert) {
-          document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-          document.getElementById('preset-'+k)?.classList.add('active-preset');
-          matched = true;
-        }
-      });
-      if (!matched) {
-        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-        document.getElementById('preset-custom')?.classList.add('active-preset');
-      }
+      // ไฮไลต์ preset ที่ตรง — เทียบกับ alertThresholds ที่เพิ่ง rebuild (แหล่งเดียวกับที่ badge ใช้)
+      // DB ก่อน v2.7.0 ไม่มี humidity_vent จึงต้องผ่าน fallback ตัวนี้ ไม่ใช่ตั้ง fallback ตัวที่ 2
+      // หมายเหตุ: ค่าที่ ESP32 ใช้จริงอาจต่างถ้า NVS ค้างค่าเก่า (ino:855 getFloat("hVent"))
+      // ไฮไลต์นี้จึงเป็นแค่ hint ของ UI ไม่ใช่ ground truth — ของจริงต้องกด Save ทับ
+      highlightMatchingPreset(alertThresholds);
     }
     // Buzzer enable state (ถ้าไม่มีค่า = เปิดอยู่ เพราะ firmware เดิม beep เสมอ)
     updateBuzzerChip(d.buzzer_enabled === false ? false : true);
@@ -1428,6 +1419,30 @@ function updateScheduleUI(id, s) {
 // ── Thresholds ────────────────────────────────────────
 // live copy ของ threshold ทั้งหมด — sensor badges + checkAlerts() ใช้ค่านี้ (ไม่ hardcode)
 // อัปเดตจาก /smartfarm/control listener ทุกครั้งที่พนักงานบันทึกค่าใหม่
+// ต้องตรงกับ VENT_HYST ใน auto_control_logic.h และ rules humidity_vent ใน database.rules.json
+// (ทั้ง 3 layer ต้องแก้พร้อมกันถ้าจูนใหม่ — ไม่มี codegen เชื่อมให้)
+const VENT_HYST_PCT = 5;
+// เงื่อนไขเดียวกับ ventIsUsable() ใน auto_control_logic.h — firmware ปิด vent ทิ้งถ้าไม่ผ่าน
+// รับ object ที่มี humidity_vent / humidity_max (เช่น alertThresholds)
+function ventUsable(t) {
+  return t.humidity_vent > VENT_HYST_PCT && t.humidity_vent >= t.humidity_max + VENT_HYST_PCT;
+}
+
+// 8 field ที่ประกอบเป็น preset — เพิ่ม threshold ใหม่ต้องมาเติมที่นี่ "ที่เดียว"
+const PRESET_FIELDS = ['temp_on','temp_off','humidity_min','humidity_max','humidity_vent',
+                       'temp_alert','humidity_alert','water_temp_alert'];
+
+// หา preset ที่ตรงกับค่าชุดหนึ่ง แล้วไฮไลต์ปุ่ม · คืน key ที่ตรง (null = กำหนดเอง)
+// เดิมโค้ดนี้ถูกก๊อป 2 ที่ (listener กับ saveThresholds) แล้วแก้ไปคนละแบบ — vent เช็คไม่เหมือนกัน
+// รวมเป็นฟังก์ชันเดียวเพื่อให้ field ใหม่เพิ่มที่เดียวจบ ไม่หลุด path ใดpath หนึ่ง
+function highlightMatchingPreset(values) {
+  const key = Object.entries(PRESETS).find(([, p]) =>
+    PRESET_FIELDS.every(f => p[f] === values[f])
+  )?.[0] ?? 'custom';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active-preset'));
+  document.getElementById('preset-' + key)?.classList.add('active-preset');
+  return key === 'custom' ? null : key;
+}
 let alertThresholds = {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:38, humidity_alert:40, water_temp_alert:35};
 
 const PRESETS = {
@@ -1464,12 +1479,29 @@ function saveThresholds() {
   if ([ton, toff, hmin, hmax, hVent, tAlert, hAlert, wtAlert].some(Number.isNaN)) {
     showToast('⚠️ กรอกตัวเลขให้ครบทุกช่อง (มีช่องว่างเปล่าหรือไม่ใช่ตัวเลข)'); return;
   }
+  // เช็คช่วงค่าก่อนเช็คลำดับ — ไม่งั้นค่าเกินพิสัยไปโผล่เป็น error ลำดับที่ทำให้เข้าใจผิด
+  // (เช่น hmax=150 จะฟ้องว่า "vent ต้อง > 150%" ซึ่งทำตามไม่ได้ แทนที่จะฟ้องว่า hmax เกิน 100)
+  // input type=number ไม่กัน user พิมพ์เกิน max — ต้องเช็คเอง ไม่งั้นโดน rules ปัดทีหลัง
+  if ([hmin, hmax, hVent, hAlert].some(v => v < 0 || v > 100)) {
+    showToast('⚠️ ค่าความชื้นทุกช่องต้องอยู่ระหว่าง 0–100%'); return;
+  }
   if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
   if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
   if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
   if (hmax <= hmin) { showToast('⚠️ Humidity Max ต้องมากกว่า Humidity Min'); return; }
-  // vent: 0 = ปิดฟีเจอร์ · ถ้าเปิด (>0) ควร > humidity_max ไม่งั้นชนกับเกณฑ์ปิดปั๊ม
-  if (hVent > 0 && hVent <= hmax) { showToast('⚠️ พัดลมไล่ความชื้นต้องมากกว่า Humidity Max (หรือตั้ง 0 เพื่อปิด)'); return; }
+  // vent: 0 = ปิดฟีเจอร์ · ถ้าเปิดต้องเว้นจาก humidity_max อย่างน้อย VENT_HYST
+  // ไม่ใช่แค่ "> hmax" — wet latch ค้างได้ถึง vent-VENT_HYST ส่วนปั๊มหยุดที่ hmax
+  // ถ้าช่องนี้เหลื่อมกัน จะมีช่วง RH ที่พัดลมไล่ชื้นออกพร้อมกับปั๊มพ่นเข้า (ดู ino:1090)
+  const ventEnabled = hVent > 0;
+  const ventMin = hmax + VENT_HYST_PCT;
+  // ถ้า hmax สูงจน ventMin ทะลุ 100 จะไม่มีค่า vent ใดใช้ได้เลย — บอกให้ลด Humidity Max
+  // ไม่ใช่ขอค่าที่กรอกไม่ได้ (เช่น hmax=97 -> "ต้องอย่างน้อย 102%")
+  if (ventEnabled && ventMin > 100) {
+    showToast(`⚠️ Humidity Max ${hmax}% สูงเกินกว่าจะเปิดพัดลมไล่ความชื้นได้ (ต้องการ ${ventMin}% ซึ่งเกิน 100%) · ลด Humidity Max ให้ ≤ ${100 - VENT_HYST_PCT}% หรือตั้งพัดลมไล่ชื้น = 0`); return;
+  }
+  if (ventEnabled && (hVent < ventMin || hVent <= VENT_HYST_PCT)) {
+    showToast(`⚠️ พัดลมไล่ความชื้นต้องอย่างน้อย ${ventMin}% (= Humidity Max ${hmax}% + ${VENT_HYST_PCT}%) · หรือตั้ง 0 เพื่อปิดฟีเจอร์`); return;
+  }
   const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, humidity_max:hmax, humidity_vent:hVent,
                 temp_alert:tAlert, humidity_alert:hAlert, water_temp_alert:wtAlert};
   db.ref('/smartfarm/control/thresholds').set(data).then(() => {
@@ -1477,20 +1509,14 @@ function saveThresholds() {
     // (เดิม set แค่ 2 field ทำให้ badge อ่าน temp_on/off, humidity_min/max, water_temp_alert เป็น undefined)
     logAction(`ตั้งค่า — พัดลมเปิด ≥${ton}°C ปิด ≤${toff}°C · ปั๊มเปิด ≤${hmin}% ปิด ≥${hmax}% · พัดลมไล่ชื้น ${hVent>0?'≥'+hVent+'%':'ปิด'} · Alert อากาศ ${tAlert}°C / ${hAlert}% · น้ำ ${wtAlert}°C`);
     showToast('✅ บันทึกแล้ว · ESP32 รับค่าใหม่ทันที');
-    // ทำให้ preset ไฮไลต์ถ้า match
-    let matched = false;
-    Object.entries(PRESETS).forEach(([k,p]) => {
-      if (p.temp_on===ton && p.temp_off===toff && p.humidity_min===hmin && p.humidity_max===hmax
-          && p.humidity_vent===hVent && p.temp_alert===tAlert && p.humidity_alert===hAlert && p.water_temp_alert===wtAlert) {
-        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-        document.getElementById('preset-'+k)?.classList.add('active-preset');
-        matched = true;
-      }
-    });
-    if (!matched) {
-      document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-      document.getElementById('preset-custom')?.classList.add('active-preset');
-    }
+    // ทำให้ preset ไฮไลต์ถ้า match — ฟังก์ชันเดียวกับ listener (data คือ 8 field ที่เพิ่งเขียนไป)
+    highlightMatchingPreset(data);
+  }, err => {
+    // ใช้ .then(onSuccess, onError) ไม่ใช่ .catch() ต่อท้าย — .catch จะกินสิ่งที่ throw ใน onSuccess ด้วย
+    // (เช่น logAction พัง) แล้วฟ้อง "บันทึกไม่สำเร็จ" ทั้งที่เขียนสำเร็จแล้ว = หลอก user ให้กดซ้ำ
+    // แบบ 2 อาร์กิวเมนต์นี้ดักเฉพาะ .set() reject เท่านั้น — ซึ่งคือกรณี rules ปัดค่า
+    console.error('saveThresholds', err);
+    showToast('❌ บันทึกไม่สำเร็จ — ค่าไม่ผ่าน validation ของ Firebase (ค่าเดิมยังใช้อยู่)');
   });
 }
 

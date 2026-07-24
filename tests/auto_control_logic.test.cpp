@@ -235,7 +235,7 @@ int main() {
   printf("== v2.7.0 vent: พัดลมไล่ความชื้นเมื่อ RH สูง (ปั๊มไม่แตะ) · ventOn=80 ventOff=75 ==\n");
   {
     // ฝนตก: ไม่ร้อน ไม่แห้ง แต่ RH พุ่งเกิน vent -> พัดลมเปิดไล่ความชื้น ปั๊มปิด
-    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75;
+    auto in = base(); in.ventThreshold = 80;
     in.airTemp = 30; in.airHumidity = 82;
     auto d = computeAutoDecisions(in);
     check(d.wetOn && d.fanOn, "RH 82 ≥ vent 80 -> wet latch เปิด, พัดลมเปิดไล่ความชื้น");
@@ -243,33 +243,41 @@ int main() {
   }
   {
     // dead-zone 75..80: latch คงสถานะ (hysteresis กันกระพริบ)
-    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 30; in.airHumidity = 77;
+    auto in = base(); in.ventThreshold = 80; in.airTemp = 30; in.airHumidity = 77;
     in.wetOn = true;
     check(computeAutoDecisions(in).wetOn, "RH 77 dead-zone, wet เปิด -> คงเปิด");
     in.wetOn = false;
     check(!computeAutoDecisions(in).wetOn, "RH 77 dead-zone, wet ปิด -> คงปิด");
   }
   {
-    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 30; in.airHumidity = 74;
+    auto in = base(); in.ventThreshold = 80; in.airTemp = 30; in.airHumidity = 74;
     in.wetOn = true;
     check(!computeAutoDecisions(in).wetOn, "RH 74 ≤ ventOff 75 -> wet latch ปิด");
   }
   {
-    // ปิดฟีเจอร์ (ventOnHum=0 จาก base) -> RH สูงแค่ไหนก็ไม่เปิด wet (backward compatible กับเทสต์/โค้ดเก่า)
+    // ปิดฟีเจอร์ (ventThreshold=0 จาก base) -> RH สูงแค่ไหนก็ไม่เปิด wet (backward compatible กับเทสต์/โค้ดเก่า)
     auto in = base(); in.airTemp = 30; in.airHumidity = 95;
     check(!computeAutoDecisions(in).wetOn && !computeAutoDecisions(in).fanOn,
-          "ventOnHum=0 (ปิดฟีเจอร์) -> RH 95 ไม่มี wet, พัดลมไม่เปิดจาก vent");
+          "ventThreshold=0 (ปิดฟีเจอร์) -> RH 95 ไม่มี wet, พัดลมไม่เปิดจาก vent");
+  }
+  {
+    // user ปิดฟีเจอร์ "ขณะพัดลมไล่ชื้นอยู่" — wet ต้องถูกล้าง ไม่ใช่ค้างเปิดถาวร
+    // (ครอบ branch `ventOn <= 0 -> wet = false` ที่ auto_control_logic.h:106
+    //  ซึ่งเทสต์ข้างบนไม่แตะเพราะ base() ให้ wetOn=false มาแล้ว — ลบบรรทัดนั้นทิ้งก็ยัง PASS)
+    auto in = base(); in.airTemp = 30; in.airHumidity = 95; in.wetOn = true;
+    auto d = computeAutoDecisions(in);
+    check(!d.wetOn && !d.fanOn, "ตั้ง humidity_vent=0 ขณะ wet ติดอยู่ที่ RH 95 -> ล้าง latch + พัดลมปิด");
   }
   {
     // vent ไม่แตะ latch อื่น: ร้อน+ชื้นเกิน -> พัดลมเปิด (ร้อน OR wet), ปั๊มปิด (humid gate เดิม)
-    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 37; in.airHumidity = 85;
+    auto in = base(); in.ventThreshold = 80; in.airTemp = 37; in.airHumidity = 85;
     auto d = computeAutoDecisions(in);
     check(d.fanOn && d.wetOn && d.hotOn, "ร้อน+ชื้นเกิน+vent -> พัดลมเปิด, wet+hot ติดทั้งคู่");
     check(!d.pumpOn, "ร้อน+ชื้นเกิน -> ปั๊มยังปิด (vent ไม่ปลุกปั๊ม)");
   }
   {
     // crossing: RH แกว่งรอบ ventOn=80 (ไม่ตกใต้ ventOff=75) -> พัดลมสลับ ≤1
-    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 30;
+    auto in = base(); in.ventThreshold = 80; in.airTemp = 30;
     const float t[] = {30, 30, 30, 30, 30, 30};
     const float h[] = {79.5f, 80.4f, 79.6f, 80.3f, 79.7f, 80.5f};
     auto c = runSequence(in, t, h, 6);
@@ -278,17 +286,27 @@ int main() {
   }
   {
     // sensor เสีย ต้องล้าง wet latch ด้วย
-    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.sensorOk = false;
+    auto in = base(); in.ventThreshold = 80; in.sensorOk = false;
     in.airTemp = 30; in.airHumidity = 90; in.wetOn = true;
     auto d = computeAutoDecisions(in);
     check(!d.wetOn && !d.fanOn, "sensorOk=false -> ล้าง wet latch + พัดลมปิด");
   }
 
   {
-    // เอกสารอันตราย: ถ้า ventOff แตะ 0 (ventOn เล็กเกินไป) wet latch จะค้างเปิดถาวร — RH ไม่มีทาง ≤0
-    // firmware กันด้วยการปิดฟีเจอร์เมื่อ thresh_hum_vent ≤ VENT_HYST (autoControl ตั้ง ventOn=0) — เทสต์นี้ยืนยันเหตุผล
-    auto in = base(); in.ventOnHum = 4; in.ventOffHum = 0; in.airTemp = 30; in.airHumidity = 30; in.wetOn = true;
-    check(computeAutoDecisions(in).wetOn, "ventOff=0: wet ค้างเปิดที่ RH 30 (เหตุผลที่ firmware clamp ventOn > VENT_HYST)");
+    // เดิมอันตราย: ventThreshold เล็กเกิน -> ventOff แตะ 0 -> wet ค้างเปิดถาวร (RH ไม่มีทาง ≤0)
+    // ตอนนี้ clamp อยู่ใน computeAutoDecisions() แล้ว สถานะนั้นสร้างไม่ได้อีก — ปิดฟีเจอร์ทิ้งเลย
+    auto in = base(); in.ventThreshold = 4; in.airTemp = 30; in.airHumidity = 30; in.wetOn = true;
+    check(!computeAutoDecisions(in).wetOn, "ventThreshold=4 (เล็กเกิน) -> clamp ปิดฟีเจอร์ + ล้าง wet (ไม่ค้าง)");
+  }
+  {
+    // guard ต้อง "เลือกได้จริง" ไม่ใช่จริงเสมอ/เท็จเสมอ — เช็คตรงเส้น hmax + VENT_HYST
+    // (เทสต์ sweep ด้านล่างใช้ ventIsUsable() ตัวเดียวกันนี้ ถ้า guard เพี้ยน sweep จะกลายเป็น vacuous)
+    check(!ventIsUsable(4,  75), "ventIsUsable: 4 (≤VENT_HYST) -> false");
+    check(!ventIsUsable(76, 75), "ventIsUsable: gap 1 < VENT_HYST -> false (ช่องที่ปั๊มตีกับ vent)");
+    check(!ventIsUsable(79, 75), "ventIsUsable: gap 4 < VENT_HYST -> false");
+    check( ventIsUsable(80, 75), "ventIsUsable: gap 5 พอดี -> true (เส้นที่ preset ทั้ง 3 ตัวอยู่)");
+    check( ventIsUsable(90, 75), "ventIsUsable: gap 15 -> true");
+    check( ventIsUsable(90, 85), "ventIsUsable: preset summer (85/90) -> true");
   }
 
   printf("== v2.7.0: invariant pumpOn -> fanOn ยังครบเมื่อเปิด vent (sweep) ==\n");
@@ -299,13 +317,44 @@ int main() {
         for (int latch = 0; latch < 16; latch++) {   // 4 latch = 16 combo
           AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
                                   (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0,
-                                  80, 75, (latch & 8) != 0};
+                                  80, (latch & 8) != 0};   // vent 80 = pumpOffHum 75 + VENT_HYST
           auto d = computeAutoDecisions(in);
           if (d.pumpOn && !d.fanOn) violated = true;
         }
       }
     }
     check(!violated, "vent เปิด: ทุก state pumpOn -> fanOn (vent เพิ่มแค่ fan ไม่แตะ pump)");
+  }
+
+  printf("== vent ไม่ตีกับปั๊ม: เว้น vent จาก hmax ≥ VENT_HYST แล้ว ห้ามมี state ที่ wet+pump ติดพร้อมกัน ==\n");
+  {
+    // wet ค้างได้ทั้งช่วง [ventOff, ventOn) แต่ปั๊มถูกบล็อกเฉพาะตอน RH ≥ hmax (saturated)
+    // ถ้า ventOff < hmax จะเหลื่อมกัน = พัดลมไล่ชื้นออกขณะปั๊มพ่นเข้า · ต้อง ventOn ≥ hmax + VENT_HYST
+    // guarded อ่านจาก ventIsUsable() ตัวจริงที่ firmware ใช้ — ไม่ใช่เขียน clamp ซ้ำในเทสต์
+    // (ถ้าเขียนซ้ำ: จูน VENT_HYST เป็น 3 แล้วเทสต์ยังผ่านทั้งที่ firmware เพี้ยน)
+    // grid หยาบพอครอบทุกจุดตัด threshold แต่ไม่ระเบิดเวลารัน (เดิม 1% ทุกแกน = ~8 วินาที)
+    bool conflict = false, conflictUnguarded = false;
+    for (float hmax = 40; hmax <= 90; hmax += 5.0f) {
+      for (float vent = 10; vent <= 100; vent += 1.0f) {
+        const bool guarded = ventIsUsable(vent, hmax);
+        for (float t = 20; t <= 45; t += 2.5f) {
+          for (float h = 0.5f; h <= 100; h += 1.0f) {
+            for (int latch = 0; latch < 16; latch++) {
+              AutoControlInputs in = {true, t, h, 35, 32, hmax - 15, hmax,
+                                      (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0,
+                                      vent, (latch & 8) != 0};
+              auto d = computeAutoDecisions(in);
+              if (d.wetOn && d.pumpOn) { if (guarded) conflict = true; else conflictUnguarded = true; }
+            }
+          }
+        }
+      }
+    }
+    check(!conflict, "vent ≥ hmax + VENT_HYST -> ไม่มี state ใดที่ปั๊มพ่นขณะพัดลมไล่ชื้น");
+    // clamp อยู่ใน computeAutoDecisions() แล้ว config ที่เว้นไม่ถึงจึงไม่มี wet เลย -> ตีกันไม่ได้ตั้งแต่ต้น
+    // (ก่อน refactor clamp อยู่ที่ .ino สภาพตีกันสร้างได้จริง — นั่นคือบั๊กที่ทำให้ต้องย้ายมาตรงนี้)
+    check(!conflictUnguarded, "config ที่เว้นไม่ถึง VENT_HYST -> clamp ปิด vent ทิ้ง ไม่เหลือ state ตีกัน");
+    // ความ "ไม่ vacuous" พิสูจน์ที่ ventIsUsable() ด้านบนแทน (guard เลือกได้จริงตรงเส้น)
   }
 
   printf("== sensorOk=false: ไม่มีชุดค่า/latch ใดปลุกรีเลย์ได้เลย (sweep ทั้งกริด) ==\n");
@@ -325,6 +374,10 @@ int main() {
   }
 
   printf("== พัดลมเปิดเสมอเมื่อปั๊มเปิด (ปั๊มไม่มีทางทำงานลำพัง) ==\n");
+  // ⚠️ อย่ายุบรวมกับ sweep "invariant ... เมื่อเปิด vent" ด้านบน — ก้อนนั้นตั้ง ventThreshold=80 เสมอ
+  // (wet ติดใหม่ได้เองทุกครั้งที่ h ข้าม 80) จึงไม่เคยผ่าน branch ventOn <= 0 เลย
+  // ก้อนนี้ initializer 10 ค่า -> ventThreshold zero-init = 0 = ฟีเจอร์ vent ปิด = path backward-compat
+  // (deployment ที่ humidity_vent=0) ซึ่งเป็น config เดียวที่ครอบคลุมได้จากตรงนี้เท่านั้น
   {
     bool violated = false;
     for (float t = 20; t <= 45; t += 0.5f) {
@@ -337,7 +390,7 @@ int main() {
         }
       }
     }
-    check(!violated, "ทุก state: pumpOn -> fanOn (ไม่มีพ่นน้ำโดยพัดลมดับ)");
+    check(!violated, "vent ปิด (ventThreshold=0): ทุก state pumpOn -> fanOn (ไม่มีพ่นน้ำโดยพัดลมดับ)");
   }
 
   printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "SOME FAILED", failures, failures == 1 ? "" : "s");

@@ -55,6 +55,7 @@ describe("control/thresholds — hysteresis + type validation", () => {
   const VALID = {
     temp_on: 35, temp_off: 32,
     humidity_min: 60, humidity_max: 75,
+    humidity_vent: 80,
     temp_alert: 40, humidity_alert: 40,
     water_temp_alert: 35,
   };
@@ -74,6 +75,103 @@ describe("control/thresholds — hysteresis + type validation", () => {
     const db = emailUser().database();
     const bad = { ...VALID, humidity_min: 80, humidity_max: 75 };
     await assertFails(db.ref("/smartfarm/control/thresholds").set(bad));
+  });
+
+  // ── humidity_vent (v2.7.0 vent) ────────────────────────────────────────
+  // firmware ปิดฟีเจอร์เงียบๆ ถ้า vent <= VENT_HYST(5) หรือ vent <= humidity_max
+  // rules ต้องกันไว้ก่อน ไม่งั้น dashboard โชว์ว่าตั้งได้ แต่ ESP32 ไม่ทำอะไรเลย
+
+  test("ACCEPTS humidity_vent = 0 (feature disabled)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: 0 }));
+  });
+
+  test("REJECTS humidity_vent <= humidity_max (fan would vent while pump still sprays)", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: 70 }));
+  });
+
+  // wet latch ค้างได้ทั้งช่วง [vent-5, vent) แต่ปั๊มหยุดที่ humidity_max
+  // ถ้า vent - humidity_max < 5 จะมีช่อง RH ที่พัดลมไล่ชื้นออกพร้อมปั๊มพ่นเข้า (พิสูจน์ใน logic test)
+  test("REJECTS humidity_vent within VENT_HYST of humidity_max (pump-vs-vent conflict window)", async () => {
+    const db = emailUser().database();
+    // hmax 79 + vent 80: vent > hmax แต่เว้นแค่ 1% -> ที่ RH 76 ปั๊มกับพัดลมตีกัน
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_max: 79, humidity_vent: 80 }));
+  });
+
+  test("ACCEPTS humidity_vent exactly humidity_max + VENT_HYST (boundary all presets sit on)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_max: 75, humidity_vent: 80 }));
+  });
+
+  test("REJECTS humidity_vent <= VENT_HYST(5) — firmware would silently disable it", async () => {
+    const db = emailUser().database();
+    const bad = { ...VALID, humidity_min: 1, humidity_max: 3, humidity_vent: 4, humidity_alert: 0 };
+    await assertFails(db.ref("/smartfarm/control/thresholds").set(bad));
+  });
+
+  test("REJECTS humidity_vent > 100", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: 150 }));
+  });
+
+  test("REJECTS non-numeric humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: "high" }));
+  });
+
+  // reciprocal guard: ยกแค่ humidity_max ทีหลังต้องไม่แซง humidity_vent ที่เก็บไว้แล้ว
+  test("REJECTS partial update raising humidity_max above stored humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // vent 80 / max 75
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_max: 95 }));
+  });
+
+  test("REJECTS partial update pulling humidity_max within VENT_HYST of humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // vent 80 / max 75
+    // 78 < 80 แต่เว้นแค่ 2% — เคยเขียนเทสต์นี้เป็น assertSucceeds ตอนคิดว่าเงื่อนไขคือ "max < vent"
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_max: 78 }));
+  });
+
+  test("ACCEPTS partial update keeping humidity_max at least VENT_HYST below humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ humidity_max: 70 }));
+  });
+
+  // ทั้ง 3 preset ในหน้า dashboard ต้องเขียนผ่าน rules ได้ — preset ที่ rules ปัดคือบั๊กที่ผู้ใช้เจอทันที
+  // ค่าต้องตรงกับ PRESETS ใน dashboard/index.html (summer / normal / rainy)
+  const DASHBOARD_PRESETS = {
+    summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, humidity_vent:90, temp_alert:38, humidity_alert:50, water_temp_alert:34},
+    normal: {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:40, humidity_alert:40, water_temp_alert:35},
+    rainy:  {temp_on:38, temp_off:35, humidity_min:50, humidity_max:65, humidity_vent:85, temp_alert:42, humidity_alert:35, water_temp_alert:36},
+  };
+  for (const [name, preset] of Object.entries(DASHBOARD_PRESETS)) {
+    test(`ACCEPTS dashboard preset '${name}' verbatim`, async () => {
+      const db = emailUser().database();
+      await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(preset));
+    });
+  }
+
+  // ช่องเดียวกับที่ vent/max เคยมี — partial update ทำให้ ton<=toff หรือ hmax<=hmin ได้
+  // แล้ว autoControl() ติด guard `if (ton <= toff || hmax <= hmin) return;` ทุกรอบ = รีเลย์ค้างถาวร
+  test("REJECTS partial update making temp_off >= temp_on (would freeze autoControl)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // on 35 / off 32
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ temp_off: 40 }));
+  });
+
+  test("REJECTS partial update making humidity_min >= humidity_max (would freeze autoControl)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // min 60 / max 75
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_min: 90 }));
+  });
+
+  test("ACCEPTS valid partial update of temp_off", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ temp_off: 30 }));
   });
 
   test("ACCEPTS water_temp_alert as a standalone number (no ordering constraint)", async () => {

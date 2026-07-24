@@ -2,13 +2,35 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.7.0
+  Version: 2.7.1
+  Changelog v2.7.1 (2026-07-24) — ปิดช่อง "ปั๊มพ่นน้ำขณะพัดลมไล่ความชื้น" + ย้าย clamp เข้า logic ที่เทสต์ได้:
+    - ⚠️ บั๊ก: v2.7.0 ต้องการแค่ humidity_vent > humidity_max ซึ่ง "ไม่พอ"
+      wet latch ค้างเปิดได้ทั้งช่วง [ventOff, ventOn) แต่ปั๊มถูก humid gate ตัดเฉพาะตอน RH ≥ humidity_max
+      ถ้า ventOff < humidity_max จะมีช่วง RH ที่พัดลมไล่ชื้น "ออก" พร้อมกับปั๊มพ่นชื้น "เข้า" = ตีกันเอง
+      ตัวอย่างจริง: humidity_max=79 humidity_vent=80 → ventOff=75 · ที่ RH 76 + อากาศร้อน = เปิดพร้อมกัน
+      แก้: เงื่อนไขใหม่ humidity_vent ≥ humidity_max + VENT_HYST (preset ทั้ง 3 ตัวอยู่พอดีเส้นนี้ จึงเป็น ≥)
+    - ย้าย clamp (ventOn/ventOff + ventIsUsable) จาก autoControl() ใน .ino → auto_control_logic.h
+      เหตุผล: clamp ที่อยู่ชั้น .ino เทสต์ไม่ถึง เทสต์เลยต้องเขียน clamp ซ้ำเอง = จูน VENT_HYST แล้ว
+      เทสต์ยังผ่านทั้งที่ firmware เพี้ยน · ตอนนี้ sweep กินโค้ดจริง (พิสูจน์: แก้ VENT_HYST 5→3 เทสต์ FAIL)
+      AutoControlInputs รับ ventThreshold ดิบตัวเดียว (แทน ventOnHum/ventOffHum) — initializer 10 ค่าเดิม
+      ยัง zero-init = ปิดฟีเจอร์ = backward compatible เหมือนเดิม
+    - ถอด #define VENT_HYST ออกจาก .ino — macro ไป shadow const ใน header (จูนที่ header ไม่มีผล)
+    - [AUTO] log เตือนเมื่อ config ทำให้ vent ถูกปิด (เดิมปิดเงียบๆ หาไม่เจอจาก log)
+      จำ "ค่าที่เตือนไปแล้ว" ไม่ใช่ bool flag — ไม่งั้นตั้งค่าผิดค่าที่ 2 จะเงียบ
+    - fanWhy: เปลี่ยนจาก if/else ladder เป็นตาราง bitmask 8 ช่อง — เดิมเคส "ร้อน+เปียก" ไม่รายงาน wet
+    - database.rules.json: บังคับ vent ≥ humidity_max + 5 ทั้ง 2 ทาง (กัน partial update แหกกฎ)
+      + ปิดช่องเดียวกันที่ temp_off / humidity_min (เดิม update({temp_off:40}) ผ่าน → autoControl
+      ติด guard `ton <= toff` ทุกรอบ = รีเลย์ค้างถาวรเงียบๆ)
+    - dashboard: validation ตรงกับ firmware, badge เช็ค ventUsable ก่อนบอกว่า "พัดลมไล่ความชื้น",
+      ดัก .set() reject (เดิมเงียบ user นึกว่าบันทึกแล้ว), รวม preset-match ที่ถูกก๊อป 2 ที่เป็นฟังก์ชันเดียว
+    - เทสต์: rules 64 ผ่านหมด (เพิ่ม vent/partial-update/preset round-trip), logic ALL PASS
   Changelog v2.7.0 (2026-07-23) — พัดลมไล่ความชื้น (vent) เมื่อ RH สูง (เช่นฝนตก) ตั้งค่าจาก dashboard:
     - ปัญหา: บางวันฝนตก RH พุ่ง 80%+ ทั้งที่ไม่ร้อน — เดิมพัดลมนิ่ง (fan = ร้อน OR แห้ง เท่านั้น)
       ความชื้นค้างในโรงเรือน · ตอนนี้เพิ่ม latch "เปียก" (wet): RH ≥ humidity_vent → พัดลมเปิดไล่ความชื้น
     - auto_control_logic.h: fan = ร้อน OR แห้ง OR ชื้นเกิน(vent) · pump ไม่เปลี่ยน (vent คุมพัดลมเท่านั้น)
       wet latch มี hysteresis: เปิด ≥ ventOn · ปิด ≤ ventOff (= ventOn - VENT_HYST 5%) กันพัดลมกระพริบ
       ventOnHum ≤ 0 = ปิดฟีเจอร์ (backward compatible — โค้ด/เทสต์เก่าไม่เห็น wet เลย)
+      ⚠️ v2.7.1 แก้สัญญานี้: field เปลี่ยนเป็น ventThreshold ตัวเดียว และต้อง ≥ humidity_max + VENT_HYST
     - threshold ใหม่ thresh_hum_vent (default 80) — sync จาก Firebase thresholds/humidity_vent + persist NVS
     - dashboard: เพิ่มช่องตั้ง "พัดลมไล่ความชื้นที่ RH ≥ __%" + ใส่ใน preset ฤดู (ร้อน/ปกติ/ฝน)
     - เทสต์ vent ครบ (crossing/hysteresis/ปิดฟีเจอร์/sensor เสีย/invariant pumpOn→fanOn) ผ่าน 100%
@@ -331,7 +353,8 @@ unsigned long lastNtpSync    = 0;
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
 #define PUMP_MAX_RUNTIME_MS  (15UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 15 นาที (auto/schedule) — ยืดจาก 10 นาที ให้ความชื้นสะสมได้นานขึ้น 2026-07-20 (เดิม 10 นาที / ก่อนหน้า 5)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
-#define VENT_HYST            5.0                // v2.7.0: deadband ของ vent latch (RH ปิดที่ ventOn - 5%) กันพัดลมกระพริบที่เส้น
+// VENT_HYST ย้ายไปเป็น const ใน auto_control_logic.h (แหล่งความจริงเดียวฝั่ง C++)
+// ห้าม #define ซ้ำที่นี่ — macro จะ shadow const แล้วจูนค่าที่ header ไม่มีผลกับ .ino
 #define AIR_TEMP_MIN         -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
 #define AIR_TEMP_MAX          70.0
 // DS18B20: ช่วงอุณหภูมิน้ำสมเหตุผล — นอกช่วงนี้ = ค่าเสีย (-127 สายหลุด / 85.0 reset อ่านไม่ทัน / noise จากสายยาว)
@@ -484,7 +507,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.7.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.7.1 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -553,7 +576,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.7.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.7.1");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -1084,21 +1107,43 @@ void autoControl() {
 
   float avgAT = avgCtrlAT();
   float avgAH = avgCtrlAH();
-  // v2.7.0 vent: ventOn = threshold ที่คนตั้ง · ventOff = ventOn - VENT_HYST (hysteresis firmware คำนวณ)
-  // ⚠️ vent ต้องสูงพอให้ deadband เป็นบวก — ถ้า ≤ VENT_HYST ปิดฟีเจอร์ (ventOn=0) · ไม่งั้น ventOff แตะ 0
-  //    แล้ว wet latch ค้างเปิดถาวร (RH ไม่มีทาง ≤0 เพราะ sensor guard ตัด RH≤0 ไปแล้ว) = พัดลมไล่ชื้นไม่เลิก
-  float ventOn  = (thresh_hum_vent > VENT_HYST) ? thresh_hum_vent : 0.0f;
-  float ventOff = ventOn - VENT_HYST;   // ventOn > VENT_HYST การันตี ventOff > 0 (หรือ ventOn=0 = ปิด)
+  // v2.7.0 vent: ส่ง threshold ดิบเข้าไป — clamp (ventOn/ventOff + เงื่อนไขใช้งานได้)
+  // อยู่ใน computeAutoDecisions() แล้ว เพื่อให้ unit test กินโค้ดจริง ไม่ใช่สำเนาที่นี่
+  // ที่นี่เหลือแค่ "รายงาน" ว่า config ใช้ไม่ได้ — ปิดเงียบๆ = บั๊กที่หาไม่เจอจาก log
+  bool ventUsable = ventIsUsable(thresh_hum_vent, hmax);
+  // จำ "ค่าที่เตือนไปแล้ว" ไม่ใช่ bool — ไม่งั้นตั้งค่าผิดค่าที่ 2 จะเงียบเพราะ flag ยังค้าง true
+  static float ventWarnedFor = NAN;
+  if (!ventUsable && thresh_hum_vent > 0) {
+    if (isnan(ventWarnedFor) || ventWarnedFor != thresh_hum_vent) {
+      Serial.printf("[AUTO] ⚠️ ปิด vent — humidity_vent %.1f ใช้ไม่ได้ (ต้อง ≥ humidity_max + VENT_HYST = %.1f)\n",
+                    thresh_hum_vent, hmax + VENT_HYST);
+      ventWarnedFor = thresh_hum_vent;
+    }
+  } else {
+    ventWarnedFor = NAN;   // ใช้ได้แล้ว หรือปิดฟีเจอร์เอง → พร้อมเตือนค่าถัดไป
+  }
   AutoControlDecisions dec = computeAutoDecisions(
-    {sensorOk, avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn, ventOn, ventOff, airWetOn});
+    {sensorOk, avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn, thresh_hum_vent, airWetOn});
   airHotOn   = dec.hotOn;    // เก็บ latch กลับไปใช้รอบหน้า
   airDryOn   = dec.dryOn;
   pumpHeatOn = dec.pumpHeatOn;
   airWetOn   = dec.wetOn;
 
-  // เหตุผลที่พัดลมเปิด — เรียกได้เฉพาะตอน dec.fanOn (การันตีว่า ร้อน/แห้ง/ชื้นเกิน อย่างน้อย 1)
-  const char* fanWhy = airHotOn ? (airDryOn ? "ร้อน+แห้ง" : "ร้อน")
-                                : (airDryOn ? "แห้ง" : "ชื้นเกิน-ระบาย");
+  // เหตุผลที่พัดลมเปิด — ตาราง 8 ช่องตาม bitmask hot|dry|wet (index 0 = ไม่มีเหตุผลเลย)
+  // ตารางแทน if/else ladder: ทุก combo เขียนไว้ชัด ไม่มีลำดับ else-if ให้สลับผิดโดยไม่รู้ตัว
+  // index 0 เกิดได้เฉพาะตอน !dec.fanOn (เช่น sensor เสีย ล้าง latch หมด) — log ด้านล่าง gate ด้วย
+  // dec.fanOn อยู่แล้ว แต่ใส่ข้อความตรงไว้ เผื่อวันหน้ามีใครเอา fanWhy ไปใช้นอก gate
+  static const char* const FAN_WHY[8] = {
+    /*0 ---*/ "ไม่มีเงื่อนไข",
+    /*1 h--*/ "ร้อน",
+    /*2 -d-*/ "แห้ง",
+    /*3 hd-*/ "ร้อน+แห้ง",
+    /*4 --w*/ "ชื้นเกิน-ระบาย",
+    /*5 h-w*/ "ร้อน+ชื้นเกิน",
+    /*6 -dw*/ "แห้ง+ชื้นเกิน",
+    /*7 hdw*/ "ร้อน+แห้ง+ชื้นเกิน",
+  };
+  const char* fanWhy = FAN_WHY[(airHotOn ? 1 : 0) | (airDryOn ? 2 : 0) | (airWetOn ? 4 : 0)];
   // เหตุผลที่ปั๊มเปิด — ปั๊มไล่ร้อนผ่าน gate แล้ว หรือ แห้ง
   const char* pumpWhyOn = pumpHeatOn ? (airDryOn ? "ร้อน+แห้ง" : "ร้อน") : "แห้ง";
 
@@ -1237,7 +1282,7 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.7.0");
+  Firebase.setString(fbData, base + "status/firmware",    "2.7.1");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   Firebase.setString(fbData, base + "status/last_reset_reason", resetReasonStr(bootResetReason));

@@ -54,12 +54,27 @@ struct AutoControlInputs {
   bool  hotOn;        // latch ปัจจุบัน: อากาศร้อนอยู่ไหม (คุมพัดลม)
   bool  dryOn;        // latch ปัจจุบัน: อากาศแห้งอยู่ไหม (คุมทั้ง 2 ช่อง)
   bool  pumpHeatOn;   // latch ปัจจุบัน: ปั๊มกำลังไล่ร้อนอยู่ไหม (โดน humid gate ล้างได้)
-  // ── v2.7.0 vent (ระบายความชื้น) — append ท้าย struct เจตนา: initializer เก่า (10 ค่า) จะ zero-init 3 ตัวนี้
-  //    → ventOnHum=0 = ฟีเจอร์ปิด = พฤติกรรมเดิมเป๊ะ (backward compatible ไม่ต้องแก้เทสต์เก่า) ──
-  float ventOnHum;    // RH ≥ ค่านี้ → wet latch เปิด (พัดลมไล่ความชื้น) · ≤0 = ปิดฟีเจอร์
-  float ventOffHum;   // RH ≤ ค่านี้ → wet latch ปิด (= ventOnHum - deadband · firmware คำนวณให้)
-  bool  wetOn;        // latch ปัจจุบัน: กำลังระบายความชื้นอยู่ไหม (คุมพัดลมเท่านั้น)
+  // ── v2.7.0 vent (ระบายความชื้น) — append ท้าย struct เจตนา: initializer เก่า (10 ค่า) จะ zero-init 2 ตัวนี้
+  //    → ventThreshold=0 = ฟีเจอร์ปิด = พฤติกรรมเดิมเป๊ะ (backward compatible ไม่ต้องแก้เทสต์เก่า) ──
+  float ventThreshold; // ค่า humidity_vent ดิบจาก config · ≤0 = ปิดฟีเจอร์
+                       // ventOn/ventOff คำนวณ "ข้างใน" computeAutoDecisions() ไม่ใช่ที่ firmware
+                       // — ไม่งั้น clamp อยู่ชั้น .ino ที่เทสต์ไม่ถึง แล้วเทสต์ต้องเขียน clamp ซ้ำเอง
+                       //   (เขียนซ้ำ = จูน VENT_HYST แล้วเทสต์ยังผ่านทั้งที่ firmware เพี้ยน)
+  bool  wetOn;         // latch ปัจจุบัน: กำลังระบายความชื้นอยู่ไหม (คุมพัดลมเท่านั้น)
 };
+
+// deadband ของ wet latch · ปิดที่ ventOn - VENT_HYST กันพัดลมกระพริบที่เส้น
+// ⚠️ นี่คือแหล่งความจริงเดียวฝั่ง C++ — .ino ต้องอ้างค่านี้ ห้าม #define ซ้ำ
+// dashboard (VENT_HYST_PCT) และ database.rules.json ยังต้องแก้ตามมือถ้าจูนค่านี้
+static const float VENT_HYST = 5.0f;
+
+// vent ใช้งานได้ไหม — เงื่อนไขเดียว ใช้ร่วมทุกชั้น
+// ต้อง ventOff (= vent - VENT_HYST) ≥ pumpOffHum ไม่งั้นมีช่วง RH ที่ wet ยังค้าง (พัดลมไล่ชื้นออก)
+// แต่ปั๊มยังไม่ถูก humid gate ตัด (พ่นเข้า) = ตีกันเอง · จึงต้อง vent ≥ pumpOffHum + VENT_HYST
+// (preset ทั้ง 3 ตัวอยู่พอดีเส้นนี้ จึงเป็น ≥ ไม่ใช่ >)
+inline bool ventIsUsable(float ventThreshold, float pumpOffHum) {
+  return ventThreshold > VENT_HYST && ventThreshold >= pumpOffHum + VENT_HYST;
+}
 
 struct AutoControlDecisions {
   bool hotOn, dryOn, pumpHeatOn, wetOn;  // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
@@ -100,12 +115,15 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   else if (in.airTemp <= in.fanOffTemp) pumpHeat = false;
   // else: คงสถานะ
 
-  // latch เปียก (vent) — ระบายความชื้น · ventOnHum ≤ 0 = ปิดฟีเจอร์ (backward compatible)
-  // hysteresis เดียวกับ latch อื่น: ข้าม ventOnHum ติด · ตกใต้ ventOffHum ดับ · กลางคงสถานะ
+  // latch เปียก (vent) — ระบายความชื้น · clamp อยู่ตรงนี้ (ไม่ใช่ที่ .ino) เทสต์จึงกินโค้ดจริง
+  // ventThreshold ที่ใช้ไม่ได้ (ต่ำเกิน / เว้นจาก pumpOffHum ไม่ถึง VENT_HYST) → ปิดฟีเจอร์
+  const float ventOn  = ventIsUsable(in.ventThreshold, in.pumpOffHum) ? in.ventThreshold : 0.0f;
+  const float ventOff = ventOn - VENT_HYST;   // ventOn > VENT_HYST การันตี ventOff > 0
+  // hysteresis เดียวกับ latch อื่น: ข้าม ventOn ติด · ตกใต้ ventOff ดับ · กลางคงสถานะ
   bool wet = in.wetOn;
-  if (in.ventOnHum <= 0)                    wet = false;   // ฟีเจอร์ปิด
-  else if (in.airHumidity >= in.ventOnHum)  wet = true;
-  else if (in.airHumidity <= in.ventOffHum) wet = false;
+  if (ventOn <= 0)                       wet = false;   // ฟีเจอร์ปิด
+  else if (in.airHumidity >= ventOn)     wet = true;
+  else if (in.airHumidity <= ventOff)    wet = false;
   // else: คงสถานะ
 
   d.hotOn      = hot;
