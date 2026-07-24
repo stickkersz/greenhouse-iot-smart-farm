@@ -2,7 +2,19 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.7.1
+  Version: 2.8.0
+  Changelog v2.8.0 (2026-07-24) — พัดลมกลับมาพักคู่ปั๊ม (max run 15 นาที + พัก 5 นาที พร้อมกัน):
+    - ตามคำสั่งหน้างาน: ให้พัดลมมี max-runtime 15 นาทีเท่าปั๊ม แล้วพัก 5 นาทีพร้อมกัน
+    - ⚠️ นี่คือการ "ย้อน" decouple ของ v2.6.0 — v2.6.0 แยกพัดลมออกเพราะ CSV 2026-07-20 พบว่า
+      การพักคู่ปั๊มทำให้พัดลมดับ ~33% ของช่วงร้อน 7 ชม. = ต้นเหตุ temperature overshoot
+      v2.8.0 ยอมรับ trade-off นี้ตามที่ผู้ใช้สั่ง (ถ้าอากาศร้อนตอนปั๊มพัก พัดลมจะดับตามไปด้วย)
+    - pumpSafetyCheck() รวมเป็นเช็คเดียว: จับเวลาเดินต่อเนื่องแยกช่อง (pumpOnSince/fanOnSince)
+      ครบ 15 นาทีช่องใดช่องหนึ่ง → ตัด "ทั้งคู่" (เฉพาะช่อง auto) + ล็อกพัก 5 นาทีพร้อมกัน
+    - re-add fanLockUntil + fanOnSince (ถอดไปตอน v2.6.0) · gate fan-ON ด้วย millis() >= fanLockUntil
+    - checkSchedule(): พัดลมบน schedule เคารพ fanLockUntil ด้วย (เดิมเฉพาะปั๊ม)
+    - status/fan_locked กลับมา push ค่าจริง (millis() < fanLockUntil) — เดิม pin false ไว้ตั้งแต่ v2.6.0
+    - dashboard: แก้ข้อความ noti ปั๊มพัก "เดินครบ 10 นาที" -> "15 นาที" (ค้างมาตั้งแต่ v2.5.0 bump)
+    - FAN_MAX_RUNTIME_MS / FAN_COOLDOWN_MS = ค่าเดียวกับปั๊ม (15/5 นาที) · เป็น #define ต้อง reflash
   Changelog v2.7.1 (2026-07-24) — ปิดช่อง "ปั๊มพ่นน้ำขณะพัดลมไล่ความชื้น" + ย้าย clamp เข้า logic ที่เทสต์ได้:
     - ⚠️ บั๊ก: v2.7.0 ต้องการแค่ humidity_vent > humidity_max ซึ่ง "ไม่พอ"
       wet latch ค้างเปิดได้ทั้งช่วง [ventOff, ventOn) แต่ปั๊มถูก humid gate ตัดเฉพาะตอน RH ≥ humidity_max
@@ -353,6 +365,9 @@ unsigned long lastNtpSync    = 0;
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
 #define PUMP_MAX_RUNTIME_MS  (15UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 15 นาที (auto/schedule) — ยืดจาก 10 นาที ให้ความชื้นสะสมได้นานขึ้น 2026-07-20 (เดิม 10 นาที / ก่อนหน้า 5)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
+// v2.8.0: พัดลมกลับมาพักคู่ปั๊ม (ยกเลิก decouple v2.6.0 ตามคำสั่งหน้างาน) — max run + cooldown เท่ากัน
+#define FAN_MAX_RUNTIME_MS   PUMP_MAX_RUNTIME_MS  // พัดลมเดินต่อเนื่องได้สูงสุด 15 นาที (เท่าปั๊ม)
+#define FAN_COOLDOWN_MS      PUMP_COOLDOWN_MS     // หลังตัด พักพัดลม 5 นาที (พร้อมปั๊ม)
 // VENT_HYST ย้ายไปเป็น const ใน auto_control_logic.h (แหล่งความจริงเดียวฝั่ง C++)
 // ห้าม #define ซ้ำที่นี่ — macro จะ shadow const แล้วจูนค่าที่ header ไม่มีผลกับ .ino
 #define AIR_TEMP_MIN         -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
@@ -405,7 +420,8 @@ unsigned long lastNtpSync    = 0;
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
-// fanLockUntil ถูกถอดออก v2.6.0 — พัดลมไม่พักคู่ปั๊มอีกต่อไป (ทำงานตาม latch อิสระ)
+unsigned long fanOnSince      = 0;             // v2.8.0: เวลาเริ่มเดินพัดลม (0 = หยุด) — สำหรับ max-runtime
+unsigned long fanLockUntil    = 0;             // v2.8.0: ล็อกห้ามเปิดพัดลมจนถึงเวลานี้ (พักคู่ปั๊ม — กลับมาจาก v2.6.0)
 Preferences   ctrlPrefs;                       // NVS (flash) เก็บ control config ให้รอด reboot + ไฟดับ (v2.4.0)
 bool          controlDirty   = false;          // มี config เปลี่ยนจาก dashboard รอบนี้ → เซฟลง NVS (กันเขียนทุก poll = NVS wear)
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
@@ -507,7 +523,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.7.1 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.8.0 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -576,7 +592,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.7.1");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.8.0");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -1150,10 +1166,9 @@ void autoControl() {
   // precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
   // CH3 พัดลม — เปิดตาม dec.fanOn (ร้อน หรือ แห้ง)
   if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
-    // พัดลมทำงานตาม latch อิสระ ไม่ผูกกับ pump safety cutoff (v2.6.0 — ยกเลิก fanLockUntil)
-    // เหตุผล: พัดลมไม่พ่นน้ำ ไม่มีเหตุผลด้านความปลอดภัยต้องพัก · CSV 2026-07-20 พิสูจน์ว่าการพักคู่ปั๊ม
-    // ทำให้พัดลมดับ 33% ของเวลาช่วงร้อน 7 ชม. = ต้นเหตุ overshoot · พัดลมพักเองเมื่อ latch ร้อน/แห้งเคลียร์
-    if (dec.fanOn && !ch3_fanIn) {
+    // v2.8.0: พัดลมกลับมาผูกกับ safety cutoff — เปิดได้เฉพาะพ้น fanLockUntil (พักคู่ปั๊ม)
+    // ⚠️ trade-off: พัดลมอาจพักช่วงร้อน = เสี่ยง overshoot (CSV 2026-07-20) — ยอมรับตามคำสั่งหน้างาน
+    if (dec.fanOn && !ch3_fanIn && millis() >= fanLockUntil) {
       ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);
       Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanWhy, avgAT, avgAH);
     }
@@ -1240,31 +1255,43 @@ bool timeValid() {
 }
 
 // ─────────────────────────────────────────────────────
-// PUMP SAFETY — ตัดปั๊มถ้าเดินต่อเนื่องเกิน 15 นาที (เฉพาะ auto/schedule)
-// กันน้ำท่วม / ปั๊มไหม้แห้ง · โหมด manual = คนคุมเอง ไม่ตัดอัตโนมัติ
+// SAFETY — ตัดปั๊ม+พัดลมถ้าเดินต่อเนื่องเกิน 15 นาที แล้วพักคู่กัน 5 นาที (เฉพาะ auto/schedule)
+// v2.8.0: พัดลมกลับมาพักคู่ปั๊ม (ยกเลิก decouple v2.6.0 ตามคำสั่งหน้างาน)
+//   - จับเวลาเดินต่อเนื่องแยกช่อง (pumpOnSince / fanOnSince) · manual = คนคุมเอง ไม่จับ ไม่ตัด
+//   - ครบ 15 นาทีช่องใดช่องหนึ่ง → ตัด "ทั้งคู่" (เฉพาะช่องที่เป็น auto) + ล็อกพัก 5 นาทีพร้อมกัน
+//   ⚠️ พัดลมพักช่วงร้อนได้ = เสี่ยง overshoot (CSV 2026-07-20) — เป็น trade-off ที่ยอมรับตามคำสั่ง
 void pumpSafetyCheck() {
   unsigned long now = millis();
-  bool automated = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
+  bool pumpAuto = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
+  bool fanAuto  = ch_isAuto[IDX_FAN]  || ch_schedEnabled[IDX_FAN];
 
-  if (ch4_spare && automated) {
-    if (pumpOnSince == 0) {
-      pumpOnSince = now;
-    } else if (now - pumpOnSince >= PUMP_MAX_RUNTIME_MS) {
-      ch4_spare = false; setRelay(PIN_RELAY_CH4, false);
-      lastPumpSwitchTime = now;
-      pumpOnSince   = 0;
+  // จับเวลาเดินต่อเนื่อง — รีเซ็ตเมื่อช่องหยุด หรืออยู่โหมด manual
+  if (ch4_spare && pumpAuto) { if (pumpOnSince == 0) pumpOnSince = now; } else pumpOnSince = 0;
+  if (ch3_fanIn && fanAuto)  { if (fanOnSince  == 0) fanOnSince  = now; } else fanOnSince  = 0;
+
+  bool pumpMaxed = (pumpOnSince != 0) && (now - pumpOnSince >= PUMP_MAX_RUNTIME_MS);
+  bool fanMaxed  = (fanOnSince  != 0) && (now - fanOnSince  >= FAN_MAX_RUNTIME_MS);
+
+  if (pumpMaxed || fanMaxed) {
+    // ล็อกพัก "ทั้งคู่" 5 นาทีพร้อมกัน (เฉพาะช่อง auto — manual คนคุมเอง ไม่แตะ)
+    // ล็อกแม้ช่องนั้นกำลังปิดอยู่ตอน cutoff — กันไม่ให้อีกช่องเริ่มเดินระหว่างพักร่วม (rest together จริง)
+    if (pumpAuto) {
+      if (ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = now; }
       pumpLockUntil = now + PUMP_COOLDOWN_MS;
-      // v2.6.0: ตัดเฉพาะปั๊ม — พัดลมไม่ถูกแตะ ทำงานต่อตาม latch (ยกเลิกการพักคู่ v2.3.0)
-      Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 15 นาที (พักปั๊ม 5 นาที · พัดลมทำงานต่อ)");
-      if (fbReady()) {
-        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
-        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-          "ตัดปั๊มอัตโนมัติ — ปั๊มทำงานต่อเนื่องเกิน 15 นาที (พักปั๊ม 5 นาที) ตรวจสอบระดับน้ำ");
-      }
-      if (buzzerEnabled) buzzerBeep(2);
     }
-  } else {
-    pumpOnSince = 0;   // ปั๊มหยุด หรืออยู่โหมด manual → รีเซ็ตตัวจับเวลา
+    if (fanAuto) {
+      if (ch3_fanIn) { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
+      fanLockUntil = now + FAN_COOLDOWN_MS;
+    }
+    pumpOnSince = 0; fanOnSince = 0;
+    const char* trigger = pumpMaxed ? "ปั๊ม" : "พัดลม";
+    Serial.printf("[SAFETY] ตัดปั๊ม+พัดลม — %s เดินครบ 15 นาที (พักคู่กัน 5 นาที)\n", trigger);
+    if (fbReady()) {
+      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
+      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+        "ตัดปั๊ม+พัดลมอัตโนมัติ — เดินต่อเนื่องเกิน 15 นาที (พักคู่กัน 5 นาที) ตรวจสอบระดับน้ำ");
+    }
+    if (buzzerEnabled) buzzerBeep(2);
   }
 }
 
@@ -1282,7 +1309,7 @@ void pushStatus() {
   Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
   Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
   Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.7.1");
+  Firebase.setString(fbData, base + "status/firmware",    "2.8.0");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   Firebase.setString(fbData, base + "status/last_reset_reason", resetReasonStr(bootResetReason));
@@ -1299,7 +1326,7 @@ void pushStatus() {
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
   Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
   Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
-  Firebase.setBool (fbData, base + "status/fan_locked",  false);   // v2.6.0: พัดลมไม่ล็อกแล้ว — คงไว้เป็น false กัน dashboard พังจาก field หาย
+  Firebase.setBool (fbData, base + "status/fan_locked",  (millis() < fanLockUntil));   // v2.8.0: พัดลมพักคู่ปั๊มอีกครั้ง
   Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
   Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
 }
@@ -1512,6 +1539,7 @@ void checkSchedule() {
 
     // ปั๊ม (CH4) เคารพ safety lock — ห้ามเปิดระหว่าง cooldown
     if (i == IDX_PUMP && shouldBeOn && millis() < pumpLockUntil) continue;
+    if (i == IDX_FAN  && shouldBeOn && millis() < fanLockUntil)  continue;   // v2.8.0: พัดลมพักคู่ปั๊ม
 
     if (shouldBeOn != *states[i]) {
       *states[i] = shouldBeOn;

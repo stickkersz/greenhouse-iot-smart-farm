@@ -844,7 +844,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v2.7.1 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.8.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1266,7 +1266,7 @@ function updateHealth() {
   } else if (ageMs > 90000) {
     sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
   } else if (sysStatus.pump_locked) {
-    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) หลังเดินครบ 10 นาที — จะกลับมาทำงานเอง';
+    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) หลังเดินครบ 15 นาที — จะกลับมาทำงานเอง';
   } else if (sysStatus.water_ok === false) {
     sev = 'info'; msg = '🌊 Sensor อุณหภูมิน้ำ (DS18B20) อ่านไม่ได้ — ตรวจสอบสาย';
   } else if (sysStatus.time_ok === false) {
