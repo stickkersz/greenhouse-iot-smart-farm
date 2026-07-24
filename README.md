@@ -1,0 +1,315 @@
+# 🌿 Greenhouse IoT Smart Farm
+
+ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
+
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.7.1** · ESP32 DevKit V1
+
+---
+
+## Table of Contents
+
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [Hardware](#hardware)
+- [Auto-control logic](#auto-control-logic)
+- [Repository layout](#repository-layout)
+- [Setup — firmware](#setup--firmware)
+- [Setup — Firebase & dashboard](#setup--firebase--dashboard)
+- [Configuration reference](#configuration-reference)
+- [Firebase data contract](#firebase-data-contract)
+- [Testing](#testing)
+- [Deployment checklist](#deployment-checklist)
+- [Troubleshooting](#troubleshooting)
+- [Design notes & history](#design-notes--history)
+
+---
+
+## What it does
+
+An ESP32 reads air temperature/humidity (SHT35) and water temperature (DS18B20), then drives a **fan** and a **water pump** to keep a greenhouse in range. It works **fully offline** — the control loop reads sensors and thresholds from RAM/NVS, so a Wi-Fi or Firebase outage does not stop climate control. When online, it pushes live data to Firebase every 30 s and polls remote commands every 1.5 s.
+
+A browser dashboard (Firebase Hosting) shows live readings, historical charts, and lets staff switch each channel between **AUTO / MANUAL / SCHEDULE**, tune thresholds, and load seasonal presets.
+
+---
+
+## Architecture
+
+```
+┌────────────┐   30s push    ┌──────────────────────┐   live    ┌─────────────┐
+│  ESP32     │ ────────────▶ │ Firebase Realtime DB │ ────────▶ │  Dashboard  │
+│  firmware  │ ◀──────────── │  (asia-southeast1)   │ ◀──────── │  (browser)  │
+└────────────┘  1.5s poll    └──────────────────────┘  commands └─────────────┘
+     │                                  ▲
+     │ reads                            │ rules validate every write
+     ▼                          database.rules.json
+ SHT35 / DS18B20
+ relays (fan/pump)
+```
+
+Three independently deployable layers:
+
+| Layer | Source | Deployed by | Runs on |
+|---|---|---|---|
+| **Firmware** | `smartfarm_firmware/` | `arduino-cli upload` (flash) | ESP32 |
+| **Rules** | `database.rules.json` | `firebase deploy --only database` | Firebase cloud |
+| **Dashboard** | `dashboard/` | `firebase deploy --only hosting` | Browser via Firebase Hosting |
+
+> ⚠️ A firmware behavior change only takes effect after **flashing** the ESP32. Rules and dashboard only govern what can be *saved* — they do not change what a running board does with its current config.
+
+---
+
+## Hardware
+
+**Board:** ESP32 DevKit V1
+
+### Sensors
+
+| Sensor | Interface | Measures | Role |
+|---|---|---|---|
+| **SHT35** | I2C `0x44`/`0x45` (SDA=GPIO21, SCL=GPIO22) | air temp + humidity | drives all auto control |
+| **DS18B20** (waterproof) | 1-Wire GPIO4 (needs 4.7 kΩ pull-up) | water temp | **alert/display only** — does not drive relays |
+| **LCD 16×2** | I2C `0x27`/`0x3F` (shared bus) | — | local status display |
+
+> I2C addresses are auto-detected at boot by a bus scanner. SHT35 address depends on its ADDR pin.
+
+### Relays (active-LOW: LOW = ON)
+
+| Channel | GPIO | Load | Controlled by |
+|---|---|---|---|
+| **CH1** | 26 | สำรอง (spare) | manual / schedule only — no auto |
+| **CH2** | 27 | ไม่ได้ใช้ (unused) | hidden in dashboard, forced OFF |
+| **CH3** | 14 | พัดลม 220 V AC (ดูดเข้า) | **temperature + humidity** (auto) |
+| **CH4** | 25 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) |
+
+### Other pins
+
+| Pin | GPIO | Note |
+|---|---|---|
+| Buzzer | 33 | 3-pin module, active-LOW |
+| Status LED | 2 | onboard |
+
+> CH4 pump moved from GPIO12 → GPIO25 (GPIO12 is a strapping pin that caused boot failure). Do not move it back.
+
+---
+
+## Auto-control logic
+
+Pure decision math lives in **`smartfarm_firmware/auto_control_logic.h`** (`computeAutoDecisions()`), separated from Arduino I/O so it can be unit-tested with plain `g++`.
+
+Four hysteresis **latches** are computed from air sensor readings:
+
+| Latch | ON when | OFF when | Drives |
+|---|---|---|---|
+| **hot** | temp ≥ `temp_on` | temp ≤ `temp_off` | fan |
+| **dry** | humidity < `humidity_min` | humidity ≥ `humidity_max` | fan + pump |
+| **pumpHeat** | temp ≥ `temp_on` | temp ≤ `temp_off` **or** humidity ≥ `humidity_max` (humid gate) | pump only |
+| **wet** (vent) | humidity ≥ `humidity_vent` | humidity ≤ `humidity_vent − VENT_HYST` | fan only |
+
+**Outputs:**
+
+```
+fanOn  = hot OR dry OR wet
+pumpOn = (hot AND pumpHeat) OR dry
+```
+
+**Key invariants (all covered by the test sweep):**
+
+- `pumpOn → fanOn` — the pump never sprays with the fan off (would flood, not evaporate).
+- Pump is blocked while air is saturated (`humidity ≥ humidity_max`) — spraying into saturated air just floods.
+- **`humidity_vent ≥ humidity_max + VENT_HYST`** is *required*. Otherwise there is a humidity band where the fan vents moisture out while the pump sprays it back in. This is enforced in firmware, rules, and dashboard.
+- Sensor unreliable (`sensor_ok = false`, or humidity ≤ 0) → **everything off, all latches cleared**. SHT35 gives temp + humidity from one chip, so a failure means both readings are stale.
+
+**Why latches instead of stateless comparisons:** two hysteresis loops OR'd statelessly either stick open or chatter at the deadband edge. Pump relay switching is the confirmed cause of this project's air-sensor latch-up, so the pump must never chatter. See the header comments and `PROJECT_MEMORY.md`.
+
+### Default thresholds (`config.h`)
+
+| Threshold | Default | Meaning |
+|---|---|---|
+| `temp_on` | 35 °C | fan/pump engage |
+| `temp_off` | 32 °C | fan/pump release |
+| `humidity_min` | 60 % | pump engages (too dry) |
+| `humidity_max` | 75 % | pump releases (saturated) |
+| `humidity_vent` | 80 % | fan vents excess humidity (must be ≥ `humidity_max` + 5) |
+| `VENT_HYST` | 5 % | vent latch deadband (single source of truth in `auto_control_logic.h`) |
+
+### Seasonal presets (dashboard)
+
+| Preset | temp_on/off | hum_min/max | vent |
+|---|---|---|---|
+| ☀️ ฤดูร้อน (summer) | 33 / 30 | 70 / 85 | 90 |
+| 🌤️ ปกติ (normal) | 35 / 32 | 60 / 75 | 80 |
+| 🌧️ ฤดูฝน (rainy) | 38 / 35 | 50 / 65 | 85 |
+
+All three sit exactly on the `vent = humidity_max + VENT_HYST` boundary — which is why the constraint is `≥`, not `>`.
+
+---
+
+## Repository layout
+
+```
+.
+├── smartfarm_firmware/
+│   ├── smartfarm_firmware.ino   # main firmware (setup/loop, I/O, Firebase, LCD)
+│   ├── auto_control_logic.h     # pure decision math (unit-tested)
+│   ├── config.h                 # secrets + pins + thresholds (GITIGNORED)
+│   ├── config.h.example         # template — copy to config.h
+│   └── sketch.yaml              # arduino-cli build profile (fqbn, libs, versions)
+├── dashboard/
+│   ├── index.html               # single-file dashboard (Firebase compat SDK + Chart.js via CDN)
+│   ├── sw.js, manifest.json     # PWA
+│   └── icon.svg
+├── database.rules.json          # Firebase RTDB security + validation rules
+├── tests/
+│   ├── auto_control_logic.test.cpp   # g++ unit tests for the decision logic
+│   └── database.rules.test.js        # emulator tests for the rules
+├── firebase.json                # hosting + database + emulator config
+├── .firebaserc                  # project alias
+├── package.json                 # test scripts (no build step)
+└── docs / *.md                  # Firebase structure, pinout, operations, project memory
+```
+
+Reference docs worth reading: `Firebase_Database_Structure.md`, `pinout_v2.md`, `PROJECT_INSTRUCTION.md`, `DAILY_OPERATIONS_CHECKLIST.md`, `PROJECT_MEMORY.md`.
+
+---
+
+## Setup — firmware
+
+**Prerequisites:** [`arduino-cli`](https://arduino.github.io/arduino-cli/) with the `esp32:esp32` core (3.3.10).
+
+1. **Create `config.h`** (required — build fails without it; it's gitignored because it holds secrets):
+
+   ```bash
+   cp smartfarm_firmware/config.h.example smartfarm_firmware/config.h
+   ```
+
+   Then edit `config.h`: set Wi-Fi SSID/password(s), `FIREBASE_HOST`, `FIREBASE_API_KEY`. Pins and thresholds already have working defaults.
+
+2. **Compile** (the `sketch.yaml` profile pins the board, partition, and library versions):
+
+   ```bash
+   arduino-cli compile smartfarm_firmware
+   ```
+
+   > ⚠️ `PartitionScheme=huge_app` is **required** — the firmware is ~1.4 MB, over the "default" partition's 1.31 MB limit. It's baked into `sketch.yaml`. In Arduino IDE: Tools → Partition Scheme → "Huge APP (3MB No OTA/1MB SPIFFS)".
+
+3. **Find the port and upload:**
+
+   ```bash
+   arduino-cli board list
+   arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
+   ```
+
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.7.1 ===`.
+
+---
+
+## Setup — Firebase & dashboard
+
+**Prerequisites:** [`firebase-tools`](https://firebase.google.com/docs/cli), a Firebase project with Realtime Database (region `asia-southeast1`). Project alias is `greenhouse-iot-smart-farm` in `.firebaserc`.
+
+```bash
+firebase login
+firebase deploy --only database    # push security + validation rules
+firebase deploy --only hosting     # push the dashboard
+```
+
+The dashboard is a single self-contained `dashboard/index.html` (loads Firebase compat SDK + Chart.js from CDN). Firmware version shown in the header reads live from `status/firmware`.
+
+---
+
+## Configuration reference
+
+Everything device-specific lives in **`smartfarm_firmware/config.h`** (gitignored). Sections:
+
+- **Wi-Fi** — `wifiNetworks[]`, auto-connects to whichever is in range (WiFiMulti).
+- **Firebase** — `FIREBASE_HOST`, `FIREBASE_API_KEY`.
+- **Pins** — see [Hardware](#hardware). `RELAY_ACTIVE_LOW` / `BUZZER_ACTIVE_LOW` flip polarity if your modules are wired the other way.
+- **Thresholds** — boot defaults; overridden live from Firebase `control/thresholds` and persisted to NVS.
+- **Timing** — `SENSOR_INTERVAL` 30 s, `LOG_INTERVAL` 1 h.
+
+> **Never commit `config.h`.** It contains Wi-Fi passwords and the Firebase key. Only `config.h.example` (placeholders) is tracked.
+
+---
+
+## Firebase data contract
+
+`database.rules.json` is the source of truth for validation (`"$other": {".validate": false}` rejects any undeclared field silently). Full detail in `Firebase_Database_Structure.md`.
+
+```
+smartfarm/
+├── sensors/         air_temp, air_humidity, water_temp, uptime_sec   (ESP32 → dashboard, 30s)
+├── control/         relays, modes, thresholds, schedule              (dashboard → ESP32, 1.5s poll)
+├── status/          sensor_ok, water_ok, firmware, boot diagnostics  (ESP32 → dashboard)
+├── alerts/          latest alert                                     (ESP32 → dashboard)
+├── alert_history/   alert log                                        (dashboard writes)
+└── action_log/      user action log                                  (dashboard writes)
+logs/YYYY-MM-DD/HH/  hourly avg/min/max + sample_count                (ESP32 → dashboard, hourly)
+```
+
+> `logs/` is at the **root**, not under `smartfarm/`.
+
+Auth model: ESP32 uses **anonymous auth** (can write sensors/logs/status/alerts, cannot write thresholds). Dashboard users are **email-authenticated** (can write control + read everything). Editing a field requires changing firmware **and** `database.rules.json` **and** adding a test in `tests/database.rules.test.js`.
+
+---
+
+## Testing
+
+No build step — tests match the project's vanilla approach.
+
+```bash
+npm test              # runs both suites
+npm run test:rules    # Firebase rules via emulator (requires firebase-tools + Java)
+npm run test:logic    # auto-control logic via g++ (C++17)
+```
+
+- **`test:logic`** compiles `tests/auto_control_logic.test.cpp` against `auto_control_logic.h` and runs crossing/hysteresis/sensor-fail cases plus exhaustive invariant sweeps. Because the vent clamp lives *inside* the pure function, the sweep exercises the real shipped code (mutating `VENT_HYST` makes tests fail).
+- **`test:rules`** spins up the RTDB emulator (port 9000) and asserts every accept/reject path, including the vent/max/min cross-field constraints and partial-update guards.
+
+Run both green before flashing or deploying.
+
+---
+
+## Deployment checklist
+
+**Order:** firmware first (or simultaneously). No order breaks the current live config, but only flashing changes what a running board does.
+
+1. `npm test` → both suites green.
+2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
+3. Flash the board, watch serial for `v2.7.1`.
+4. `firebase deploy --only database` then `--only hosting`.
+5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
+   - Banner reads `v2.7.1`.
+   - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
+   - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
+   - Pump and fan never run in a way that violates `pumpOn → fanOn`.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `config.h: No such file` at compile | didn't create config.h | `cp config.h.example config.h` and fill in |
+| "Sketch too big" / text section exceeds | wrong partition | ensure `huge_app` (it's in `sketch.yaml`; IDE users set Partition Scheme) |
+| Board reboots at boot | pump on a strapping pin | CH4 must be GPIO25, not GPIO12 |
+| Relays inverted (ON = OFF) | module polarity | flip `RELAY_ACTIVE_LOW` in config.h |
+| Buzzer always sounds | active-HIGH module | set `BUZZER_ACTIVE_LOW false` |
+| `[AUTO] ⚠️ ปิด vent` in serial | `humidity_vent < humidity_max + 5` | raise vent or lower humidity_max |
+| Dashboard "save" does nothing | rules rejected the write | a toast now reports it; check values against constraints |
+| Sensor badge shows stale | SHT35 read failing | check I2C wiring; firmware self-heals via periodic re-init |
+| `test:rules` fails to start | emulator needs Java | install a JDK; ensure firebase-tools installed |
+
+---
+
+## Design notes & history
+
+- **Auto control is offline-first** — never depends on Wi-Fi/Firebase. Config persists in NVS across reboots.
+- **Air sensor is single point of failure by design** — SHT35 gives temp + humidity from one chip; on failure everything shuts off safely rather than acting on stale data (chosen 2026-07-15).
+- **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`). The C++ side is single-source and mutation-tested; the other two are comment-linked. Tuning it means editing all three.
+- Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `PROJECT_MEMORY.md`.
+
+**v2.7.1** (latest) — fixed a pump-vs-vent conflict window (vent must now be ≥ `humidity_max` + `VENT_HYST`), moved the vent clamp into the testable pure logic, added reciprocal guards on `temp_off`/`humidity_min`, and hardened dashboard validation/feedback.
+
+---
+
+*จัดทำโดย Tonkla (IT Intern) · บริษัท ปุ๋ยไวกิ้ง จำกัด*
