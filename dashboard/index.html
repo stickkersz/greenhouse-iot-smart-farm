@@ -815,11 +815,18 @@
           </div>
           <div style="margin-top:10px" class="setting-row">
             <div>
-              <label>💧 ปิดปั๊ม+พัดลมเมื่อ ≥</label>
+              <label>💧 ปิดปั๊มเมื่อ ≥</label>
               <div class="si-wrap"><input type="number" id="humidityMax" value="75" step="0.1" min="15" max="100"><span class="si-unit">%</span></div>
             </div>
           </div>
           <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">อากาศแห้ง = ปั๊ม+พัดลมทำงานคู่กัน (พัดลมดูดเข้า จึงดูดอากาศชื้นจากนอกเข้ามา + กระจายละอองน้ำจากปั๊ม)<br>เกณฑ์ปิดปั๊มนี้ยังเป็นเพดานกันปั๊มพ่นน้ำตอนอากาศอิ่มตัวแล้วด้วย</div>
+          <div style="margin-top:10px" class="setting-row">
+            <div>
+              <label>🌬️ พัดลมไล่ความชื้นเมื่อ ≥</label>
+              <div class="si-wrap"><input type="number" id="humidityVent" value="80" step="0.1" min="0" max="100"><span class="si-unit">%</span></div>
+            </div>
+          </div>
+          <div style="margin-top:8px;font-size:.66rem;color:var(--muted)">อากาศชื้นมาก (เช่นฝนตก) = เปิดพัดลมไล่ความชื้นออก โดยปั๊มไม่ทำงาน · ตั้ง <b>0</b> = ปิดฟีเจอร์นี้</div>
         </div>
 
         <button class="save-btn" onclick="saveThresholds()">💾 บันทึกการตั้งค่า</button>
@@ -1089,6 +1096,7 @@ function startListeners() {
       document.getElementById('airHumGauge').innerHTML = buildGauge(rh, 0, 100, '#2563eb', '%');
       if      (rh < T.humidity_alert) { setBadge('airHumBadge','badge-danger','แห้งมาก'); setText('airHumStatus',`🔴 ความชื้นต่ำมาก (ต่ำกว่า ${T.humidity_alert}%)`); }
       else if (rh < T.humidity_min)   { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus',`🟡 แห้ง <${T.humidity_min}% — ปั๊ม+พัดลมทำงาน`); }
+      else if (T.humidity_vent > 0 && rh >= T.humidity_vent) { setBadge('airHumBadge','badge-warn','ชื้นมาก'); setText('airHumStatus',`🌬️ ชื้นมาก ≥${T.humidity_vent}% — พัดลมไล่ความชื้น (ปั๊มพัก)`); }
       else if (rh >= T.humidity_max)  { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus',`💧 ความชื้นสูง ≥${T.humidity_max}% — ปั๊มพัก (พ่นน้ำไม่ช่วยแล้ว)`); }
       else                            { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
     }
@@ -1157,6 +1165,7 @@ function startListeners() {
       if (th.temp_off      != null) document.getElementById('tempOff').value       = th.temp_off;
       if (th.humidity_min  != null) document.getElementById('humidityMin').value   = th.humidity_min;
       if (th.humidity_max  != null) document.getElementById('humidityMax').value   = th.humidity_max;
+      if (th.humidity_vent != null) document.getElementById('humidityVent').value  = th.humidity_vent;
       if (th.temp_alert       != null) document.getElementById('tempAlert').value      = th.temp_alert;
       if (th.humidity_alert   != null) document.getElementById('humidityAlert').value  = th.humidity_alert;
       if (th.water_temp_alert != null) document.getElementById('waterTempAlert').value = th.water_temp_alert;
@@ -1166,6 +1175,7 @@ function startListeners() {
         temp_off:         th.temp_off         ?? alertThresholds.temp_off,
         humidity_min:     th.humidity_min     ?? alertThresholds.humidity_min,
         humidity_max:     th.humidity_max     ?? alertThresholds.humidity_max,
+        humidity_vent:    th.humidity_vent    ?? alertThresholds.humidity_vent,
         temp_alert:       th.temp_alert       ?? alertThresholds.temp_alert,
         humidity_alert:   th.humidity_alert   ?? alertThresholds.humidity_alert,
         water_temp_alert: th.water_temp_alert ?? alertThresholds.water_temp_alert,
@@ -1174,7 +1184,8 @@ function startListeners() {
       let matched = false;
       Object.entries(PRESETS).forEach(([k,p]) => {
         if (p.temp_on===th.temp_on && p.temp_off===th.temp_off && p.humidity_min===th.humidity_min
-            && p.humidity_max===th.humidity_max && p.temp_alert===th.temp_alert
+            && p.humidity_max===th.humidity_max && (th.humidity_vent ?? p.humidity_vent)===p.humidity_vent
+            && p.temp_alert===th.temp_alert
             && p.humidity_alert===th.humidity_alert && p.water_temp_alert===th.water_temp_alert) {
           document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
           document.getElementById('preset-'+k)?.classList.add('active-preset');
@@ -1417,12 +1428,12 @@ function updateScheduleUI(id, s) {
 // ── Thresholds ────────────────────────────────────────
 // live copy ของ threshold ทั้งหมด — sensor badges + checkAlerts() ใช้ค่านี้ (ไม่ hardcode)
 // อัปเดตจาก /smartfarm/control listener ทุกครั้งที่พนักงานบันทึกค่าใหม่
-let alertThresholds = {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, temp_alert:38, humidity_alert:40, water_temp_alert:35};
+let alertThresholds = {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:38, humidity_alert:40, water_temp_alert:35};
 
 const PRESETS = {
-  summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, temp_alert:38, humidity_alert:50, water_temp_alert:34, label:'☀️ ฤดูร้อน'},
-  normal: {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, temp_alert:40, humidity_alert:40, water_temp_alert:35, label:'🌤️ ปกติ'},
-  rainy:  {temp_on:38, temp_off:35, humidity_min:50, humidity_max:65, temp_alert:42, humidity_alert:35, water_temp_alert:36, label:'🌧️ ฤดูฝน'},
+  summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, humidity_vent:90, temp_alert:38, humidity_alert:50, water_temp_alert:34, label:'☀️ ฤดูร้อน'},
+  normal: {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:40, humidity_alert:40, water_temp_alert:35, label:'🌤️ ปกติ'},
+  rainy:  {temp_on:38, temp_off:35, humidity_min:50, humidity_max:65, humidity_vent:85, temp_alert:42, humidity_alert:35, water_temp_alert:36, label:'🌧️ ฤดูฝน'},
 };
 
 function applyPreset(name) {
@@ -1434,6 +1445,7 @@ function applyPreset(name) {
   document.getElementById('tempOff').value       = p.temp_off;
   document.getElementById('humidityMin').value   = p.humidity_min;
   document.getElementById('humidityMax').value   = p.humidity_max;
+  document.getElementById('humidityVent').value  = p.humidity_vent;
   document.getElementById('tempAlert').value      = p.temp_alert;
   document.getElementById('humidityAlert').value  = p.humidity_alert;
   document.getElementById('waterTempAlert').value = p.water_temp_alert;
@@ -1445,28 +1457,31 @@ function saveThresholds() {
   const toff  = parseFloat(document.getElementById('tempOff').value);
   const hmin  = parseFloat(document.getElementById('humidityMin').value);
   const hmax  = parseFloat(document.getElementById('humidityMax').value);
+  const hVent = parseFloat(document.getElementById('humidityVent').value);
   const tAlert = parseFloat(document.getElementById('tempAlert').value);
   const hAlert = parseFloat(document.getElementById('humidityAlert').value);
   const wtAlert= parseFloat(document.getElementById('waterTempAlert').value);
-  if ([ton, toff, hmin, hmax, tAlert, hAlert, wtAlert].some(Number.isNaN)) {
+  if ([ton, toff, hmin, hmax, hVent, tAlert, hAlert, wtAlert].some(Number.isNaN)) {
     showToast('⚠️ กรอกตัวเลขให้ครบทุกช่อง (มีช่องว่างเปล่าหรือไม่ใช่ตัวเลข)'); return;
   }
   if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
   if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
   if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
   if (hmax <= hmin) { showToast('⚠️ Humidity Max ต้องมากกว่า Humidity Min'); return; }
-  const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, humidity_max:hmax,
+  // vent: 0 = ปิดฟีเจอร์ · ถ้าเปิด (>0) ควร > humidity_max ไม่งั้นชนกับเกณฑ์ปิดปั๊ม
+  if (hVent > 0 && hVent <= hmax) { showToast('⚠️ พัดลมไล่ความชื้นต้องมากกว่า Humidity Max (หรือตั้ง 0 เพื่อปิด)'); return; }
+  const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, humidity_max:hmax, humidity_vent:hVent,
                 temp_alert:tAlert, humidity_alert:hAlert, water_temp_alert:wtAlert};
   db.ref('/smartfarm/control/thresholds').set(data).then(() => {
-    // ไม่ reset alertThresholds ตรงนี้ — /smartfarm/control listener rebuild ครบทั้ง 7 field ให้อยู่แล้ว
+    // ไม่ reset alertThresholds ตรงนี้ — /smartfarm/control listener rebuild ครบทั้ง 8 field ให้อยู่แล้ว
     // (เดิม set แค่ 2 field ทำให้ badge อ่าน temp_on/off, humidity_min/max, water_temp_alert เป็น undefined)
-    logAction(`ตั้งค่า — พัดลมเปิด ≥${ton}°C ปิด ≤${toff}°C · ปั๊มเปิด ≤${hmin}% ปิด ≥${hmax}% · Alert อากาศ ${tAlert}°C / ${hAlert}% · น้ำ ${wtAlert}°C`);
+    logAction(`ตั้งค่า — พัดลมเปิด ≥${ton}°C ปิด ≤${toff}°C · ปั๊มเปิด ≤${hmin}% ปิด ≥${hmax}% · พัดลมไล่ชื้น ${hVent>0?'≥'+hVent+'%':'ปิด'} · Alert อากาศ ${tAlert}°C / ${hAlert}% · น้ำ ${wtAlert}°C`);
     showToast('✅ บันทึกแล้ว · ESP32 รับค่าใหม่ทันที');
     // ทำให้ preset ไฮไลต์ถ้า match
     let matched = false;
     Object.entries(PRESETS).forEach(([k,p]) => {
       if (p.temp_on===ton && p.temp_off===toff && p.humidity_min===hmin && p.humidity_max===hmax
-          && p.temp_alert===tAlert && p.humidity_alert===hAlert && p.water_temp_alert===wtAlert) {
+          && p.humidity_vent===hVent && p.temp_alert===tAlert && p.humidity_alert===hAlert && p.water_temp_alert===wtAlert) {
         document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
         document.getElementById('preset-'+k)?.classList.add('active-preset');
         matched = true;

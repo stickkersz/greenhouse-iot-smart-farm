@@ -29,7 +29,7 @@ static SwitchCount runSequence(AutoControlInputs in, const float* temps, const f
     in.airTemp = temps[i];
     in.airHumidity = hums[i];
     AutoControlDecisions d = computeAutoDecisions(in);
-    in.hotOn = d.hotOn; in.dryOn = d.dryOn; in.pumpHeatOn = d.pumpHeatOn;   // firmware เก็บ latch ข้ามรอบ
+    in.hotOn = d.hotOn; in.dryOn = d.dryOn; in.pumpHeatOn = d.pumpHeatOn; in.wetOn = d.wetOn;   // firmware เก็บ latch ข้ามรอบ
     if (!first) {
       if (d.fanOn  != prevFan)  c.fan++;
       if (d.pumpOn != prevPump) c.pump++;
@@ -230,6 +230,82 @@ int main() {
     check(!pumpAfter[0], "ชื้น 76 -> ปั๊มตัด");
     check(!pumpAfter[1] && !pumpAfter[2], "RH ตกกลับมา 70 แต่ temp ยัง 33 -> ปั๊มยังไม่ติด (ต้องรอ temp ข้าม 35)");
     check(pumpAfter[3], "temp ขึ้น 36 -> ปั๊มติดใหม่ (re-arm ได้จริง ไม่ค้างดับถาวร)");
+  }
+
+  printf("== v2.7.0 vent: พัดลมไล่ความชื้นเมื่อ RH สูง (ปั๊มไม่แตะ) · ventOn=80 ventOff=75 ==\n");
+  {
+    // ฝนตก: ไม่ร้อน ไม่แห้ง แต่ RH พุ่งเกิน vent -> พัดลมเปิดไล่ความชื้น ปั๊มปิด
+    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75;
+    in.airTemp = 30; in.airHumidity = 82;
+    auto d = computeAutoDecisions(in);
+    check(d.wetOn && d.fanOn, "RH 82 ≥ vent 80 -> wet latch เปิด, พัดลมเปิดไล่ความชื้น");
+    check(!d.pumpOn, "RH 82 -> ปั๊มปิด (vent คุมพัดลมเท่านั้น + humid gate)");
+  }
+  {
+    // dead-zone 75..80: latch คงสถานะ (hysteresis กันกระพริบ)
+    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 30; in.airHumidity = 77;
+    in.wetOn = true;
+    check(computeAutoDecisions(in).wetOn, "RH 77 dead-zone, wet เปิด -> คงเปิด");
+    in.wetOn = false;
+    check(!computeAutoDecisions(in).wetOn, "RH 77 dead-zone, wet ปิด -> คงปิด");
+  }
+  {
+    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 30; in.airHumidity = 74;
+    in.wetOn = true;
+    check(!computeAutoDecisions(in).wetOn, "RH 74 ≤ ventOff 75 -> wet latch ปิด");
+  }
+  {
+    // ปิดฟีเจอร์ (ventOnHum=0 จาก base) -> RH สูงแค่ไหนก็ไม่เปิด wet (backward compatible กับเทสต์/โค้ดเก่า)
+    auto in = base(); in.airTemp = 30; in.airHumidity = 95;
+    check(!computeAutoDecisions(in).wetOn && !computeAutoDecisions(in).fanOn,
+          "ventOnHum=0 (ปิดฟีเจอร์) -> RH 95 ไม่มี wet, พัดลมไม่เปิดจาก vent");
+  }
+  {
+    // vent ไม่แตะ latch อื่น: ร้อน+ชื้นเกิน -> พัดลมเปิด (ร้อน OR wet), ปั๊มปิด (humid gate เดิม)
+    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 37; in.airHumidity = 85;
+    auto d = computeAutoDecisions(in);
+    check(d.fanOn && d.wetOn && d.hotOn, "ร้อน+ชื้นเกิน+vent -> พัดลมเปิด, wet+hot ติดทั้งคู่");
+    check(!d.pumpOn, "ร้อน+ชื้นเกิน -> ปั๊มยังปิด (vent ไม่ปลุกปั๊ม)");
+  }
+  {
+    // crossing: RH แกว่งรอบ ventOn=80 (ไม่ตกใต้ ventOff=75) -> พัดลมสลับ ≤1
+    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.airTemp = 30;
+    const float t[] = {30, 30, 30, 30, 30, 30};
+    const float h[] = {79.5f, 80.4f, 79.6f, 80.3f, 79.7f, 80.5f};
+    auto c = runSequence(in, t, h, 6);
+    check(c.fan <= 1, "RH แกว่งรอบ 80 -> พัดลมสลับ ≤1 ครั้ง (hysteresis กลืน)");
+    check(c.pump == 0, "RH แกว่งรอบ 80 -> ปั๊มไม่สลับเลย (vent ไม่แตะปั๊ม)");
+  }
+  {
+    // sensor เสีย ต้องล้าง wet latch ด้วย
+    auto in = base(); in.ventOnHum = 80; in.ventOffHum = 75; in.sensorOk = false;
+    in.airTemp = 30; in.airHumidity = 90; in.wetOn = true;
+    auto d = computeAutoDecisions(in);
+    check(!d.wetOn && !d.fanOn, "sensorOk=false -> ล้าง wet latch + พัดลมปิด");
+  }
+
+  {
+    // เอกสารอันตราย: ถ้า ventOff แตะ 0 (ventOn เล็กเกินไป) wet latch จะค้างเปิดถาวร — RH ไม่มีทาง ≤0
+    // firmware กันด้วยการปิดฟีเจอร์เมื่อ thresh_hum_vent ≤ VENT_HYST (autoControl ตั้ง ventOn=0) — เทสต์นี้ยืนยันเหตุผล
+    auto in = base(); in.ventOnHum = 4; in.ventOffHum = 0; in.airTemp = 30; in.airHumidity = 30; in.wetOn = true;
+    check(computeAutoDecisions(in).wetOn, "ventOff=0: wet ค้างเปิดที่ RH 30 (เหตุผลที่ firmware clamp ventOn > VENT_HYST)");
+  }
+
+  printf("== v2.7.0: invariant pumpOn -> fanOn ยังครบเมื่อเปิด vent (sweep) ==\n");
+  {
+    bool violated = false;
+    for (float t = 20; t <= 45; t += 0.5f) {
+      for (float h = 0; h <= 100; h += 2.5f) {
+        for (int latch = 0; latch < 16; latch++) {   // 4 latch = 16 combo
+          AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
+                                  (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0,
+                                  80, 75, (latch & 8) != 0};
+          auto d = computeAutoDecisions(in);
+          if (d.pumpOn && !d.fanOn) violated = true;
+        }
+      }
+    }
+    check(!violated, "vent เปิด: ทุก state pumpOn -> fanOn (vent เพิ่มแค่ fan ไม่แตะ pump)");
   }
 
   printf("== sensorOk=false: ไม่มีชุดค่า/latch ใดปลุกรีเลย์ได้เลย (sweep ทั้งกริด) ==\n");

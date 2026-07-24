@@ -9,9 +9,16 @@
 //       แห้ง     (dryOn)      ← ความชื้น | < pumpOnHum เปิด · ≥ pumpOffHum ปิด · ระหว่างกลางคงสถานะ
 //       ปั๊มไล่ร้อน (pumpHeatOn) ← เหมือน latch ร้อน แต่ถูก humid gate ล้างได้ (ดูล่าง)
 //
-//   พัดลม (CH3, ดูดเข้า) = ร้อน OR แห้ง
+//   พัดลม (CH3, ดูดเข้า) = ร้อน OR แห้ง OR ชื้นเกิน(vent)
 //       ร้อน → ระบายความร้อน · แห้ง → ดูดอากาศนอกเข้ามา + กระจายละอองน้ำจากปั๊ม
+//       ชื้นเกิน(vent) → เปิดพัดลมไล่ความชื้นออก (เช่น ฝนตก/อากาศอิ่มน้ำ) — latch "เปียก" (wet) v2.7.0
 //       ไม่มี humid gate — พัดลมต้องระบายความร้อนได้เสมอแม้อากาศชื้น (พัดลมไม่ได้พ่นน้ำ ไม่มีอะไรเสีย)
+//
+//   latch เปียก (wetOn) v2.7.0 — ระบายความชื้น (คุมพัดลมเท่านั้น ไม่แตะปั๊ม):
+//       RH ≥ ventOnHum เปิด · ≤ ventOffHum ปิด · ระหว่างกลางคงสถานะ (hysteresis กันกระพริบ)
+//       ventOnHum ≤ 0 = ปิดฟีเจอร์ (เข้ากันได้ย้อนหลัง — โค้ด/เทสต์เก่าที่ไม่ตั้งค่าจะไม่เห็น wet เลย)
+//       เคสจริง: บางวันฝนตก RH พุ่ง 80%+ ทั้งที่ไม่ร้อน — ก่อน v2.7.0 พัดลมนิ่ง ความชื้นค้างในโรงเรือน
+//       ตอนนี้ RH ข้าม ventOnHum → พัดลมเปิดไล่ความชื้น · ปั๊มยังปิด (humid gate เดิมคุมอยู่แล้ว) = ไล่อย่างเดียวไม่พ่นเพิ่ม
 //
 //   ปั๊มน้ำ (CH4) = ปั๊มไล่ร้อน OR แห้ง
 //       humid gate: ร้อนแต่ชื้นแล้ว (≥ pumpOffHum) → ล้าง latch ปั๊มไล่ร้อน เพราะพ่นน้ำในอากาศอิ่มตัว
@@ -47,12 +54,17 @@ struct AutoControlInputs {
   bool  hotOn;        // latch ปัจจุบัน: อากาศร้อนอยู่ไหม (คุมพัดลม)
   bool  dryOn;        // latch ปัจจุบัน: อากาศแห้งอยู่ไหม (คุมทั้ง 2 ช่อง)
   bool  pumpHeatOn;   // latch ปัจจุบัน: ปั๊มกำลังไล่ร้อนอยู่ไหม (โดน humid gate ล้างได้)
+  // ── v2.7.0 vent (ระบายความชื้น) — append ท้าย struct เจตนา: initializer เก่า (10 ค่า) จะ zero-init 3 ตัวนี้
+  //    → ventOnHum=0 = ฟีเจอร์ปิด = พฤติกรรมเดิมเป๊ะ (backward compatible ไม่ต้องแก้เทสต์เก่า) ──
+  float ventOnHum;    // RH ≥ ค่านี้ → wet latch เปิด (พัดลมไล่ความชื้น) · ≤0 = ปิดฟีเจอร์
+  float ventOffHum;   // RH ≤ ค่านี้ → wet latch ปิด (= ventOnHum - deadband · firmware คำนวณให้)
+  bool  wetOn;        // latch ปัจจุบัน: กำลังระบายความชื้นอยู่ไหม (คุมพัดลมเท่านั้น)
 };
 
 struct AutoControlDecisions {
-  bool hotOn, dryOn, pumpHeatOn;  // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
-  bool fanOn;          // สถานะพัดลมที่ต้องการ = ร้อน OR แห้ง
-  bool pumpOn;         // สถานะปั๊มที่ต้องการ = ปั๊มไล่ร้อน OR แห้ง
+  bool hotOn, dryOn, pumpHeatOn, wetOn;  // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
+  bool fanOn;          // สถานะพัดลมที่ต้องการ = ร้อน OR แห้ง OR ชื้นเกิน(vent)
+  bool pumpOn;         // สถานะปั๊มที่ต้องการ = ปั๊มไล่ร้อน OR แห้ง (vent ไม่แตะปั๊ม)
 };
 
 inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
@@ -61,7 +73,7 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   // เชื่อค่าเซนเซอร์ไม่ได้ → ปิดทุกช่อง ล้าง latch ทุกตัว ออกทันที
   // (0%RH ก็ถือว่าเชื่อไม่ได้ — โรงเรือนจริงเป็นไปไม่ได้ ถ้าเห็นแปลว่าเซนเซอร์/สายมีปัญหา)
   if (!in.sensorOk || in.airHumidity <= 0) {
-    d.hotOn = d.dryOn = d.pumpHeatOn = false;
+    d.hotOn = d.dryOn = d.pumpHeatOn = d.wetOn = false;
     d.fanOn = d.pumpOn = false;
     return d;
   }
@@ -88,12 +100,21 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   else if (in.airTemp <= in.fanOffTemp) pumpHeat = false;
   // else: คงสถานะ
 
+  // latch เปียก (vent) — ระบายความชื้น · ventOnHum ≤ 0 = ปิดฟีเจอร์ (backward compatible)
+  // hysteresis เดียวกับ latch อื่น: ข้าม ventOnHum ติด · ตกใต้ ventOffHum ดับ · กลางคงสถานะ
+  bool wet = in.wetOn;
+  if (in.ventOnHum <= 0)                    wet = false;   // ฟีเจอร์ปิด
+  else if (in.airHumidity >= in.ventOnHum)  wet = true;
+  else if (in.airHumidity <= in.ventOffHum) wet = false;
+  // else: คงสถานะ
+
   d.hotOn      = hot;
   d.dryOn      = dry;
   d.pumpHeatOn = pumpHeat;
+  d.wetOn      = wet;
 
-  // พัดลม — ร้อนหรือแห้ง เปิดได้ทั้งคู่
-  d.fanOn = hot || dry;
+  // พัดลม — ร้อน หรือ แห้ง หรือ ชื้นเกิน(ไล่ความชื้น) เปิดได้ทุกเหตุผล
+  d.fanOn = hot || dry || wet;
 
   // ปั๊ม — ไล่ร้อน (ผ่าน gate แล้ว) หรือ เพิ่มความชื้นตอนแห้ง
   // `hot &&` กัน latch 2 ตัวหลุด sync (ในทางปฏิบัติ pumpHeat ⊆ hot เพราะใช้เกณฑ์อุณหภูมิเดียวกัน)
