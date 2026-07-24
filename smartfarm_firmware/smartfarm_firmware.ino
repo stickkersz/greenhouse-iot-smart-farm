@@ -1286,12 +1286,21 @@ void pumpSafetyCheck() {
     pumpOnSince = 0; fanOnSince = 0;
     const char* trigger = pumpMaxed ? "ปั๊ม" : "พัดลม";
     Serial.printf("[SAFETY] ตัดปั๊ม+พัดลม — %s เดินครบ 15 นาที (พักคู่กัน 5 นาที)\n", trigger);
+    // เตือน "ตรวจสอบระดับน้ำ" + buzzer เฉพาะตอน "ปั๊ม" เดินครบ 15 นาที (ปั๊มเดินนาน = อาจน้ำหมด)
+    // ถ้า "พัดลม" เป็นตัว trigger (ร้อน+ชื้น หรือ ฝนตก ปั๊มไม่ได้เดิน) = ปกติ ไม่ใช่เรื่องน้ำ → ไม่ปลุก buzzer
+    // (กัน false water alarm ทุก ~20 นาทีตลอดบ่ายร้อน — พบโดย code review v2.8.0)
     if (fbReady()) {
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
-      Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-        "ตัดปั๊ม+พัดลมอัตโนมัติ — เดินต่อเนื่องเกิน 15 นาที (พักคู่กัน 5 นาที) ตรวจสอบระดับน้ำ");
+      if (pumpMaxed) {
+        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
+        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+          "ตัดปั๊มอัตโนมัติ — ปั๊มเดินต่อเนื่องเกิน 15 นาที (พักคู่พัดลม 5 นาที) ตรวจสอบระดับน้ำ");
+      } else {
+        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "fan_cutoff");
+        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+          "พัดลมพักอัตโนมัติ — เดินต่อเนื่องเกิน 15 นาที (พัก 5 นาที) เป็นปกติช่วงร้อน/ฝน");
+      }
     }
-    if (buzzerEnabled) buzzerBeep(2);
+    if (pumpMaxed && buzzerEnabled) buzzerBeep(2);   // buzzer เฉพาะเคสน้ำ ไม่ใช่ทุกครั้งที่พัดลมพัก
   }
 }
 

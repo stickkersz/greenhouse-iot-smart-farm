@@ -1148,6 +1148,7 @@ function startListeners() {
       water_ok:    d.water_ok    !== false,
       failsafe:    d.failsafe    === true,
       pump_locked: d.pump_locked === true,
+      fan_locked:  d.fan_locked  === true,   // v2.8.0: พัดลมพักคู่ปั๊ม — ไม่มี field (fw เก่า) = false
       time_ok:     d.time_ok     !== false,
       rssi:        d.wifi_rssi,
     };
@@ -1265,8 +1266,13 @@ function updateHealth() {
     sev = 'warn'; msg = '⚠️ Sensor อากาศอ่านค่าไม่ได้ชั่วคราว — กำลังลองใหม่ (auto ยังทำงานบนค่าล่าสุด)';
   } else if (ageMs > 90000) {
     sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
+  } else if (sysStatus.pump_locked && sysStatus.fan_locked) {
+    // v2.8.0: พักคู่กัน — ไม่ระบุว่า "ปั๊มเดินครบ 15" เพราะ trigger อาจเป็นพัดลม (ปั๊มไม่ได้เดินครบ)
+    sev = 'info'; msg = '💧🌬️ ปั๊ม+พัดลมพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
   } else if (sysStatus.pump_locked) {
-    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) หลังเดินครบ 15 นาที — จะกลับมาทำงานเอง';
+    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
+  } else if (sysStatus.fan_locked) {
+    sev = 'info'; msg = '🌬️ พัดลมพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
   } else if (sysStatus.water_ok === false) {
     sev = 'info'; msg = '🌊 Sensor อุณหภูมิน้ำ (DS18B20) อ่านไม่ได้ — ตรวจสอบสาย';
   } else if (sysStatus.time_ok === false) {
