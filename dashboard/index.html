@@ -1121,17 +1121,8 @@ function startListeners() {
       else                            { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
     }
 
-    const wt = d.water_temp;
-    if (sysStatus.water_ok === false) {
-      // DS18B20 อ่านไม่ได้ — ไม่โชว์ค่าเก่าหลอกตา
-      setBadge('waterTempBadge','badge-offline','ไม่พร้อม');
-      setText('waterTempStatus','🌊 เซ็นเซอร์น้ำไม่พร้อม — ตรวจสอบสาย/Pull-up');
-    } else if (wt != null) {
-      document.getElementById('waterTempGauge').innerHTML = buildGauge(wt, 0, 50, '#0f766e', '°C');
-      if      (wt > T.water_temp_alert)     { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus',`🔴 น้ำร้อนเกินไป (เกิน ${T.water_temp_alert}°C)`); }
-      else if (wt > T.water_temp_alert - 3) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น — ใกล้เกณฑ์เตือน'); }
-      else                                  { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
-    }
+    // การ์ดน้ำวาดในฟังก์ชันแยก — ต้องวาดใหม่ได้จาก status listener ด้วย (ดู renderWaterCard)
+    renderWaterCard();
 
     if (d.uptime_sec != null) {
       const u = d.uptime_sec;
@@ -1176,6 +1167,9 @@ function startListeners() {
     updateWifiChip(d.wifi_rssi, d.wifi_drop_count, d.wifi_drop_reason);
     // boot diagnostics — fw push มาตั้งแต่ v2.2.0 แต่ไม่เคยมีที่แสดง
     setResetReason(d.last_reset_reason, d.boot_count);
+    // ⚠️ ต้องวาดการ์ดน้ำใหม่ตรงนี้ด้วย — water_ok เพิ่งเปลี่ยนจาก listener นี้
+    // ถ้าไม่เรียก การ์ดจะค้างสถานะเก่าจนกว่า sensors จะยิงรอบถัดไป (บั๊กเดิม ดู renderWaterCard)
+    renderWaterCard();
     updateRelayUI('ch4', d.ch4_spare);   // ปั๊มน้ำ
     updateRelayUI('ch3', d.ch3_fan_in);  // พัดลม
     updateRelayUI('ch1', d.ch1_pump);    // สำรอง
@@ -1269,6 +1263,37 @@ function onListenerError(name, err) {
   const code = err?.code || err?.message || '';
   const friendly = FRIENDLY_ERR[code] || `เกิดข้อผิดพลาดที่ไม่รู้จัก (${code || 'unknown'}) — ลองรีเฟรชหน้าเว็บ ถ้ายังไม่หายให้แจ้งผู้ดูแลระบบ`;
   showToast('⚠️ อ่านข้อมูล ' + name + ' ไม่ได้ — ' + friendly);
+}
+
+// ── การ์ดอุณหภูมิน้ำ (DS18B20) ────────────────────────
+// ⚠️ ต้องเรียกจากทั้ง 2 listener (sensors และ status) — นี่คือหัวใจของบั๊กที่แก้ 2026-07-30:
+//
+// อาการ: บอร์ดอ่านค่าน้ำได้ (LCD โชว์ค่าถูกต้อง) แต่ dashboard ค้างที่ "เซ็นเซอร์น้ำไม่พร้อม"
+// สาเหตุ: การ์ดนี้เคยวาด "ข้างใน sensors listener" เท่านั้น แต่เงื่อนไขที่ใช้ตัดสิน (sysStatus.water_ok)
+//         เป็นของ "status listener" — คนละ listener กัน ยิงคนละจังหวะ
+//         firmware ใน pushToFirebase() เขียน sensors/water_temp "ก่อน" status/water_ok ประมาณ 20 writes
+//         → รอบที่เซนเซอร์กลับมาอ่านได้: sensors ยิงมาพร้อมค่าใหม่ แต่ water_ok ยังเป็น false ค้างจากรอบก่อน
+//         → เข้า branch "ไม่พร้อม" ทิ้งค่าใหม่ไปเลย · พอ status ยิงตามมาเป็น true ก็ไม่มีใครวาดการ์ดใหม่
+//         = การ์ดค้าง "ไม่พร้อม" ทั้งที่มีค่าสดอยู่ใน DB แล้ว
+// ทำไม LCD ไม่เจอปัญหานี้: firmware อ่าน waterSensorOk จาก RAM ตรงๆ ไม่มี race ข้าม listener
+//
+// แก้: แยกเป็นฟังก์ชัน แล้วเรียกจากทั้ง 2 listener — ใครมาก่อนมาหลังก็วาดถูกเสมอ (ไม่ผูกกับลำดับ push)
+function renderWaterCard() {
+  const T  = alertThresholds;
+  const wt = sensorLive.waterTemp;   // ค่าล่าสุดที่ sensors เคยส่งมา (cache ไว้แล้วด้านบน)
+
+  if (sysStatus.water_ok === false) {
+    // DS18B20 อ่านไม่ได้ — ไม่โชว์ค่าเก่าหลอกตา
+    setBadge('waterTempBadge','badge-offline','ไม่พร้อม');
+    setText('waterTempStatus','🌊 เซ็นเซอร์น้ำไม่พร้อม — ตรวจสอบสาย/Pull-up');
+    return;
+  }
+  if (wt == null) return;   // ยังไม่เคยได้ค่าเลย — คงสถานะ "รอข้อมูล" ไว้
+
+  document.getElementById('waterTempGauge').innerHTML = buildGauge(wt, 0, 50, '#0f766e', '°C');
+  if      (wt > T.water_temp_alert)     { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus',`🔴 น้ำร้อนเกินไป (เกิน ${T.water_temp_alert}°C)`); }
+  else if (wt > T.water_temp_alert - 3) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น — ใกล้เกณฑ์เตือน'); }
+  else                                  { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
 }
 
 function updateHealth() {
