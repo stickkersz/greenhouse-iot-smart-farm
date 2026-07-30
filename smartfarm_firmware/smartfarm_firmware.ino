@@ -42,8 +42,20 @@
       บนเครื่องเทสต์ long = 64 bit จะไม่วนรอบที่ 2^32 = เทสต์ผ่านโดยไม่ได้ทดสอบพฤติกรรมบอร์ดจริง)
       + pumpSafetyCheck() ล้าง lockUntil เป็น 0 เมื่อหมดอายุทุกรอบ (ปิดช่อง deadline เก่าเกิน 24.8 วัน)
       + ย้ายไปไว้ auto_control_logic.h = เทสต์ถึงแล้ว (13 เคส รวมคาบวนรอบทั้ง 2 ทาง)
-      ปิด review finding v2.8.0 ข้อ "ตัวจับเวลา cooldown ไม่มีเทสต์เลย" เฉพาะส่วน lock — mutation test
-      ยืนยัน: ย้อนกลับไปใช้ (now < lockUntil) แบบเดิม เทสต์ FAIL 3 เคส
+      mutation test ยืนยัน: ย้อนกลับไปใช้ (now < lockUntil) แบบเดิม เทสต์ FAIL 3 เคส
+    + ย้าย pumpSafetyCheck() ทั้งก้อนไปเป็น stepSafetyTimers() ใน auto_control_logic.h (pure/เทสต์ได้)
+      ปิด review finding v2.8.0 ข้อ "ตัวจับเวลา safety ไม่มีเทสต์เลย" — โค้ดคุมความปลอดภัยที่มีบั๊กมาแล้ว
+      2 รอบ (false water alarm, lock desync) แต่ไม่เคยมีเทสต์แตะเลย · .ino เหลือแค่ adapter:
+      ป้อน state เข้า → เอาผลไปสั่งรีเลย์/log/Firebase alert · พฤติกรรมเดิมเป๊ะ ไม่ได้เปลี่ยนกฎอะไร
+      + static_assert ว่า PUMP_/FAN_ COOLDOWN และ MAX_RUNTIME เท่ากัน (stepSafetyTimers รับตัวเดียว
+        เพราะ v2.8.0 กำหนดให้พักคู่กัน) — กันใครแก้ให้ต่างกันแล้วพฤติกรรมเปลี่ยนเงียบๆ
+      + 20 เทสต์: ขอบ 15 นาที, manual ไม่ถูกตัด, ตัวจับเวลาคาบ millis() วนรอบ, deadline ล้นเป็น 0 พอดี
+        mutation test ยืนยันทั้ง 2 บั๊กเดิม: gate ล็อกด้วยโหมด FAIL 2 เคส · pumpMaxed=didCutoff FAIL 1 เคส
+    + dashboard: เพิ่มชิป "สัญญาณ WiFi" (RSSI + จำนวนครั้งที่หลุด · เหตุผลอยู่ใน tooltip) และช่อง
+      "รีสตาร์ทล่าสุด" (last_reset_reason + boot_count) — 2 ค่าหลัง fw push มาตั้งแต่ v2.2.0 แต่ไม่มีที่
+      แสดงเลย ต้องเปิด Firebase console ดู · จำเป็นสำหรับเคส restart ที่ยังหาสาเหตุไม่ได้
+      + CSS chip-warn (เหลืองอำพัน) แยกจาก chip-off (เทา = ปิด/ไม่ทำงาน) — สัญญาณอ่อน/หลุดบ่อยคือ
+        "มีปัญหาแต่ยังทำงาน" ไม่ใช่ "ปิด" · fw เก่าที่ไม่มี field จะไม่แสดง (ไม่โชว์ 0 = อ่านผิดว่าไม่เคยหลุด)
   Changelog v2.8.0 (2026-07-24) — พัดลมกลับมาพักคู่ปั๊ม (max run 15 นาที + พัก 5 นาที พร้อมกัน):
     - ตามคำสั่งหน้างาน: ให้พัดลมมี max-runtime 15 นาทีเท่าปั๊ม แล้วพัก 5 นาทีพร้อมกัน
     - ⚠️ นี่คือการ "ย้อน" decouple ของ v2.6.0 — v2.6.0 แยกพัดลมออกเพราะ CSV 2026-07-20 พบว่า
@@ -1418,36 +1430,41 @@ static inline bool lockActive(unsigned long lockUntil) {
 //   ⚠️ พัดลมพักช่วงร้อนได้ = เสี่ยง overshoot (CSV 2026-07-20) — เป็น trade-off ที่ยอมรับตามคำสั่ง
 void pumpSafetyCheck() {
   unsigned long now = millis();
-  // ล้างล็อกที่หมดอายุแล้วให้กลับเป็น 0 (v2.9.0) — ปิดช่องสุดท้ายของ millis() วนรอบ
-  // lockActive() ใช้ผลต่างแบบ signed ซึ่งถูกต้องในหน้าต่าง ±24.8 วันรอบ deadline เท่านั้น
-  // ถ้าปล่อย lockUntil ค้างเป็นค่าเก่าไว้เฉยๆ พอเวลาผ่านไปเกิน ~24.8 วันจาก deadline นั้น
-  // ผลต่างจะวนกลับไปติดลบ = lockActive() รายงานว่า "ล็อกอยู่" ทั้งที่หมดอายุไปนานแล้ว
-  // ล้างทุกรอบ loop ตรงนี้ = lockUntil มีได้แค่ 2 สถานะ: 0 (ไม่ล็อก) หรือ deadline ที่อยู่ในช่วงไม่กี่นาที
-  if (pumpLockUntil != 0 && !lockActive(pumpLockUntil)) pumpLockUntil = 0;
-  if (fanLockUntil  != 0 && !lockActive(fanLockUntil))  fanLockUntil  = 0;
-  bool pumpAuto = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
-  bool fanAuto  = ch_isAuto[IDX_FAN]  || ch_schedEnabled[IDX_FAN];
+  // ⚠️ ตรรกะเวลา/สถานะทั้งหมดย้ายไป stepSafetyTimers() ใน auto_control_logic.h แล้ว (v2.9.0)
+  //    เพื่อให้เทสต์ถึง — ตรงนี้เหลือแค่ adapter: ป้อน state เข้า → เอาผลไปสั่งรีเลย์ + log + alert
+  //    ⚠️ PUMP_COOLDOWN_MS กับ FAN_COOLDOWN_MS ต้องเท่ากัน (พักคู่กันตามคำสั่ง v2.8.0)
+  //    stepSafetyTimers รับ cooldown ตัวเดียว — เช็คตรงนี้กันใครแก้ให้ต่างกันแล้วพฤติกรรมเปลี่ยนเงียบๆ
+  static_assert(PUMP_COOLDOWN_MS == FAN_COOLDOWN_MS,   "พัดลมต้องพักคู่ปั๊ม — cooldown ต้องเท่ากัน");
+  static_assert(PUMP_MAX_RUNTIME_MS == FAN_MAX_RUNTIME_MS, "max runtime ปั๊ม/พัดลมต้องเท่ากัน");
 
-  // จับเวลาเดินต่อเนื่อง — รีเซ็ตเมื่อช่องหยุด หรืออยู่โหมด manual
-  if (ch4_spare && pumpAuto) { if (pumpOnSince == 0) pumpOnSince = now; } else pumpOnSince = 0;
-  if (ch3_fanIn && fanAuto)  { if (fanOnSince  == 0) fanOnSince  = now; } else fanOnSince  = 0;
+  SafetyTimerInputs in;
+  in.now          = (uint32_t)now;
+  in.pumpRelayOn  = ch4_spare;
+  in.fanRelayOn   = ch3_fanIn;
+  in.pumpAuto     = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
+  in.fanAuto      = ch_isAuto[IDX_FAN]  || ch_schedEnabled[IDX_FAN];
+  in.maxRuntimeMs = PUMP_MAX_RUNTIME_MS;
+  in.cooldownMs   = PUMP_COOLDOWN_MS;
 
-  bool pumpMaxed = (pumpOnSince != 0) && (now - pumpOnSince >= PUMP_MAX_RUNTIME_MS);
-  bool fanMaxed  = (fanOnSince  != 0) && (now - fanOnSince  >= FAN_MAX_RUNTIME_MS);
+  SafetyTimerState cur{ (uint32_t)pumpOnSince, (uint32_t)fanOnSince,
+                        (uint32_t)pumpLockUntil, (uint32_t)fanLockUntil };
+  SafetyTimerResult res = stepSafetyTimers(in, cur);
 
-  if (pumpMaxed || fanMaxed) {
-    // ล็อกพัก "ทั้งคู่" 5 นาทีพร้อมกัน — ตั้ง lock ทั้ง 2 ตัว "ไม่สนโหมด" ส่วนการสั่งรีเลย์ปิดยังทำเฉพาะช่อง auto
-    // (manual = คนคุมเอง ไม่แตะรีเลย์เขา · แต่ lock ต้องตั้งไว้ด้วย)
+  pumpOnSince   = res.state.pumpOnSince;
+  fanOnSince    = res.state.fanOnSince;
+  pumpLockUntil = res.state.pumpLockUntil;
+  fanLockUntil  = res.state.fanLockUntil;
+
+  if (res.didCutoff) {
+    // ล็อกถูกตั้ง "ทั้งคู่เสมอ" ใน stepSafetyTimers() ไม่ผูกโหมด · ส่วนการสั่งรีเลย์ปิดทำเฉพาะช่อง auto
     // ⚠️ เหตุผลที่ lock ต้องตั้งทั้งคู่แม้ช่องนั้นเป็น manual ตอน cutoff (code review v2.8.0):
     //   lock ถูกอ่านแค่ทาง auto (autoControl) กับ schedule เท่านั้น — manual ตั้งใจข้าม lock อยู่แล้ว
     //   ถ้าตั้งเฉพาะช่อง auto: cutoff ตอนปั๊มเป็น manual → pumpLockUntil ไม่ถูกตั้ง → ผู้ใช้สลับปั๊มกลับเป็น
     //   auto กลางช่วงพัก 5 นาที → ปั๊มเปิดได้ทันทีขณะพัดลมยังถูกล็อกปิด = ปั๊มพ่นน้ำโดยไม่มีพัดลม (เคสที่ห้าม)
     //   ตั้งทั้งคู่แล้ว lock ที่ค้างอยู่จะคุมช่องนั้นทันทีที่มันกลับเข้าโหมด auto/schedule
-    pumpLockUntil = now + PUMP_COOLDOWN_MS;
-    fanLockUntil  = now + FAN_COOLDOWN_MS;
-    if (pumpAuto && ch4_spare) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = now; }
-    if (fanAuto  && ch3_fanIn) { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
-    pumpOnSince = 0; fanOnSince = 0;
+    if (res.cutPumpRelay) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = now; }
+    if (res.cutFanRelay)  { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
+    const bool pumpMaxed = res.pumpMaxed;
     const char* trigger = pumpMaxed ? "ปั๊ม" : "พัดลม";
     Serial.printf("[SAFETY] ตัดปั๊ม+พัดลม — %s เดินครบ 15 นาที (พักคู่กัน 5 นาที)\n", trigger);
     // เตือน "ตรวจสอบระดับน้ำ" + buzzer เฉพาะตอน "ปั๊ม" เดินครบ 15 นาที (ปั๊มเดินนาน = อาจน้ำหมด)

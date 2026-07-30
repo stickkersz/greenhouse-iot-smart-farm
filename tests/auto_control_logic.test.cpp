@@ -440,6 +440,109 @@ int main() {
           "ข้อจำกัด: deadline เก่าเกิน 24.8 วัน อ่านว่าล็อก -> ผู้เรียกต้องล้างเป็น 0 เมื่อหมดอายุ");
   }
 
+  // ── v2.9.0: stepSafetyTimers() — max runtime 15 นาที + พักคู่กัน 5 นาที ──────
+  // ตรรกะนี้เคยอยู่ใน pumpSafetyCheck() ของ .ino ทั้งก้อน = ไม่มีเทสต์เลย (code review v2.8.0 จับได้)
+  // ทั้งที่มีบั๊กมาแล้ว 2 รอบ: false water alarm (พัดลม trigger แต่เตือนเรื่องน้ำ) และ lock desync
+  printf("\n== v2.9.0: stepSafetyTimers() — max runtime + cooldown พักคู่กัน ==\n");
+  {
+    const uint32_t MAXRUN = 15UL * 60 * 1000;   // PUMP_MAX_RUNTIME_MS จริง
+    const uint32_t COOL   =  5UL * 60 * 1000;   // PUMP_COOLDOWN_MS จริง
+
+    // helper: ประกอบ inputs ให้อ่านง่าย
+    auto mk = [&](uint32_t now, bool pumpOn, bool fanOn, bool pumpAuto, bool fanAuto) {
+      SafetyTimerInputs in;
+      in.now = now; in.pumpRelayOn = pumpOn; in.fanRelayOn = fanOn;
+      in.pumpAuto = pumpAuto; in.fanAuto = fanAuto;
+      in.maxRuntimeMs = MAXRUN; in.cooldownMs = COOL;
+      return in;
+    };
+    const SafetyTimerState ZERO{0, 0, 0, 0};
+
+    // ── เริ่มจับเวลา ──
+    {
+      auto r = stepSafetyTimers(mk(1000, true, true, true, true), ZERO);
+      check(r.state.pumpOnSince == 1000 && r.state.fanOnSince == 1000, "รีเลย์เปิด+auto -> เริ่มจับเวลาทั้ง 2 ช่อง");
+      check(!r.didCutoff, "เพิ่งเริ่มเดิน -> ยังไม่ตัด");
+    }
+    // ── manual ไม่จับเวลา = ไม่มีวันถูกตัด ──
+    {
+      auto r = stepSafetyTimers(mk(1000, true, true, false, false), ZERO);
+      check(r.state.pumpOnSince == 0 && r.state.fanOnSince == 0, "manual ทั้ง 2 ช่อง -> ไม่จับเวลาเลย");
+      auto r2 = stepSafetyTimers(mk(1000 + MAXRUN * 10, true, true, false, false), r.state);
+      check(!r2.didCutoff, "manual เดินนานเท่าไรก็ไม่ถูกตัด (คนสั่งเองต้องคุมเอง)");
+    }
+    // ── รีเลย์ปิด -> รีเซ็ตตัวจับเวลา ──
+    {
+      SafetyTimerState st{1000, 1000, 0, 0};
+      auto r = stepSafetyTimers(mk(5000, false, false, true, true), st);
+      check(r.state.pumpOnSince == 0 && r.state.fanOnSince == 0, "รีเลย์ปิด -> รีเซ็ตตัวจับเวลาเป็น 0");
+    }
+    // ── ขอบ 15 นาที ──
+    {
+      SafetyTimerState st{1000, 0, 0, 0};
+      auto before = stepSafetyTimers(mk(1000 + MAXRUN - 1, true, false, true, true), st);
+      check(!before.didCutoff, "ปั๊มเดิน 15 นาที ขาด 1ms -> ยังไม่ตัด");
+      auto at = stepSafetyTimers(mk(1000 + MAXRUN, true, false, true, true), st);
+      check(at.didCutoff && at.pumpMaxed && !at.fanMaxed, "ปั๊มเดินครบ 15 นาที -> ตัด + pumpMaxed");
+    }
+    // ── ปั๊ม trigger: ล็อกทั้งคู่ + ตัดเฉพาะช่องที่เปิดอยู่ ──
+    {
+      SafetyTimerState st{1000, 0, 0, 0};              // ปั๊มเดินอยู่ พัดลมไม่ได้เดิน
+      uint32_t now = 1000 + MAXRUN;
+      auto r = stepSafetyTimers(mk(now, true, false, true, true), st);
+      check(r.state.pumpLockUntil == now + COOL && r.state.fanLockUntil == now + COOL,
+            "cutoff -> ล็อกทั้งปั๊มและพัดลม พร้อมกัน 5 นาที (พักคู่กัน)");
+      check(r.cutPumpRelay && !r.cutFanRelay, "cutoff -> สั่งปิดเฉพาะรีเลย์ที่เปิดอยู่ (พัดลมปิดอยู่แล้ว)");
+      check(r.state.pumpOnSince == 0 && r.state.fanOnSince == 0, "cutoff -> รีเซ็ตตัวจับเวลาทั้งคู่");
+    }
+    // ── พัดลม trigger: ต้องไม่ใช่ pumpMaxed (กัน false water alarm — บั๊ก v2.8.0) ──
+    {
+      SafetyTimerState st{0, 1000, 0, 0};              // พัดลมเดินอยู่ ปั๊มไม่ได้เดิน
+      auto r = stepSafetyTimers(mk(1000 + MAXRUN, false, true, true, true), st);
+      check(r.didCutoff && r.fanMaxed && !r.pumpMaxed,
+            "พัดลมเป็นตัว trigger -> fanMaxed เท่านั้น (pumpMaxed=false = ไม่ปลุก water alarm)");
+      check(r.cutFanRelay && !r.cutPumpRelay, "พัดลม trigger -> ปิดเฉพาะพัดลม (ปั๊มไม่ได้เดิน)");
+    }
+    // ── ⚠️ regression ของบั๊ก lock desync (review v2.8.0) ──
+    // ปั๊มเป็น manual ตอน cutoff -> ต้องยัง "ตั้ง pumpLockUntil" ไว้ ไม่งั้นสลับกลับเป็น auto
+    // กลางช่วงพักแล้วปั๊มเปิดได้ทันทีขณะพัดลมยังล็อก = ปั๊มพ่นน้ำโดยไม่มีพัดลม
+    {
+      SafetyTimerState st{0, 1000, 0, 0};              // พัดลม auto เดินครบ · ปั๊มเป็น manual
+      uint32_t now = 1000 + MAXRUN;
+      auto r = stepSafetyTimers(mk(now, false, true, /*pumpAuto=*/false, /*fanAuto=*/true), st);
+      check(r.state.pumpLockUntil == now + COOL,
+            "desync: ปั๊มเป็น manual ตอน cutoff -> ยังต้องตั้ง pumpLockUntil (กันสลับกลับ auto แล้วพ่นน้ำ)");
+      check(!r.cutPumpRelay, "desync: ปั๊ม manual -> ห้ามสั่งปิดรีเลย์เขา (คนคุมเอง)");
+      check(lockIsActive(now + 1000, r.state.pumpLockUntil),
+            "desync: สลับปั๊มกลับเป็น auto กลางช่วงพัก -> ยังติดล็อกอยู่ เปิดไม่ได้");
+    }
+    // ── ล็อกหมดอายุแล้วถูกล้างเป็น 0 ──
+    {
+      SafetyTimerState st{0, 0, 1000 + COOL, 1000 + COOL};
+      auto r = stepSafetyTimers(mk(1000 + COOL + 1, false, false, true, true), st);
+      check(r.state.pumpLockUntil == 0 && r.state.fanLockUntil == 0,
+            "ล็อกหมดอายุ -> ล้างเป็น 0 (กัน deadline เก่าวนกลับมาอ่านว่าล็อก)");
+    }
+    // ── ตัวจับเวลาเดินข้าม millis() วนรอบ ──
+    {
+      uint32_t start = 0xFFFFFFFFu - (MAXRUN / 2);   // เริ่มเดินก่อนวนรอบ
+      SafetyTimerState st{start, 0, 0, 0};
+      uint32_t now = start + MAXRUN;                 // ครบ 15 นาที "หลัง" วนรอบไปแล้ว
+      check(now < start, "sanity: เวลาปัจจุบันวนรอบไปแล้วจริง");
+      auto r = stepSafetyTimers(mk(now, true, false, true, true), st);
+      check(r.didCutoff && r.pumpMaxed, "ตัวจับเวลาเดินคาบ millis() วนรอบ -> ยังตัดถูกเวลา");
+    }
+    // ── deadline ล้นเป็น 0 พอดี -> ต้องไม่กลายเป็น "ไม่ล็อก" ──
+    {
+      uint32_t now = 0u - COOL;                      // now + COOL ล้นเป็น 0 เป๊ะ
+      SafetyTimerState st{now - MAXRUN, 0, 0, 0};
+      auto r = stepSafetyTimers(mk(now, true, false, true, true), st);
+      check(r.didCutoff, "sanity: cutoff เกิดขึ้นจริงในเคสนี้");
+      check(r.state.pumpLockUntil != 0 && lockIsActive(now, r.state.pumpLockUntil),
+            "deadline ล้นเป็น 0 พอดี -> เลื่อนเป็น 1 ไม่ให้อ่านว่า 'ไม่ล็อก'");
+    }
+  }
+
   printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "SOME FAILED", failures, failures == 1 ? "" : "s");
   return failures == 0 ? 0 : 1;
 }

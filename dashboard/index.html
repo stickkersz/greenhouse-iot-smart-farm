@@ -151,6 +151,11 @@
     .sys-chip.chip-off .sys-v{color:var(--muted)}
     .sys-chip.chip-off .sys-ico{background:var(--surface-2);filter:grayscale(.4) opacity(.8)}
     .sys-chip.chip-on{border-color:var(--g400)}
+    /* v2.9.0 — สถานะ "มีปัญหาแต่ยังทำงาน" (สัญญาณอ่อน/หลุดบ่อย) · ต่างจาก chip-off ที่หมายถึง "ปิด/ไม่ทำงาน"
+       ใช้สีเดียวกับ .sysbanner.sev-warn เพื่อให้ภาษาสีทั้งหน้าตรงกัน */
+    .sys-chip.chip-warn{border-color:#fbbf24}
+    .sys-chip.chip-warn .sys-v{color:#b45309}
+    .sys-chip.chip-warn .sys-ico{background:#fef3c7}
 
     /* ── Sensor grid ── */
     .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px}
@@ -539,6 +544,9 @@
       <div class="uptime-r">
         <div class="ustat"><span class="ustat-l">Firmware</span><span class="ustat-v" id="firmwareVer">—</span></div>
         <div class="ustat"><span class="ustat-l">อัปเดตล่าสุด</span><span class="ustat-v" id="lastUpdateTime">—</span></div>
+        <!-- v2.9.0: boot diagnostics — fw push มาตั้งแต่ v2.2.0 แต่ไม่มีที่แสดงเลย ต้องเปิด Firebase console ดู
+             จำเป็นสำหรับเคส "บอร์ดรีสตาร์ทเอง" ที่ยังหาสาเหตุไม่ได้ (BROWNOUT = ไฟ · PANIC/TASK_WDT = โค้ด) -->
+        <div class="ustat"><span class="ustat-l">รีสตาร์ทล่าสุด</span><span class="ustat-v" id="resetReason" title="สาเหตุที่บอร์ดบูตรอบนี้">—</span></div>
       </div>
     </div>
 
@@ -552,6 +560,16 @@
         <span class="sys-ico">🔔</span>
         <div class="sys-info"><div class="sys-k">Buzzer เสียงเตือน</div><div class="sys-v" id="chipBuzzerVal">—</div></div>
       </button>
+      <!-- v2.9.0: WiFi diagnostics — เดิม wifi_rssi ถูกอ่านเข้า sysStatus แต่ไม่เคยแสดงที่ไหนเลย
+           และ wifi_drop_count/wifi_drop_reason (ใหม่ v2.9.0) ต้องเปิด Firebase console ดู
+           ทำให้เคส "หลุดบ่อยแล้วต่อไม่กลับ" ไล่สาเหตุจากหน้า dashboard ไม่ได้ — ตรงนี้แก้ข้อนั้น -->
+      <div class="sys-chip" id="chipWifi">
+        <span class="sys-ico">📶</span>
+        <div class="sys-info">
+          <div class="sys-k">สัญญาณ WiFi</div>
+          <div class="sys-v" id="chipWifiVal">—</div>
+        </div>
+      </div>
     </div>
 
     <div>
@@ -1151,7 +1169,13 @@ function startListeners() {
       fan_locked:  d.fan_locked  === true,   // v2.8.0: พัดลมพักคู่ปั๊ม — ไม่มี field (fw เก่า) = false
       time_ok:     d.time_ok     !== false,
       rssi:        d.wifi_rssi,
+      // v2.9.0 — ไม่มี field = fw เก่ากว่า 2.9.0 (แสดง "—" ไม่ใช่ 0 ที่จะอ่านผิดว่า "ไม่เคยหลุด")
+      wifi_drop_count:  d.wifi_drop_count,
+      wifi_drop_reason: d.wifi_drop_reason,
     };
+    updateWifiChip(d.wifi_rssi, d.wifi_drop_count, d.wifi_drop_reason);
+    // boot diagnostics — fw push มาตั้งแต่ v2.2.0 แต่ไม่เคยมีที่แสดง
+    setResetReason(d.last_reset_reason, d.boot_count);
     updateRelayUI('ch4', d.ch4_spare);   // ปั๊มน้ำ
     updateRelayUI('ch3', d.ch3_fan_in);  // พัดลม
     updateRelayUI('ch1', d.ch1_pump);    // สำรอง
@@ -1300,6 +1324,64 @@ function pruneCollection(path, keep) {
 
 // ── System Status Chips ───────────────────────────────
 let buzzerEnabled = true;
+
+// ── WiFi chip (v2.9.0) ────────────────────────────────
+// แสดง RSSI + จำนวนครั้งที่หลุด · เหตุผลที่หลุดอยู่ใน tooltip (title) เพราะยาวเกินใส่ในบรรทัดเดียว
+// ⚠️ ค่าเหล่านี้เป็น "ค่าล่าสุดที่บอร์ดเคย push" — ถ้าบอร์ดออฟไลน์อยู่ มันคือค่าค้างจากตอนยังออนไลน์
+// (banner ออฟไลน์ด้านบนบอกเรื่องนั้นอยู่แล้ว จึงไม่ซ้ำเตือนตรงนี้)
+function updateWifiChip(rssi, dropCount, dropReason) {
+  const chip = document.getElementById('chipWifi');
+  const val  = document.getElementById('chipWifiVal');
+  if (!chip || !val) return;
+
+  // ⚠️ .sys-v เป็น nowrap + ellipsis บนชิปกว้างต่ำสุด 165px → เหลือที่ข้อความ ~105px
+  // บรรทัดหลักจึงต้องสั้น: เก็บแค่ตัวเลข · คำอธิบายคุณภาพ/เหตุผล ไปอยู่ใน tooltip ทั้งหมด
+  // RSSI: ยิ่งใกล้ 0 ยิ่งแรง · ≥-60 แรง, ≥-70 พอใช้, ≥-80 อ่อน, ต่ำกว่านั้นอ่อนมาก (หลุดง่าย)
+  let txt, tip, weak = false;
+  if (rssi == null || rssi === 0) {
+    txt = '—';
+    tip = 'ยังไม่มีข้อมูลสัญญาณจากบอร์ด';
+  } else {
+    let q;
+    if      (rssi >= -60) q = 'แรง';
+    else if (rssi >= -70) q = 'พอใช้';
+    else if (rssi >= -80) { q = 'อ่อน';     weak = true; }
+    else                  { q = 'อ่อนมาก'; weak = true; }
+    txt = `${rssi} dBm`;
+    tip = `สัญญาณ ${q} (${rssi} dBm)`;
+  }
+
+  // drop count: fw < 2.9.0 ไม่ push field นี้ → ข้ามไปเลย
+  // (อย่าแสดง 0 เมื่อไม่มี field — จะอ่านผิดว่า "ไม่เคยหลุด" ทั้งที่จริงคือ "ไม่รู้")
+  if (typeof dropCount === 'number') {
+    if (dropCount > 0) {
+      txt += ` · หลุด ${dropCount}`;
+      // หลุดบ่อยผิดปกติ = เตือนไว้ แม้สัญญาณตอนนี้จะแรงก็ตาม (เคส AP เตะเอง/โหลดหนัก)
+      if (dropCount >= 5) weak = true;
+    }
+    tip += dropCount === 0 ? ' · ไม่เคยหลุดตั้งแต่บูต' : ` · หลุด ${dropCount} ครั้งตั้งแต่บูต`;
+  }
+  // แสดงเหตุผลเฉพาะตอนเคยหลุดจริง — ตอน dropCount = 0 firmware ส่ง reason ว่า "ยังไม่เคยหลุดตั้งแต่บูต"
+  // ซึ่งซ้ำกับบรรทัดข้างบนพอดี (tooltip จะอ่านว่า "ไม่เคยหลุด ... เหตุผลครั้งล่าสุด: ยังไม่เคยหลุด")
+  if (dropReason && dropCount !== 0) tip += `\nเหตุผลครั้งล่าสุด: ${dropReason}`;
+
+  val.textContent = txt;
+  chip.title = tip;
+  chip.classList.toggle('chip-warn', weak);
+  chip.classList.toggle('chip-on',   !weak && rssi != null && rssi !== 0);
+}
+
+// ── สาเหตุ reset ล่าสุด (v2.9.0 แสดงผล · fw push มาตั้งแต่ v2.2.0) ──
+// firmware ส่งมาเป็นข้อความยาว เช่น "BROWNOUT *** ไฟตก — สงสัย relay/ปั๊มสวิตช์ดึงกระแส ***"
+// ตัดเอาคำแรก (ชื่อสาเหตุ) มาแสดง ที่เหลือยัดใน tooltip — ช่องนี้กว้างไม่พอสำหรับข้อความเต็ม
+function setResetReason(reason, bootCount) {
+  const el = document.getElementById('resetReason');
+  if (!el) return;
+  if (!reason) { el.textContent = '—'; el.title = 'firmware เก่ากว่า v2.2.0 หรือยังไม่ push'; return; }
+  const short = String(reason).split(' ')[0];
+  el.textContent = typeof bootCount === 'number' ? `${short} (บูต #${bootCount})` : short;
+  el.title = reason;
+}
 
 function updateBuzzerChip(enabled) {
   buzzerEnabled = enabled;

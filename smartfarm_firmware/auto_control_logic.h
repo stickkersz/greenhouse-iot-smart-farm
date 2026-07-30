@@ -66,6 +66,79 @@ inline bool lockIsActive(uint32_t now, uint32_t lockUntil) {
   return (int32_t)(now - lockUntil) < 0;
 }
 
+// ── pump/fan safety timers — max runtime + cooldown ที่พักคู่กัน (v2.9.0 ย้ายมาให้เทสต์ถึง) ──
+// ตรรกะนี้เคยอยู่ใน pumpSafetyCheck() ของ .ino ทั้งก้อน = เทสต์ไม่ถึงเลย (code review v2.8.0 จับได้)
+// ทั้งที่เป็นโค้ดที่ "คุมความปลอดภัยจริง" และมีบั๊กมาแล้ว 2 รอบ (false water alarm, lock desync)
+// แยกส่วนที่เป็นตรรกะเวลา/สถานะล้วนออกมา — ส่วนที่เหลือใน .ino คือสั่งรีเลย์ + log + Firebase alert
+//
+// กฎ (v2.8.0 ตามคำสั่งหน้างาน):
+//   - จับเวลาเดินต่อเนื่องแยกช่อง · manual = คนคุมเอง ไม่จับเวลา ไม่ตัด
+//   - ครบ maxRuntime ช่องใดช่องหนึ่ง → ตัดทั้งคู่ (เฉพาะช่อง auto) + ล็อกพักพร้อมกันทั้งคู่
+//   - ล็อกตั้ง "ทั้งคู่เสมอ" ไม่ผูกโหมด · การสั่งรีเลย์ปิดทำเฉพาะช่อง auto (ดูเหตุผลใน .ino)
+struct SafetyTimerState {
+  uint32_t pumpOnSince;    // เวลาเริ่มเดินปั๊ม (0 = ไม่ได้เดิน/ไม่จับ)
+  uint32_t fanOnSince;     // เวลาเริ่มเดินพัดลม (0 = ไม่ได้เดิน/ไม่จับ)
+  uint32_t pumpLockUntil;  // deadline ปลดล็อกปั๊ม (0 = ไม่ล็อก)
+  uint32_t fanLockUntil;   // deadline ปลดล็อกพัดลม (0 = ไม่ล็อก)
+};
+
+struct SafetyTimerInputs {
+  uint32_t now;
+  bool     pumpRelayOn;    // สถานะรีเลย์ปั๊มตอนนี้
+  bool     fanRelayOn;     // สถานะรีเลย์พัดลมตอนนี้
+  bool     pumpAuto;       // ปั๊มอยู่โหมด auto หรือ schedule (ไม่ใช่ manual)
+  bool     fanAuto;
+  uint32_t maxRuntimeMs;   // เดินต่อเนื่องได้สูงสุด
+  uint32_t cooldownMs;     // พักหลังถูกตัด
+};
+
+struct SafetyTimerResult {
+  SafetyTimerState state;  // state ใหม่ที่ผู้เรียกต้องเก็บกลับ
+  bool cutPumpRelay;       // ต้องสั่งปิดรีเลย์ปั๊มรอบนี้
+  bool cutFanRelay;        // ต้องสั่งปิดรีเลย์พัดลมรอบนี้
+  bool pumpMaxed;          // ปั๊มเป็นตัว trigger — ใช้เลือกข้อความ alert (ปั๊มเดินนาน = สงสัยน้ำหมด)
+  bool fanMaxed;           // พัดลมเป็นตัว trigger — ไม่ใช่เรื่องน้ำ ห้ามปลุก water alarm
+  bool didCutoff;          // เกิด cutoff รอบนี้ (pumpMaxed || fanMaxed)
+};
+
+inline SafetyTimerResult stepSafetyTimers(const SafetyTimerInputs& in, SafetyTimerState st) {
+  SafetyTimerResult r{st, false, false, false, false, false};
+
+  // 1) ล้างล็อกที่หมดอายุให้กลับเป็น 0 — จำเป็นเพราะ lockIsActive() ถูกต้องเฉพาะหน้าต่าง ±24.8 วัน
+  //    รอบ deadline · ถ้าปล่อยค่าเก่าค้าง deadline ที่ผ่านไปเกิน 24.8 วันจะวนกลับมาอ่านว่า "ล็อกอยู่"
+  if (st.pumpLockUntil != 0 && !lockIsActive(in.now, st.pumpLockUntil)) st.pumpLockUntil = 0;
+  if (st.fanLockUntil  != 0 && !lockIsActive(in.now, st.fanLockUntil))  st.fanLockUntil  = 0;
+
+  // 2) จับเวลาเดินต่อเนื่อง — เริ่มจับเมื่อรีเลย์เปิด "และ" อยู่โหมด auto · นอกนั้นรีเซ็ต
+  //    manual ไม่จับเวลา = ไม่มีวันถูกตัด (คนสั่งเองต้องคุมเอง — เจตนาเดิมของระบบ)
+  if (in.pumpRelayOn && in.pumpAuto) { if (st.pumpOnSince == 0) st.pumpOnSince = in.now; }
+  else                                 st.pumpOnSince = 0;
+  if (in.fanRelayOn  && in.fanAuto)  { if (st.fanOnSince  == 0) st.fanOnSince  = in.now; }
+  else                                 st.fanOnSince  = 0;
+
+  // 3) ครบเวลาหรือยัง — ลบกันแบบ unsigned (ทน millis() วนรอบ) ไม่ใช่เทียบ absolute
+  r.pumpMaxed = (st.pumpOnSince != 0) && ((uint32_t)(in.now - st.pumpOnSince) >= in.maxRuntimeMs);
+  r.fanMaxed  = (st.fanOnSince  != 0) && ((uint32_t)(in.now - st.fanOnSince)  >= in.maxRuntimeMs);
+  r.didCutoff = r.pumpMaxed || r.fanMaxed;
+
+  // 4) cutoff — ล็อกทั้งคู่เสมอ (ไม่ผูกโหมด) · สั่งปิดรีเลย์เฉพาะช่อง auto ที่กำลังเปิดอยู่
+  if (r.didCutoff) {
+    st.pumpLockUntil = in.now + in.cooldownMs;
+    st.fanLockUntil  = in.now + in.cooldownMs;
+    // ⚠️ deadline อาจล้นเป็นเลขเล็กได้ตอน now ใกล้ 2^32 — lockIsActive() รับมือด้วยผลต่าง signed
+    //    แต่ถ้าล้นแล้วได้ 0 พอดี จะกลายเป็น "ไม่ล็อก" → เลื่อนเป็น 1 (1ms ไม่มีผลเชิงพฤติกรรม)
+    if (st.pumpLockUntil == 0) st.pumpLockUntil = 1;
+    if (st.fanLockUntil  == 0) st.fanLockUntil  = 1;
+    r.cutPumpRelay = in.pumpAuto && in.pumpRelayOn;
+    r.cutFanRelay  = in.fanAuto  && in.fanRelayOn;
+    st.pumpOnSince = 0;
+    st.fanOnSince  = 0;
+  }
+
+  r.state = st;
+  return r;
+}
+
 struct AutoControlInputs {
   bool  sensorOk;     // เซนเซอร์อากาศเชื่อได้ไหม (false = อ่านพลาดติดกันนานเกิน → ค่าเก่า) · false = ปิดทุกช่อง
   float airTemp;      // ค่าเฉลี่ยอุณหภูมิอากาศ (°C) — คุม latch ร้อน
