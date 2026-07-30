@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.7.1** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.0** · ESP32 DevKit V1
 
 ---
 
@@ -199,7 +199,7 @@ Reference docs worth reading: `Firebase_Database_Structure.md`, `pinout_v2.md`, 
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.7.1 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.0 ===`.
 
 ---
 
@@ -275,10 +275,10 @@ Run both green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.7.1`.
+3. Flash the board, watch serial for `v2.9.0`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.7.1`.
+   - Banner reads `v2.9.0`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -308,7 +308,18 @@ Run both green before flashing or deploying.
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`). The C++ side is single-source and mutation-tested; the other two are comment-linked. Tuning it means editing all three.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `PROJECT_MEMORY.md`.
 
-**v2.7.1** (latest) — fixed a pump-vs-vent conflict window (vent must now be ≥ `humidity_max` + `VENT_HYST`), moved the vent clamp into the testable pure logic, added reciprocal guards on `temp_off`/`humidity_min`, and hardened dashboard validation/feedback.
+**v2.9.0** (latest) — fixed "Wi-Fi drops repeatedly and never reconnects, while phones/PCs on the same AP are fine". Four compounding bugs, all on the reconnect path (the boot path was fine, which is why a reboot appeared to fix it):
+
+1. **Modem sleep was on** (ESP32 STA default `WIFI_PS_MIN_MODEM`) — the radio naps between beacons, misses them, and drops with reason 200 `BEACON_TIMEOUT`. Phones don't power-save this way, hence the asymmetry. Now `WiFi.setSleep(false)`. ⚠️ Costs ~20-40 mA average; if `last_reset_reason` starts showing `BROWNOUT` more often after flashing, suspect the power rail first.
+2. **Core auto-reconnect raced `wifiMulti`** — `run()` calls `WiFi.disconnect()` mid-attempt, killing the core's in-flight reconnect. Same class of bug as the old `Firebase.reconnectWiFi(false)` fix, which counted only two radio managers and missed that the ESP32 core is a third. Now a 45 s grace window lets the core retry the same SSID alone (fast, no scan); only after that does `wifiMulti` take over and sweep all SSIDs.
+3. **`run()` was called with no argument** in `loop()`, taking the library's 5000 ms default while boot used 15000 — the reconnect path was 3× more impatient than boot. Busy APs routinely need more than 5 s for assoc + DHCP. Now 20000 ms.
+4. **Every other retry was a dead round** — a failed `run()` calls `markAsFailed()`, so the next round skips that AP as a candidate, ends with `bestIndex == -1`, and never calls `begin()` at all, while still paying the 3-5 s blocking scan. Now the fail flags are cleared after each failed attempt via `APlistClean()` + re-add (`resetFails()` is private).
+
+Plus: radio power-cycle (`WIFI_OFF` → `WIFI_STA`) after 3 consecutive failures, ahead of the existing one-shot 30-minute reboot; and Wi-Fi disconnect diagnostics (`status/wifi_drop_count`, `status/wifi_drop_reason`) pushed to the dashboard, in the same spirit as `last_reset_reason` from v2.2.0 — previously the logs said only "dropped" / "back", with no way to tell why.
+
+**v2.8.0** — fan now rests with the pump: 15 min max runtime, 5 min shared cooldown (reverses the v2.6.0 decouple, per on-site instruction; accepts the temperature-overshoot trade-off). Follow-up review fixes: no false water alarm when the fan alone triggers cutoff, `status/fan_locked` reports real state again, and both cooldown locks are now set regardless of channel mode so flipping a channel manual→auto mid-cooldown can't let the pump run with the fan locked off.
+
+**v2.7.1** — fixed a pump-vs-vent conflict window (vent must now be ≥ `humidity_max` + `VENT_HYST`), moved the vent clamp into the testable pure logic, added reciprocal guards on `temp_off`/`humidity_min`, and hardened dashboard validation/feedback.
 
 ---
 
