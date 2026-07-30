@@ -219,7 +219,7 @@ logs:          read=email, write=anon
 
 > ⚠️ ส่วนนี้ (2026-07-02) ค่อนข้าง stale แล้ว — ดู PROJECT_MEMORY.md หัวข้อ 15 สำหรับสถานะล่าสุด
 > (2026-07-03): rollback ถอด failsafe/recovery layer + ยืนยัน A/B test ว่าความไม่เสถียรเป็น
-> hardware noise ไม่ใช่โค้ด, Telegram ถูกถอดออกทั้งหมดแล้ว (ไม่ใช้แล้ว), พัดลม 5V แก้แล้ว
+> hardware noise ไม่ใช่โค้ด, พัดลม 5V แก้แล้ว
 
 ### 🔴 ด่วนที่สุด
 - [x] ตัดสินใจ `PUMP_MAX_RUNTIME_MS` แล้ว ✅ (2026-07-07) — คงไว้ **10 นาที** เป็นค่าสุดท้าย (เดิม 5 นาที)
@@ -237,7 +237,6 @@ logs:          read=email, write=anon
 ### Software
 - [x] Dark Mode toggle ✅ (ทำเสร็จแล้ว)
 - [x] Auto Control v2 — พัดลมคุมด้วยน้ำ+อากาศ, ปั๊ม hysteresis, sensor averaging ✅
-- [x] ถอด Telegram alerts ทั้งหมด ✅ (2026-07-03, ไม่ใช้แล้ว)
 - [ ] Multiple zones support
 - [ ] Weekly/monthly report PDF
 

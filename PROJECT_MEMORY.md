@@ -165,16 +165,14 @@ Auth:         Anonymous Authentication (เปิดแล้ว)
 
 ---
 
-## 6. Telegram Bot — ถอดออกแล้ว (2026-07-03)
+## 6. ระบบแจ้งเตือนภายนอก — ไม่ใช้แล้ว
 
-ฟีเจอร์ Telegram alert (firmware + dashboard toggle) ถูกถอดออกทั้งหมดตามคำขอผู้ใช้ — ไม่ต้องใช้แล้ว
-ดู [[incremental-testing]] และหัวข้อ 15 (TODO) สำหรับรายละเอียด rollback วันเดียวกัน
+ระบบไม่มีการแจ้งเตือนออกนอกเครือข่ายเลย · การเตือนหน้างานใช้ **buzzer** (local ไม่ต้องใช้เน็ต)
+และ **dashboard** (banner + alert history) เท่านั้น
 
-> 🔴 **Security:** ไฟล์นี้เคยมี Bot Token + Chat ID จริงอยู่ตรงๆ (ก่อนแก้ครั้งนี้) และไฟล์นี้ถูก track
-> ใน git — token หลุดเข้า commit history แล้วแม้จะลบออกจากไฟล์ปัจจุบันแล้วก็ตาม **ควร revoke/สร้าง
-> token ใหม่ผ่าน @BotFather** (/revoke หรือ /token) เพราะ token เก่ายังอยู่ใน git history
-
-> ❌ **Line Notify ยกเลิกแล้ว** — Discontinued ตั้งแต่ 31 มีนาคม 2568
+> 🔴 **Security — ยังค้าง:** ไฟล์นี้เคยมี bot token ของระบบแจ้งเตือนเก่าเขียนอยู่ตรงๆ และไฟล์นี้ถูก track
+> ใน git → token หลุดเข้า commit history แล้ว **การลบออกจากไฟล์ปัจจุบันไม่ช่วย** เพราะ history ยังมี
+> **ต้อง revoke token ผ่าน @BotFather** (/revoke) — ดูหัวข้อ 15 (TODO)
 
 ---
 
@@ -485,10 +483,10 @@ hardware noise ก่อน — ดูหัวข้อ 🔴 ด้านล่
 - [x] **LCD ไม่ขึ้นจอเลย — แก้แล้ว ✅ (2026-07-08)** สาเหตุจริงคือจอ LCD ตัวเดิมเสีย ไม่ใช่ปัญหาสาย/โค้ด
   ตามที่สงสัยไว้ — เปลี่ยนจอใหม่ต่อสายเดิมทุกเส้น ติดปกติทันที ดูหัวข้อ 14
 
-### ✅ Telegram Alert — ถอดออกทั้งหมดแล้ว (2026-07-03)
-ผู้ใช้ตัดสินใจไม่ใช้ฟีเจอร์นี้ ถอดออกจาก firmware (.ino, config.h, config.h.example) และ dashboard
-(toggle chip + JS) ทั้งหมดแล้ว — ดูหัวข้อ 6 สำหรับ **คำเตือนความปลอดภัย**: bot token จริงเคยอยู่ใน
-PROJECT_MEMORY.md (ไฟล์ที่ track ใน git) ควร revoke ผ่าน @BotFather เพราะยังอยู่ใน git history
+### 🔴 Security ที่ยังค้าง — revoke bot token เก่า
+bot token ของระบบแจ้งเตือนเก่าเคยอยู่ใน PROJECT_MEMORY.md (ไฟล์ที่ track ใน git) → **ยังอยู่ใน git
+history** แม้ลบออกจากไฟล์ปัจจุบันไปแล้ว · การลบไฟล์/แก้ไฟล์ไม่ช่วย ต้อง **revoke ผ่าน @BotFather
+(/revoke)** ให้ token เก่าใช้ไม่ได้ · ไม่มีอะไรในระบบพึ่ง token นี้แล้ว revoke ได้เลยไม่กระทบอะไร
 
 ### 🟡 Hardware ที่ยังค้าง
 - [x] พัดลม 5V (ระบายความร้อนกล่อง IP65) ไม่หมุน — แก้แล้ว (JUMP jumper) ยืนยัน 2026-07-03 ✅
@@ -505,7 +503,6 @@ PROJECT_MEMORY.md (ไฟล์ที่ track ใน git) ควร revoke ผ�
 - [x] Auto Control v2 (น้ำช่วยคุมพัดลม, ปั๊ม hysteresis, sensor averaging)
 - [x] Dashboard redesign (เสร็จไปหลาย session ก่อนแล้ว)
 - [x] Rollback ถอด failsafe/recovery layer — ยืนยันด้วย A/B test ว่าเป็น hardware issue
-- [x] ถอด Telegram Alert ทั้งหมด (ไม่ใช้แล้ว)
 
 ### 🔵 ค้างไว้พิจารณา (ไม่เร่งด่วน)
 - [ ] Login: ยังไม่มีปุ่มสมัคร account — แนะนำไม่ทำ (control write เปิดให้ทุก account ที่ login ได้

@@ -46,7 +46,7 @@ g++ unit test เดิม (`tests/auto_control_logic.test.cpp`) รันผ่
 3. ใน `pumpSafetyCheck()` (บริเวณบรรทัด 1148-1153): **ลบส่วนที่ตัดพัดลม + ตั้ง `fanLockUntil` ทิ้งทั้งหมด** — เหลือแค่ตัดปั๊ม (`ch4_spare=false; setRelay(PIN_RELAY_CH4,false); pumpOnSince=0; pumpLockUntil=now+PUMP_COOLDOWN_MS;`) พัดลมไม่ต้องถูกแตะเลยในฟังก์ชันนี้
 4. ใน `autoControl()` ฝั่งพัดลม: **ลบเงื่อนไข `millis() >= fanLockUntil`** ออกจาก guard การเปิดพัดลม — เหลือแค่ตาม `dec.fanOn` + `!ch3_fanIn` เหมือนพฤติกรรมพื้นฐานของ latch
 5. ตัวแปร `fanLockUntil` เอง: ถ้าไม่มีที่ใช้อื่นแล้วลบทิ้งได้เลย (เช็คว่าไม่มี reference เหลือที่อื่น)
-6. Log/comment string ที่ยังพูดถึง "ตัดปั๊ม+พัดลม" ต้องแก้เป็น "ตัดปั๊ม" อย่างเดียว (บรรทัด 1148, 1154, 1158 และข้อความแจ้งเตือน Telegram/Firebase ที่เกี่ยวข้อง) — กันข้อความหลอกตาว่าพัดลมก็ถูกตัดด้วยทั้งที่ตอนนี้ไม่ตัดแล้ว
+6. Log/comment string ที่ยังพูดถึง "ตัดปั๊ม+พัดลม" ต้องแก้เป็น "ตัดปั๊ม" อย่างเดียว (บรรทัด 1148, 1154, 1158 และข้อความแจ้งเตือน Firebase ที่เกี่ยวข้อง) — กันข้อความหลอกตาว่าพัดลมก็ถูกตัดด้วยทั้งที่ตอนนี้ไม่ตัดแล้ว
 7. Log ที่ hardcode "10 นาที" (บรรทัด 696, 1134) แก้เป็น "15 นาที" ให้ตรงกับข้อ 1
 8. ไม่ต้องแตะ `auto_control_logic.h` หรือ `tests/auto_control_logic.test.cpp` เลย — logic การตัดสินใจ fan/pump ไม่เปลี่ยนสักบรรทัด
 9. ทั้งหมดเป็น `#define`/logic ใน `.ino` ไม่ใช่ `volatile` threshold ที่ปรับผ่าน dashboard ได้สด — ต้อง **reflash firmware ใหม่**
