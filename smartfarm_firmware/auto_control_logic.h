@@ -160,8 +160,14 @@ struct AutoControlInputs {
 };
 
 // deadband ของ wet latch · ปิดที่ ventOn - VENT_HYST กันพัดลมกระพริบที่เส้น
-// ⚠️ นี่คือแหล่งความจริงเดียวฝั่ง C++ — .ino ต้องอ้างค่านี้ ห้าม #define ซ้ำ
-// dashboard (VENT_HYST_PCT) และ database.rules.json ยังต้องแก้ตามมือถ้าจูนค่านี้
+// ⚠️ นี่คือ "แหล่งความจริง" ของค่านี้ทั้งโปรเจกต์ — .ino ต้องอ้างค่านี้ ห้าม #define ซ้ำ
+//
+// ค่านี้ต้องมีสำเนาอยู่อีก 2 ที่ เพราะเป็น runtime ที่ import กันไม่ได้:
+//   1. dashboard/index.html  → const VENT_HYST_PCT
+//   2. database.rules.json   → เขียนเลขลงไปตรงๆ 3 จุด (Firebase rules ไม่มีตัวแปร/import เลย)
+// **จูนค่านี้ = ต้องแก้ทั้ง 3 ที่** · `npm run test:sync` จะ fail ถ้าไม่ตรงกัน (tests/vent_hyst_sync.check.js)
+// จึงไม่ต้องจำเอง — แต่ห้ามข้าม test:sync ตอนจูน ไม่งั้น firmware กับ rules จะขัดกันเงียบๆ
+// (rules ปฏิเสธค่าที่ firmware ยอมรับ = ตั้งค่าจาก dashboard ไม่ได้ โดยไม่มีอะไรบอกว่าทำไม)
 static const float VENT_HYST = 5.0f;
 
 // vent ใช้งานได้ไหม — เงื่อนไขเดียว ใช้ร่วมทุกชั้น

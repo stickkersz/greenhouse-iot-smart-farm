@@ -257,15 +257,17 @@ Auth model: ESP32 uses **anonymous auth** (can write sensors/logs/status/alerts,
 No build step — tests match the project's vanilla approach.
 
 ```bash
-npm test              # runs both suites
+npm test              # runs all three suites
+npm run test:sync     # cross-layer constant check (no emulator, no compiler — instant)
 npm run test:rules    # Firebase rules via emulator (requires firebase-tools + Java)
 npm run test:logic    # auto-control logic via g++ (C++17)
 ```
 
-- **`test:logic`** compiles `tests/auto_control_logic.test.cpp` against `auto_control_logic.h` and runs crossing/hysteresis/sensor-fail cases plus exhaustive invariant sweeps. Because the vent clamp lives *inside* the pure function, the sweep exercises the real shipped code (mutating `VENT_HYST` makes tests fail).
+- **`test:sync`** asserts `VENT_HYST` is identical in all three layers that need it, and that every dashboard preset still satisfies the vent constraint — so a tuned constant can't leave firmware and rules disagreeing silently (rules rejecting a value firmware accepts shows up as "the dashboard won't save" with no stated reason). Reads files only; needs neither Java nor a compiler.
+- **`test:logic`** compiles `tests/auto_control_logic.test.cpp` against `auto_control_logic.h` and runs crossing/hysteresis/sensor-fail cases plus exhaustive invariant sweeps. Because the vent clamp lives *inside* the pure function, the sweep exercises the real shipped code (mutating `VENT_HYST` makes tests fail). Also covers the safety timers (max runtime, shared cooldown, `millis()` rollover).
 - **`test:rules`** spins up the RTDB emulator (port 9000) and asserts every accept/reject path, including the vent/max/min cross-field constraints and partial-update guards.
 
-Run both green before flashing or deploying.
+Run all three green before flashing or deploying.
 
 ---
 
@@ -305,7 +307,7 @@ Run both green before flashing or deploying.
 
 - **Auto control is offline-first** — never depends on Wi-Fi/Firebase. Config persists in NVS across reboots.
 - **Air sensor is single point of failure by design** — SHT35 gives temp + humidity from one chip; on failure everything shuts off safely rather than acting on stale data (chosen 2026-07-15).
-- **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`). The C++ side is single-source and mutation-tested; the other two are comment-linked. Tuning it means editing all three.
+- **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `PROJECT_MEMORY.md`.
 
 **v2.9.0** (latest) — fixed "Wi-Fi drops repeatedly and never reconnects, while phones/PCs on the same AP are fine". Four compounding bugs, all on the reconnect path (the boot path was fine, which is why a reboot appeared to fix it):
