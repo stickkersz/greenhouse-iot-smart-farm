@@ -393,6 +393,53 @@ int main() {
     check(!violated, "vent ปิด (ventThreshold=0): ทุก state pumpOn -> fanOn (ไม่มีพ่นน้ำโดยพัดลมดับ)");
   }
 
+  // ── v2.9.0: lockIsActive() — cooldown lock ทนต่อ millis() วนรอบ ──────
+  // ตัวจับเวลา cooldown เดิมไม่มีเทสต์เลย (code review v2.8.0 จับได้) และเดิมเทียบ millis() ตรงๆ
+  // ซึ่งพังเงียบๆ ที่ ~49.7 วัน · เคสวนรอบเป็นชนิดที่อ่านโค้ดเปล่าๆ แล้วมองไม่เห็น จึงต้องมีเทสต์
+  printf("\n== v2.9.0: lockIsActive() — cooldown lock ทนต่อ millis() วนรอบ ==\n");
+  {
+    const uint32_t COOLDOWN = 5UL * 60 * 1000;   // 5 นาที เท่า PUMP_COOLDOWN_MS/FAN_COOLDOWN_MS
+
+    // ── เคสปกติ (ไม่เกี่ยววนรอบ) ──
+    check(!lockIsActive(1000, 0),                 "lockUntil = 0 (ไม่เคยตั้งล็อก) -> ไม่ล็อก");
+    check( lockIsActive(1000, 1000 + COOLDOWN),   "เพิ่งตั้งล็อก -> ล็อกอยู่");
+    check( lockIsActive(1000 + COOLDOWN - 1, 1000 + COOLDOWN), "ก่อนหมดอายุ 1ms -> ยังล็อก");
+    check(!lockIsActive(1000 + COOLDOWN,     1000 + COOLDOWN), "ถึงเวลาพอดี -> ปลดล็อก");
+    check(!lockIsActive(1000 + COOLDOWN + 1, 1000 + COOLDOWN), "หลังหมดอายุ -> ปลดล็อก");
+
+    // ── lockUntil == 0 ตอน now เลย 2^31 (~24.8 วัน) ──
+    // นี่คือเหตุผลที่ต้องกัน lockUntil==0 แยก: (int32_t)(now - 0) ติดลบ = "ล็อกอยู่" ทั้งที่ไม่เคยล็อก
+    // ถ้าไม่กัน = พัดลม+ปั๊มไม่เคยเปิดเลยหลังบอร์ดรันครบ 24.8 วัน
+    check(!lockIsActive(0x90000000u, 0), "now > 2^31 แต่ lockUntil = 0 -> ยังต้องไม่ล็อก");
+
+    // ── เคสวนรอบจริง: ตั้งล็อกก่อนวนรอบ deadline ตกไปหลังวนรอบ ──
+    // now ใกล้ 2^32 → now + COOLDOWN ล้นไปเป็นเลขเล็ก · โค้ดเดิม (millis() < lockUntil) จะเห็น
+    // "millis() ใหญ่กว่า lockUntil" = ปลดล็อกทันที = ปั๊มไม่ได้พักจริงตามที่ safety สั่ง
+    {
+      uint32_t nowBefore = 0xFFFFFFFFu - 1000;          // เหลืออีก 1 วิ ก่อนวนรอบ
+      uint32_t until     = nowBefore + COOLDOWN;        // ล้น → กลายเป็นเลขเล็ก
+      check(until < nowBefore, "sanity: deadline ล้นจริง (until < now)");
+      check( lockIsActive(nowBefore, until),            "ตั้งล็อกคาบวนรอบ -> ล็อกอยู่ (เดิมปลดทันที = บั๊ก)");
+      check( lockIsActive(500, until),                  "หลังวนรอบ ยังไม่ถึง deadline -> ยังล็อก");
+      check(!lockIsActive(until, until),                "หลังวนรอบ ถึง deadline พอดี -> ปลดล็อก");
+      check(!lockIsActive(until + 1000, until),         "หลังวนรอบ เลย deadline -> ปลดล็อก");
+    }
+
+    // ── เคสวนรอบอีกทาง: ล็อกค้างอยู่แล้ว millis() วนรอบกลับไปเริ่มที่ 0 ──
+    // อันตรายที่สุดของโค้ดเดิม: millis() เล็กกว่า lockUntil ไปอีก ~49 วัน = ล็อกปิด 2 ช่องยาว 49 วัน
+    {
+      uint32_t until = 0xFFFFFFFFu - 100;   // deadline อยู่ก่อนวนรอบเล็กน้อย
+      check(!lockIsActive(1000, until),
+            "millis() วนรอบไปแล้ว deadline อยู่ในอดีต -> ปลดล็อก (เดิมล็อกค้าง 49 วัน = บั๊ก)");
+    }
+
+    // ── ข้อจำกัดที่รู้ตัว: deadline เก่าเกิน 24.8 วัน จะวนกลับมาอ่านว่า "ล็อกอยู่" ──
+    // เทสต์นี้ "ยืนยันข้อจำกัด" ไม่ใช่ยืนยันความถูกต้อง — จึงต้องมี pumpSafetyCheck() ล้าง lockUntil
+    // เป็น 0 ทุกรอบเมื่อหมดอายุ ถ้าใครถอดการล้างนั้นออก บั๊กนี้จะกลับมา
+    check(lockIsActive(0x90000000u, 1000),
+          "ข้อจำกัด: deadline เก่าเกิน 24.8 วัน อ่านว่าล็อก -> ผู้เรียกต้องล้างเป็น 0 เมื่อหมดอายุ");
+  }
+
   printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASS" : "SOME FAILED", failures, failures == 1 ? "" : "s");
   return failures == 0 ? 0 : 1;
 }

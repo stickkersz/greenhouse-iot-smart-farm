@@ -43,6 +43,29 @@
 #ifndef AUTO_CONTROL_LOGIC_H
 #define AUTO_CONTROL_LOGIC_H
 
+#include <stdint.h>
+
+// ── safety cooldown lock: ยังล็อกอยู่ไหม (v2.9.0) ─────
+// ย้ายมาไว้ในนี้เพื่อให้เทสต์ถึง — ตัวจับเวลา cooldown ใน pumpSafetyCheck() เดิมไม่มีเทสต์เลย
+// (code review v2.8.0 จับได้) และตรรกะ "วนรอบ" แบบนี้คือชนิดที่อ่านโค้ดเปล่าๆ แล้วมองไม่เห็นบั๊ก
+//
+// รับ now เข้ามาเป็นพารามิเตอร์ ไม่เรียก millis() เอง → เทสต์ป้อนเวลาใกล้จุดวนรอบได้ตรงๆ
+//
+// ⚠️ ต้องใช้ uint32_t/int32_t ตายตัว ห้ามใช้ unsigned long/long:
+//   บน ESP32  long = 32 bit → การลบวนรอบที่ 2^32 แล้ว cast ได้เครื่องหมายถูก
+//   บนเครื่องเทสต์ (macOS/Linux 64-bit) long = 64 bit → การลบ "ไม่วนรอบ" ที่ 2^32
+//   ถ้าเขียนด้วย long เทสต์จะผ่านโดยไม่ได้ทดสอบพฤติกรรมจริงบนบอร์ดเลย (false confidence)
+//
+// ⚠️ กัน lockUntil == 0 (ยังไม่เคยตั้งล็อก) แยกก่อน — ไม่งั้นพอ now > 2^31 (~24.8 วัน)
+// (int32_t)(now - 0) จะติดลบ = รายงานว่า "ล็อกอยู่" ตลอดกาลทั้งที่ไม่เคยล็อก
+//
+// ⚠️ ถูกต้องเฉพาะในหน้าต่าง ±24.8 วันรอบ deadline — ผู้เรียกต้องล้าง lockUntil เป็น 0 เมื่อหมดอายุ
+// (pumpSafetyCheck() ทำให้ทุกรอบ loop) ไม่งั้น deadline เก่าเกิน 24.8 วันจะวนกลับมาอ่านว่า "ล็อกอยู่"
+inline bool lockIsActive(uint32_t now, uint32_t lockUntil) {
+  if (lockUntil == 0) return false;
+  return (int32_t)(now - lockUntil) < 0;
+}
+
 struct AutoControlInputs {
   bool  sensorOk;     // เซนเซอร์อากาศเชื่อได้ไหม (false = อ่านพลาดติดกันนานเกิน → ค่าเก่า) · false = ปิดทุกช่อง
   float airTemp;      // ค่าเฉลี่ยอุณหภูมิอากาศ (°C) — คุม latch ร้อน

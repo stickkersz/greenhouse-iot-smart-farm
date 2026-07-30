@@ -33,6 +33,17 @@
       (status มี "$other": false — ไม่เพิ่มใน rules = server ปฏิเสธการเขียน)
     + lastWifiRetry ตั้งใหม่ตอน "หลุด" (เดิมใช้ค่าค้างจากรอบก่อน) และนับ interval จากเวลาที่ run() "จบ"
       ไม่ใช่ตอนเริ่ม — run() บล็อกได้ถึง ~25 วิ ถ้านับจากตอนเริ่มรอบถัดไปจะมาเร็วกว่า 30 วิที่ตั้งใจ
+    + แก้ millis() วนรอบใน cooldown lock (เจอตอน audit หลังแก้ WiFi — ยังไม่เคยเกิดหน้างาน):
+      6 จุดเทียบ millis() กับ pumpLockUntil/fanLockUntil "ตรงๆ" ซึ่งพังเงียบๆ ที่ ~49.7 วัน
+      เคสร้ายสุด: millis() วนรอบระหว่างที่ล็อกค้าง → millis() เล็กกว่า lockUntil ไปอีก ~49 วัน
+      = พัดลม+ปั๊มถูกล็อกปิดยาว 49 วัน โดย log ไม่บอกอะไรเลย (auto ไม่เคยเปิดช่อง) = โรงเรือนตายเงียบ
+      ⚠️ บั๊กนี้ "เอื้อมถึงง่ายขึ้น" เพราะ v2.9.0 เอง — WiFi นิ่งแล้วบอร์ดมีโอกาสรันต่อเนื่องถึง 49 วันจริง
+      แก้: lockIsActive(now, lockUntil) ใช้ผลต่างแบบ signed (uint32_t/int32_t ตายตัว ห้าม long —
+      บนเครื่องเทสต์ long = 64 bit จะไม่วนรอบที่ 2^32 = เทสต์ผ่านโดยไม่ได้ทดสอบพฤติกรรมบอร์ดจริง)
+      + pumpSafetyCheck() ล้าง lockUntil เป็น 0 เมื่อหมดอายุทุกรอบ (ปิดช่อง deadline เก่าเกิน 24.8 วัน)
+      + ย้ายไปไว้ auto_control_logic.h = เทสต์ถึงแล้ว (13 เคส รวมคาบวนรอบทั้ง 2 ทาง)
+      ปิด review finding v2.8.0 ข้อ "ตัวจับเวลา cooldown ไม่มีเทสต์เลย" เฉพาะส่วน lock — mutation test
+      ยืนยัน: ย้อนกลับไปใช้ (now < lockUntil) แบบเดิม เทสต์ FAIL 3 เคส
   Changelog v2.8.0 (2026-07-24) — พัดลมกลับมาพักคู่ปั๊ม (max run 15 นาที + พัก 5 นาที พร้อมกัน):
     - ตามคำสั่งหน้างาน: ให้พัดลมมี max-runtime 15 นาทีเท่าปั๊ม แล้วพัก 5 นาทีพร้อมกัน
     - ⚠️ นี่คือการ "ย้อน" decouple ของ v2.6.0 — v2.6.0 แยกพัดลมออกเพราะ CSV 2026-07-20 พบว่า
@@ -1302,7 +1313,7 @@ void autoControl() {
   if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
     // v2.8.0: พัดลมกลับมาผูกกับ safety cutoff — เปิดได้เฉพาะพ้น fanLockUntil (พักคู่ปั๊ม)
     // ⚠️ trade-off: พัดลมอาจพักช่วงร้อน = เสี่ยง overshoot (CSV 2026-07-20) — ยอมรับตามคำสั่งหน้างาน
-    if (dec.fanOn && !ch3_fanIn && millis() >= fanLockUntil) {
+    if (dec.fanOn && !ch3_fanIn && !lockActive(fanLockUntil)) {
       ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);
       Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanWhy, avgAT, avgAH);
     }
@@ -1314,7 +1325,7 @@ void autoControl() {
   }
   // CH4 ปั๊มน้ำ — เปิดตาม dec.pumpOn (ปั๊มไล่ร้อน หรือ แห้ง) · เปิดได้เฉพาะพ้น safety lock (cooldown)
   if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
-    if (dec.pumpOn && !ch4_spare && millis() >= pumpLockUntil) {
+    if (dec.pumpOn && !ch4_spare && !lockActive(pumpLockUntil)) {
       ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis();
       Serial.printf("[AUTO] ปั๊มเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOn, avgAT, avgAH);
     }
@@ -1389,6 +1400,17 @@ bool timeValid() {
 }
 
 // ─────────────────────────────────────────────────────
+// ยังติดล็อก cooldown อยู่ไหม (v2.9.0) — ทนต่อ millis() วนรอบที่ ~49.7 วัน
+// ⚠️ เดิมเทียบตรงๆ ว่า millis() < fanLockUntil ซึ่งพังตอนวนรอบ:
+//   - ถ้าวนรอบ "ระหว่าง" ที่ล็อกค้างอยู่ → millis() เล็กกว่า lockUntil ไปอีก ~49 วัน
+//     = พัดลม+ปั๊มถูกล็อกปิดยาว 49 วัน โดย log ไม่บอกอะไร (auto ไม่เคยเปิดช่องเลย) ← อันตรายสุด
+//   - ถ้า now + COOLDOWN ล้นตอนตั้งค่า → ได้เลขเล็ก = ล็อกหมดอายุทันที (พักไม่เกิดขึ้นจริง)
+// ตรรกะจริงอยู่ใน auto_control_logic.h (lockIsActive) เพื่อให้เทสต์ถึง — ตรงนี้แค่ป้อน millis() เข้าไป
+static inline bool lockActive(unsigned long lockUntil) {
+  return lockIsActive((uint32_t)millis(), (uint32_t)lockUntil);
+}
+
+// ─────────────────────────────────────────────────────
 // SAFETY — ตัดปั๊ม+พัดลมถ้าเดินต่อเนื่องเกิน 15 นาที แล้วพักคู่กัน 5 นาที (เฉพาะ auto/schedule)
 // v2.8.0: พัดลมกลับมาพักคู่ปั๊ม (ยกเลิก decouple v2.6.0 ตามคำสั่งหน้างาน)
 //   - จับเวลาเดินต่อเนื่องแยกช่อง (pumpOnSince / fanOnSince) · manual = คนคุมเอง ไม่จับ ไม่ตัด
@@ -1396,6 +1418,13 @@ bool timeValid() {
 //   ⚠️ พัดลมพักช่วงร้อนได้ = เสี่ยง overshoot (CSV 2026-07-20) — เป็น trade-off ที่ยอมรับตามคำสั่ง
 void pumpSafetyCheck() {
   unsigned long now = millis();
+  // ล้างล็อกที่หมดอายุแล้วให้กลับเป็น 0 (v2.9.0) — ปิดช่องสุดท้ายของ millis() วนรอบ
+  // lockActive() ใช้ผลต่างแบบ signed ซึ่งถูกต้องในหน้าต่าง ±24.8 วันรอบ deadline เท่านั้น
+  // ถ้าปล่อย lockUntil ค้างเป็นค่าเก่าไว้เฉยๆ พอเวลาผ่านไปเกิน ~24.8 วันจาก deadline นั้น
+  // ผลต่างจะวนกลับไปติดลบ = lockActive() รายงานว่า "ล็อกอยู่" ทั้งที่หมดอายุไปนานแล้ว
+  // ล้างทุกรอบ loop ตรงนี้ = lockUntil มีได้แค่ 2 สถานะ: 0 (ไม่ล็อก) หรือ deadline ที่อยู่ในช่วงไม่กี่นาที
+  if (pumpLockUntil != 0 && !lockActive(pumpLockUntil)) pumpLockUntil = 0;
+  if (fanLockUntil  != 0 && !lockActive(fanLockUntil))  fanLockUntil  = 0;
   bool pumpAuto = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
   bool fanAuto  = ch_isAuto[IDX_FAN]  || ch_schedEnabled[IDX_FAN];
 
@@ -1469,8 +1498,8 @@ void pushStatus() {
   Firebase.setBool (fbData, base + "status/sensor_stale", (airSensorFailCount >= SENSOR_STALE_AFTER));
   Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
   Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
-  Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
-  Firebase.setBool (fbData, base + "status/fan_locked",  (millis() < fanLockUntil));   // v2.8.0: พัดลมพักคู่ปั๊มอีกครั้ง
+  Firebase.setBool (fbData, base + "status/pump_locked", lockActive(pumpLockUntil));
+  Firebase.setBool (fbData, base + "status/fan_locked",  lockActive(fanLockUntil) );   // v2.8.0: พัดลมพักคู่ปั๊มอีกครั้ง
   Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
   Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
   // WiFi diagnostics (v2.9.0) — ไล่อาการ "หลุดบ่อย/ต่อไม่กลับ" ย้อนหลังได้จาก dashboard ไม่ต้องเฝ้า Serial
@@ -1690,8 +1719,8 @@ void checkSchedule() {
     }
 
     // ปั๊ม (CH4) เคารพ safety lock — ห้ามเปิดระหว่าง cooldown
-    if (i == IDX_PUMP && shouldBeOn && millis() < pumpLockUntil) continue;
-    if (i == IDX_FAN  && shouldBeOn && millis() < fanLockUntil)  continue;   // v2.8.0: พัดลมพักคู่ปั๊ม
+    if (i == IDX_PUMP && shouldBeOn && lockActive(pumpLockUntil)) continue;
+    if (i == IDX_FAN  && shouldBeOn && lockActive(fanLockUntil))  continue;   // v2.8.0: พัดลมพักคู่ปั๊ม
 
     if (shouldBeOn != *states[i]) {
       *states[i] = shouldBeOn;
