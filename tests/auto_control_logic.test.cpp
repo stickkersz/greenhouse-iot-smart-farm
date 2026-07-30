@@ -12,9 +12,18 @@ void check(bool cond, const char* name) {
 }
 
 // default จริง: fanOnTemp=35 fanOffTemp=32 pumpOnHum=60 pumpOffHum=75
-// {sensorOk, airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum, hotLatch, dryLatch, pumpHeatLatch}
+// {sensorOk, airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum,
+//  hotLatch, dryLatch, pumpHeatLatch, ventThreshold, wetLatch}
+//
+// ⚠️ ventThreshold = 0 เขียนไว้ "ชัดๆ" เจตนา — 0 = ปิดฟีเจอร์ vent = พฤติกรรมก่อน v2.7.0
+// เดิมละไว้ให้ zero-init เอง (initializer 10 ค่า) ซึ่งได้ผลเหมือนกันแต่มี 2 ปัญหา:
+//   1. -Wmissing-field-initializers เตือน 4 จุด = noise กลบ warning จริงที่อาจโผล่มาทีหลัง
+//   2. อ่านโค้ดแล้วไม่รู้ว่าเทสต์นี้ vent เปิดหรือปิด ต้องไปนับลำดับ field ในสตรักต์เอง
+//      → เคยทำให้เข้าใจผิดมาแล้วว่า sweep 2 ก้อนที่ "หน้าตาเหมือนกัน" ทดสอบ config เดียวกัน
+//        ทั้งที่ความยาว initializer ต่างกัน = คนละ config คนละเรื่อง
+// เขียนครบทุก field = อ่านออกทันทีว่า config ไหน ไม่ต้องรู้กฎ zero-init ของ C++
 static AutoControlInputs base() {
-  return {true, 30, 65, 35, 32, 60, 75, false, false, false};   // 30°C ชื้น 65% (ไม่ร้อน ไม่แห้ง) latch ปิดหมด
+  return {true, 30, 65, 35, 32, 60, 75, false, false, false, 0, false};   // 30°C ชื้น 65% (ไม่ร้อน ไม่แห้ง) latch ปิดหมด · vent ปิด
 }
 
 // ── Crossing harness ──────────────────────────────────
@@ -164,7 +173,8 @@ int main() {
       for (float t = 20; t <= 45; t += 1.0f) {
         for (float h = 10; h <= 100; h += 5.0f) {
           AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
-                                  (seed & 1) != 0, (seed & 2) != 0, (seed & 4) != 0};
+                                  (seed & 1) != 0, (seed & 2) != 0, (seed & 4) != 0,
+                                  0, false};   // vent ปิด (ventThreshold=0) — ทดสอบ path ก่อน v2.7.0
           auto a = computeAutoDecisions(in);
           in.hotOn = a.hotOn; in.dryOn = a.dryOn; in.pumpHeatOn = a.pumpHeatOn;
           auto b = computeAutoDecisions(in);   // รอบ 2 ด้วย latch ที่นิ่งแล้ว
@@ -364,7 +374,8 @@ int main() {
       for (float h = 0; h <= 100; h += 2.5f) {
         for (int latch = 0; latch < 8; latch++) {
           AutoControlInputs in = {false, t, h, 35, 32, 60, 75,
-                                  (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0};
+                                  (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0,
+                                  0, false};   // vent ปิด — sensorOk=false ต้องปิดหมดอยู่แล้วไม่ว่า vent จะตั้งไว้เท่าไร
           auto d = computeAutoDecisions(in);
           if (d.fanOn || d.pumpOn || d.hotOn || d.dryOn || d.pumpHeatOn) leaked = true;
         }
@@ -384,7 +395,8 @@ int main() {
       for (float h = 0; h <= 100; h += 2.5f) {
         for (int latch = 0; latch < 8; latch++) {   // latch 3 ตัว = 8 combo (รวม combo ที่หลุด sync)
           AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
-                                  (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0};
+                                  (latch & 1) != 0, (latch & 2) != 0, (latch & 4) != 0,
+                                  0, false};   // vent ปิด — คู่กับ sweep "vent เปิด" ด้านบน (คนละ config เจตนา)
           auto d = computeAutoDecisions(in);
           if (d.pumpOn && !d.fanOn) violated = true;   // พ่นน้ำโดยไม่มีลม = ท่วม ไม่ระเหย
         }
