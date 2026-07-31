@@ -1400,14 +1400,37 @@ void setRelay(int pin, bool state) {
 }
 
 // ─────────────────────────────────────────────────────
-// นาฬิกาถูกต้องไหม (ปี >= 2024 = NTP sync แล้ว)
-// ⚠️ getLocalTime(&t, 0) — timeout 0 = ไม่บล็อก · default คือ 5000ms ซึ่งจะ busy-wait 5 วินาทีทุกครั้งที่
-// นาฬิกายัง "ไม่ติด" (tm_year < 2016) · loop() เรียก timeValid() ทุกรอบ (เลือก NTP interval + gate hourly)
-// ถ้าใช้ default = บูต offline แล้วนาฬิกายังไม่ sync → loop บล็อก ~10 วิ/รอบ (2 call) ทั้งช่วง = ระบบอืดหนัก
-// ระหว่างที่ควรตอบสนองไวที่สุด · ค่าเวลามีอยู่ใน RTC อยู่แล้ว อ่านทันที ไม่ต้องรอ
+// อ่านนาฬิกาแบบไม่บล็อก และ "ไม่มี race" — v2.9.1 ใช้ตัวนี้แทน getLocalTime(&t, 0) ทุกที่
+//
+// เจตนาเดิมของ getLocalTime(&t, 0) ถูกแล้ว: ms=0 = ไม่บล็อก (default 5000ms จะ busy-wait 5 วิทุกครั้ง
+// ที่นาฬิกายังไม่ติด และ loop() เรียกทุกรอบ = ระบบอืดหนักตอนบูต offline) · ปัญหาอยู่ที่ "วิธี" ไม่ใช่เจตนา
+//
+// ⚠️ core ทำแบบนี้ (esp32-hal-time.c:115-127):
+//       uint32_t start = millis();
+//       while ((millis() - start) <= ms) { ...เช็คปี... return true; }
+//       return false;
+//    ถ้า millis() ขยับ 1 ms คาบเกี่ยวระหว่าง 2 บรรทัดนั้นพอดี → (millis()-start) = 1, `1 <= 0` เป็นเท็จ
+//    → ลูปไม่ทำงานเลย → คืน false ทั้งที่นาฬิกาติดดี และ t ไม่เคยถูกเขียนค่า (ผู้เรียกได้ struct ขยะ)
+//
+// โอกาสต่อ 1 call น้อยมาก แต่ loop() เรียก timeValid() ทุกรอบ (พันครั้ง/วินาที) และเงื่อนไข NTP ที่ :958
+// ต้องการ false แค่ "ครั้งเดียว" หลังพ้น 60 วิ → ntpInterval กลายเป็น NTP_RETRY_INVALID_MS แล้วยิงทันที
+//   = อาการจริงหน้างาน 2026-07-30: "NTP sync OK" ทุก ~62 วิตลอดกาล (16:47:15 / 16:48:17 / 16:49:19)
+//     ทั้งที่ NTP_RESYNC_MS ตั้งไว้ 6 ชม. · พ่วง checkSchedule() ข้ามรอบ และ hourly log หายเป็นชั่วโมง
+//     (canLog=false ที่ :1234 — ตรงกับ /logs วันที่ 2026-07-30 ที่ขาดชั่วโมง 11/12/13 ไป) แบบเงียบสนิท
+//
+// time()/localtime_r() อ่านจาก RTC ตรงๆ ไม่มีลูป ไม่แตะ millis() = deterministic ไม่บล็อก
+static bool readLocalTime(struct tm &t) {
+  time_t now;
+  time(&now);
+  localtime_r(&now, &t);
+  return t.tm_year > (2016 - 1900);   // เกณฑ์เดียวกับ core: ปีถูกตั้งแล้ว = NTP sync มาแล้ว
+}
+
+// ─────────────────────────────────────────────────────
+// นาฬิกาถูกต้องไหม (ปี >= 2024 = NTP sync แล้ว) — เกณฑ์เข้มกว่า readLocalTime() ที่ใช้ 2016 ตาม core
 bool timeValid() {
   struct tm t;
-  if (!getLocalTime(&t, 0)) return false;
+  if (!readLocalTime(t)) return false;
   return (t.tm_year + 1900) >= 2024;
 }
 
@@ -1491,64 +1514,77 @@ void pumpSafetyCheck() {
 // เดิม lastPushTime ตั้งเฉพาะหลัง pushToFirebase() ทำให้ตอนกด Manual → pushStatus() ยิง SSL 13 ครั้ง
 // แต่ guard "เว้น 2 วิก่อน poll" ไม่รู้ตัว → control poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL ที่เพิ่งเขียนเสร็จ
 // = เคสที่ guard ตั้งใจกันพอดี แต่ครอบไม่ถึง
+// ⚠️ v2.9.1: รวมเป็น JSON ก้อนเดียว + updateNodeSilent 1 ครั้ง — เดิมยิง Firebase.setX() แยก 21 ครั้ง
+//    เดิม: 21 SSL round trip ต่อการเรียก pushStatus() 1 ครั้ง (pushToFirebase อีก 3 = 24 ต่อรอบ 30 วิ)
+//    ที่ RSSI -76 แต่ละ round trip กินเวลาเป็นวินาที → รอบ push เดียวใช้เวลาเกิน SENSOR_INTERVAL (30 วิ)
+//    = dashboard เห็น "ข้อมูลค้าง 90-120 วิ" (updateHealth ที่ dashboard/index.html:1317) ทั้งที่บอร์ดปกติ
+//    และทุก round trip = โอกาสเจอ handshake ล้มเพิ่มอีก 1 ครั้ง (ดู BSSL_SSL_Client.cpp:1823 mUpdateEngine)
+//    read path ใช้ getJSON ก้อนเดียวมาตั้งแต่ v2.x แล้ว (ดู loadControlFromFirebase) — write path ตกสำรวจ
+//    updateNodeSilent = PATCH และไม่คืน payload กลับมา → RX น้อย เหมาะกับ BSSL buffer 512 ที่ตั้งไว้
+//    PATCH merge เฉพาะ key ที่ส่งไป → key ที่ไม่ส่ง (เช่น water_temp ตอนอ่านไม่ได้) คาค่าเดิมไว้ ไม่ถูกลบ
+//    = semantics เดิมเป๊ะ แต่เหลือ 1 round trip
 void pushStatus() {
   lastPushTime = millis();
-  const String base = "/smartfarm/";
-  Firebase.setBool  (fbData, base + "status/online",      true);
-  Firebase.setBool  (fbData, base + "status/ch1_pump",    ch1_pump);
-  Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
-  Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
-  Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.9.0");
+  FirebaseJson j;
+  j.set("online",      true);
+  j.set("ch1_pump",    ch1_pump);
+  j.set("ch2_fan_out", ch2_fanOut);
+  j.set("ch3_fan_in",  ch3_fanIn);
+  j.set("ch4_spare",   ch4_spare);
+  j.set("firmware",    "2.9.1");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
-  Firebase.setString(fbData, base + "status/last_reset_reason", resetReasonStr(bootResetReason));
-  Firebase.setInt  (fbData, base + "status/boot_count",   (int)rtcBootCount);
+  j.set("last_reset_reason", resetReasonStr(bootResetReason));
+  j.set("boot_count",   (int)rtcBootCount);
   // heap: เฝ้า fragmentation — ถ้า max_alloc_heap หดลงเรื่อยๆ ทั้งที่ free_heap ยังเยอะ = heap แตกเป็นเสี่ยง
   // → malloc ก้อนใหญ่ (SSL buffer) พลาด → crash หลังรันไปหลายชั่วโมง = ผู้ต้องสงสัยอันดับ 1 ของอาการนี้
-  Firebase.setInt  (fbData, base + "status/free_heap",      (int)ESP.getFreeHeap());
-  Firebase.setInt  (fbData, base + "status/max_alloc_heap", (int)ESP.getMaxAllocHeap());
+  j.set("free_heap",      (int)ESP.getFreeHeap());
+  j.set("max_alloc_heap", (int)ESP.getMaxAllocHeap());
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
-  Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
+  j.set("sensor_ok",   (airSensorFailCount == 0));
   // แยกจาก sensor_ok: พลาด 1 ครั้ง = sensor_ok false แต่ auto ยังทำงานบนค่าล่าสุดอยู่
   // sensor_stale = พลาดจนเลิกเชื่อแล้ว → auto ปิดทุกช่อง = เรื่องใหญ่กว่ามาก dashboard ต้องแยกให้เห็น
-  Firebase.setBool (fbData, base + "status/sensor_stale", (airSensorFailCount >= SENSOR_STALE_AFTER));
-  Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
-  Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
-  Firebase.setBool (fbData, base + "status/pump_locked", lockActive(pumpLockUntil));
-  Firebase.setBool (fbData, base + "status/fan_locked",  lockActive(fanLockUntil) );   // v2.8.0: พัดลมพักคู่ปั๊มอีกครั้ง
-  Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
-  Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
+  j.set("sensor_stale", (airSensorFailCount >= SENSOR_STALE_AFTER));
+  j.set("water_ok",    waterSensorOk);
+  j.set("failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
+  j.set("pump_locked", lockActive(pumpLockUntil));
+  j.set("fan_locked",  lockActive(fanLockUntil));   // v2.8.0: พัดลมพักคู่ปั๊มอีกครั้ง
+  j.set("time_ok",     timeValid());
+  j.set("wifi_rssi",   (int)WiFi.RSSI());
   // WiFi diagnostics (v2.9.0) — ไล่อาการ "หลุดบ่อย/ต่อไม่กลับ" ย้อนหลังได้จาก dashboard ไม่ต้องเฝ้า Serial
   // wifi_drop_count พุ่งเร็ว = สัญญาณ/AP มีปัญหาจริง · reason บอกทิศทางแก้:
   //   200 BEACON_TIMEOUT → สัญญาณอ่อน/สัญญาณรบกวน (ย้ายตำแหน่ง/เพิ่มเสาอากาศ) — modem sleep ปิดไปแล้วใน v2.9.0
   //   201 NO_AP_FOUND    → AP หายจากอากาศจริง (เราเตอร์ดับ/เปลี่ยนชื่อ) — แก้ที่เราเตอร์
   //   202 AUTH_FAIL      → รหัสผิด/AP เปลี่ยน security — แก้ config.h
   //   8 ASSOC_LEAVE / 15 4WAY_HANDSHAKE_TIMEOUT → AP เตะเราเอง (client เยอะ/AP โหลดหนัก) — แก้ที่เราเตอร์
-  Firebase.setInt  (fbData, base + "status/wifi_drop_count",  (int)wifiDropCount);
-  Firebase.setString(fbData, base + "status/wifi_drop_reason", wifiDropReasonStr(lastWifiDropReason));
+  j.set("wifi_drop_count",  (int)wifiDropCount);
+  j.set("wifi_drop_reason", wifiDropReasonStr(lastWifiDropReason));
+
+  if (!Firebase.updateNodeSilent(fbData, "/smartfarm/status", j))
+    Serial.println("[Firebase] push status ล้ม: " + fbData.errorReason());
 }
 
 void pushToFirebase() {
-  const String base = "/smartfarm/";
-
-  Firebase.setFloat (fbData, base + "sensors/air_temp",          airTemp);
-  Firebase.setFloat (fbData, base + "sensors/air_humidity",      airHumidity);
+  FirebaseJson j;
+  j.set("air_temp",     airTemp);
+  j.set("air_humidity", airHumidity);
   // น้ำ: push เฉพาะตอนอ่านได้ — กันค่าขยะ 0.0/ค่าเดิม ขึ้นไปหลอกหน้าจอ (dashboard เช็ค water_ok เพื่อโชว์ "—")
+  // ⚠️ updateNodeSilent = PATCH → ไม่ใส่ key นี้ = ค่าเดิมใน DB คาไว้เฉยๆ ไม่ถูกลบ (เหมือน setFloat เดิมที่ข้ามไป)
   if (waterSensorOk)
-    Firebase.setFloat (fbData, base + "sensors/water_temp",      waterTemp);
-  Firebase.setInt   (fbData, base + "sensors/uptime_sec",        (int)(millis() / 1000));
+    j.set("water_temp", waterTemp);
+  j.set("uptime_sec",   (int)(millis() / 1000));
+
+  bool sensorsOk = Firebase.updateNodeSilent(fbData, "/smartfarm/sensors", j);
+  if (!sensorsOk) Serial.println("[Firebase] push sensors ล้ม: " + fbData.errorReason());
 
   pushStatus();
 
-  if (fbData.errorReason() != "") {
-    Serial.println("[Firebase] Error: " + fbData.errorReason());
-  } else {
-    // heap ทุก push (30 วิ) — เอาไว้ไล่ว่า "รันไปสักพักแล้วรีสตาร์ท" เกิดจาก heap ค่อยๆ หมด/แตกเป็นเสี่ยงไหม
-    // free ลดเรื่อยๆ = leak · free นิ่งแต่ ก้อนใหญ่สุด หด = fragmentation (อันนี้อันตรายกว่า เพราะดูเหมือนปกติ)
+  // heap ทุก push (30 วิ) — เอาไว้ไล่ว่า "รันไปสักพักแล้วรีสตาร์ท" เกิดจาก heap ค่อยๆ หมด/แตกเป็นเสี่ยงไหม
+  // free ลดเรื่อยๆ = leak · free นิ่งแต่ ก้อนใหญ่สุด หด = fragmentation (อันนี้อันตรายกว่า เพราะดูเหมือนปกติ)
+  // พิมพ์เฉพาะรอบที่ sensors ผ่าน — รอบที่ล้มมีบรรทัด "push sensors ล้ม" รายงานไปแล้ว ไม่ต้องซ้ำ
+  if (sensorsOk)
     Serial.printf("[Firebase] Push OK · heap ว่าง %lu (ก้อนใหญ่สุด %lu)\n",
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
-  }
 }
 
 // ─────────────────────────────────────────────────────
@@ -1708,7 +1744,7 @@ void syncNTP() {
 // ถ้า on_time > off_time = ข้ามคืน (เช่น 22:00–06:00)
 void checkSchedule() {
   struct tm t;
-  if (!getLocalTime(&t, 0)) return;   // ms=0 = ไม่บล็อก (ดู timeValid) — เดิม default 5000 บล็อก 5 วิ/นาที ตอนนาฬิกายังไม่ติด
+  if (!readLocalTime(t)) return;   // ไม่บล็อกและไม่มี race (ดู readLocalTime) — เดิม getLocalTime(&t,0) หลุด false ได้ = ข้ามรอบ schedule เงียบๆ
   if (!timeValid()) {
     // latch — NTP ไม่ติด = ขึ้นทุก 60 วิ ตลอดกาล
     if (!schedNoTimeLogged) { schedNoTimeLogged = true; Serial.println("[SCHED] ข้าม — นาฬิกายังไม่ sync (schedule จะไม่ทำงานจนกว่า NTP จะติด)"); }
@@ -1799,8 +1835,8 @@ void updateLCD() {
 // คืนค่า path สำหรับ hourly log เช่น "/logs/2026-06-19/14"
 String getHourlyPath() {
   struct tm t;
-  if (!getLocalTime(&t, 0)) return "";   // ms=0 = ไม่บล็อก (ดู timeValid) — ถูกเรียกทุกรอบ loop ตอน timeValid()
-  // ปกติ caller เรียกตอน timeValid ผ่านแล้ว (นาฬิกาติด) จึงคืนค่าทันที ไม่แตะ 5 วิ default
+  if (!readLocalTime(t)) return "";   // ไม่บล็อกและไม่มี race (ดู readLocalTime) — เดิม getLocalTime(&t,0) หลุด false ได้ = ทิ้ง hourly log ทั้งชั่วโมงเงียบๆ
+  // ปกติ caller เรียกตอน timeValid ผ่านแล้ว (นาฬิกาติด) จึงคืนค่าทันที
   char path[48];
   strftime(path, sizeof(path), "/logs/%Y-%m-%d/%H", &t);
   return String(path);
