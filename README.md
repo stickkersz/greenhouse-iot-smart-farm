@@ -169,7 +169,7 @@ All three sit exactly on the `vent = humidity_max + VENT_HYST` boundary — whic
 └── media/                       # site photos, board photos (not referenced by code)
 ```
 
-Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinout_v2.md`, `docs/PROJECT_INSTRUCTION.md`, `docs/DAILY_OPERATIONS_CHECKLIST.md`, `docs/PROJECT_MEMORY.md`.
+Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinout_v2.md`, `docs/PROJECT_INSTRUCTION.md`, `docs/DAILY_OPERATIONS_CHECKLIST.md`, `docs/PROJECT_MEMORY.md`. Taking over the project? Start with `docs/HANDOFF_GUIDE.md`.
 
 ---
 
