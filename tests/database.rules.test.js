@@ -317,6 +317,85 @@ describe("sensors/status — ESP32 (anonymous) write path stays intact", () => {
   });
 });
 
+// v2.9.1: firmware เลิกยิง Firebase.setX() แยก 24 ครั้งต่อรอบ แล้วรวมเป็น updateNodeSilent (PATCH)
+// ก้อนเดียวต่อ node — เพราะ 24 SSL round trip ที่ RSSI -76 กินเวลาเกิน SENSOR_INTERVAL (30 วิ)
+// = dashboard ขึ้น "ข้อมูลค้าง 90-120 วิ" ทั้งที่บอร์ดปกติดี
+// ⚠️ เทสต์ชุดเดิมยิงทีละ leaf (.set()) = คนละรูปทรงกับที่ firmware ส่งจริงตอนนี้
+//    ถ้า rules ไม่รับ PATCH ก้อนใหญ่ = dashboard ดับสนิท ซึ่งคือบั๊กที่ v2.9.1 ตั้งใจแก้พอดี
+//    ชุดนี้จึงล็อก "รูปทรงจริง" ไว้ ไม่ใช่แค่ล็อกว่าแต่ละ field ผ่าน
+describe("v2.9.1 batched PATCH — รูปทรงที่ firmware ส่งจริง (updateNodeSilent)", () => {
+  // ตรงกับ pushStatus() ใน smartfarm_firmware.ino — ครบทุก key
+  const STATUS_BATCH = {
+    online: true,
+    ch1_pump: false,
+    ch2_fan_out: false,
+    ch3_fan_in: true,
+    ch4_spare: true,
+    firmware: "2.9.2",
+    last_reset_reason: "POWERON (เสียบไฟใหม่/กดปุ่ม EN)",
+    boot_count: 3,
+    free_heap: 201528,
+    max_alloc_heap: 110580,
+    sensor_ok: true,
+    sensor_stale: false,
+    water_ok: true,
+    failsafe: false,
+    pump_locked: false,
+    fan_locked: false,
+    time_ok: true,
+    wifi_rssi: -76,
+    wifi_drop_count: 0,
+    wifi_drop_reason: "ยังไม่เคยหลุดตั้งแต่บูต",
+  };
+
+  // ตรงกับ pushToFirebase() — water_temp มีเฉพาะตอน waterSensorOk
+  const SENSORS_BATCH = {
+    air_temp: 34.1,
+    air_humidity: 62.3,
+    water_temp: 31.6,
+    uptime_sec: 934,
+  };
+
+  test("ESP32 (anon) ยิง status ก้อนเดียวครบทุก field ได้", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/status").update(STATUS_BATCH));
+  });
+
+  test("ESP32 (anon) ยิง sensors ก้อนเดียวได้", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/sensors").update(SENSORS_BATCH));
+  });
+
+  test("$other ยังกันอยู่แม้ส่งมาแบบ PATCH ก้อนใหญ่ (key แปลกปน 1 ตัว = ตกทั้งก้อน)", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status").update({ ...STATUS_BATCH, hacked: true }));
+    await assertFails(db.ref("/smartfarm/sensors").update({ ...SENSORS_BATCH, soil_moisture: 42 }));
+  });
+
+  test("type validation ยังทำงานใน PATCH (wifi_rssi เป็น string = ตกทั้งก้อน)", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status").update({ ...STATUS_BATCH, wifi_rssi: "-76" }));
+  });
+
+  // นี่คือ semantics ที่ v2.9.1 พึ่งพา: DS18B20 อ่านไม่ได้ → ไม่ใส่ water_temp ลงก้อน
+  // PATCH merge เฉพาะ key ที่ส่ง → ค่าเดิมคาไว้ ไม่ถูกลบ (เหมือน setFloat เดิมที่ข้ามการเขียนไป)
+  test("ไม่ใส่ water_temp (เซนเซอร์น้ำพัง) → ค่าเดิมใน DB ต้องคาอยู่ ไม่ถูกลบ", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.database().ref("/smartfarm/sensors/water_temp").set(31.6);
+    });
+
+    const db = anonUser().database();
+    const noWater = { air_temp: 34.1, air_humidity: 62.3, uptime_sec: 964 };
+    await assertSucceeds(db.ref("/smartfarm/sensors").update(noWater));
+
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snap = await ctx.database().ref("/smartfarm/sensors").once("value");
+      assert.equal(snap.val().water_temp, 31.6, "water_temp หายไปจาก PATCH = จะไปลบค่าน้ำใน production");
+      assert.equal(snap.val().uptime_sec, 964, "key ที่ส่งไปต้องอัปเดตจริง");
+    });
+  });
+});
+
 describe("status — field validation + $other rejection", () => {
   test("anonymous auth CAN write valid status fields (matches ESP32)", async () => {
     const db = anonUser().database();

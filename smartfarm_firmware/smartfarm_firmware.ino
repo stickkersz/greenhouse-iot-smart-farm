@@ -2,7 +2,117 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.7.1
+  Version: 2.9.2
+  ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
+     (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
+     1) บรรทัดนี้  2) Serial banner ใน setup()  3) LCD splash  4) j.set("firmware", ...) ใน pushStatus()
+     5) footer ใน dashboard/index.html
+     6) README.md — badge หัวไฟล์ + ขั้นตอนตรวจหลัง flash ที่บอกให้ "ดู serial ว่าขึ้น vX.Y.Z"
+        ⚠️ ข้อ 6 อันตรายเงียบที่สุด: ถ้าลืม README จะสั่งให้คนหน้างานมองหาเลขเวอร์ชันเก่า
+        แล้วเขาจะสรุปว่า "แฟลชผิดรุ่น" ทั้งที่แฟลชถูกแล้ว
+  Changelog v2.9.2 (2026-07-31) — แก้ reboot loop (TASK_WDT) + เก็บงานจาก code review:
+    อาการหน้างาน: dashboard เห็นบอร์ด "หลุด" ถี่ๆ · ที่จริงไม่ใช่ WiFi หลุด (wifi_drop_count = 1)
+    แต่เป็น "บอร์ด reboot" ซ้ำๆ — boot_count 11 → 19 ใน ~1 วัน, last_reset_reason = TASK_WDT
+    1) ต้นเหตุ: ลูปรอ NTP ใน syncNTP() เรียก getLocalTime(&t) "ไม่ใส่อาร์กิวเมนต์ที่ 2" = default 5000ms
+       แบบบล็อก · worst case 20 × (5000+500) = 110 วิ ในการวน loop() รอบเดียว ขณะที่ WDT_TIMEOUT_S = 60
+       → watchdog เตะแน่นอน · แล้ววนซ้ำ: บูตใหม่ นาฬิกายังไม่ติด → timeValid() false → retry ทุก 60 วิ
+       → ค้าง 110 วิ → reboot อีก = reboot loop ที่เลี้ยงตัวเอง (ตัวจุดชนวนคือเน็ตสะดุด NTP ไม่ตอบ)
+       แก้: ใช้ readLocalTime() (ไม่บล็อก) → worst case เหลือ 20 × 500ms = 10 วิ
+       ⚠️ เจตนาไม่ป้อน watchdog ในลูปนั้น — WDT ต้องเหลือไว้จับ regression ชนิดเดียวกันในอนาคต
+    2) wifiDropCount นับทุก event STA_DISCONNECTED — แต่ core auto-reconnect ยิง event ทุกครั้งที่ retry ไม่ติด
+       → เราเตอร์ดับครั้งเดียวตัวเลขพุ่งหลายสิบ + dashboard latch ชิปเหลืองถาวรที่ >= 5 · ย้ายไปนับที่ขอบ online→offline
+    3) escalation ของเราเอง (WiFi.disconnect) ทำ event reason 8 = ASSOC_LEAVE ซึ่ง legend แปลว่า
+       "AP เตะเราเอง — แก้ที่เราเตอร์" = ชี้คนหน้างานไปผิดอุปกรณ์ · เพิ่ม flag wifiSelfDisconnect กันไว้
+    4) now ที่อ่านตอนต้น loop() เก่าไป ~25 วิ หลัง wifiMulti.run() บล็อก แล้วถูก assign ทับตัวจับเวลา 4 ตัว
+       (lastSensorTime/lastControlPoll/lastSchedTime/lastNtpSync) = รอบถัดไปมาเร็วกว่าที่ตั้งใจ · อ่านนาฬิกาใหม่หลังบล็อก
+    5) setup() ต่อไม่ติด → AP ค้าง hasFailed → retry แรกของ loop() ได้ bestIndex = -1 (scan เปล่า ไม่ begin())
+       = การต่อจริงครั้งแรกถูกเลื่อนไป ~75-80 วิหลังบูต · เพิ่ม APlistClean + addAP ใหม่ (เส้นเดียวกับที่ loop() มีแล้ว)
+    6) pushHourlyLog() เป็นเส้น write สุดท้ายที่ยังไม่ batch (7-10 SSL write) — รวมเป็น updateNodeSilent ก้อนเดียว
+
+  Changelog v2.9.1 (2026-07-30) — แก้ "dashboard ค้าง 90-120 วิ ทั้งที่บอร์ดปกติดี":
+    อาการหน้างาน: LCD อัปเดตปกติ ระบบคุมโรงเรือนต่อเนื่อง แต่ dashboard ขึ้น "ข้อมูลค้าง N วินาที"
+    ไล่แล้วไม่ใช่ DS18B20 ไม่ใช่ race ของ dashboard (a5a57f4) ไม่ใช่ WiFi (drop_count = 0) ไม่ใช่ brownout
+    1) pushStatus() + pushToFirebase() ยิง Firebase.setX() ทีละ field = 21 + 3 = 24 SSL round trip ทุก 30 วิ
+       ที่ RSSI -76 แต่ละ round trip กินเวลาเป็นวินาที → รอบเดียวใช้เวลาเกิน SENSOR_INTERVAL
+       = banner ของ dashboard (index.html:1317, เกณฑ์ 90 วิ) เด้งทั้งที่บอร์ดทำงานถูกต้อง
+       และทุก round trip = โอกาสเจอ handshake ล้มเพิ่มอีก 1 ครั้ง
+       แก้: รวมเป็น FirebaseJson ก้อนเดียว + updateNodeSilent 1 ครั้งต่อ node = 2 round trip
+       (read path ใช้ getJSON ก้อนเดียวมาตั้งแต่ v2.x แล้ว — write path ตกสำรวจ)
+    2) getLocalTime(&t, 0) คืน false แบบสุ่ม: core ทำ `start = millis(); while ((millis()-start) <= ms)`
+       ถ้า millis() ขยับคาบเกี่ยว 2 บรรทัดนั้น ลูปไม่ทำงานเลย → false ทั้งที่นาฬิกาดี และ t ไม่ถูกเขียน
+       loop() เรียก timeValid() ทุกรอบ → พ้น 60 วิแล้ว false หลุดมาครั้งเดียวก็ยิง NTP resync
+       = "NTP sync OK" ทุก ~62 วิ ทั้งที่ตั้ง 6 ชม. · พ่วง schedule ข้ามรอบ + hourly log หายทั้งชั่วโมง
+       แก้: readLocalTime() ใช้ time()/localtime_r() ตรงๆ ไม่มีลูป ไม่แตะ millis()
+
+  Changelog v2.9.0 (2026-07-30) — แก้ "WiFi หลุดบ่อยแล้วต่อไม่กลับ ทั้งที่มือถือ/PC บนเน็ตเดียวกันปกติ":
+    อาการหน้างาน 2026-07-30: หลุดหลายครั้งในวันเดียว แล้วไม่กลับมาเอง · พบ 4 บั๊กที่ทับกันในทางกลับมา
+    (ทางบูตไม่มีปัญหา — จึงอธิบายได้ว่าทำไม "reboot แล้วหาย" แต่ปล่อยไว้เองไม่หาย)
+    1) modem sleep เปิดอยู่ (default ของ ESP32 STA = WIFI_PS_MIN_MODEM) — วิทยุงีบระหว่าง beacon
+       → พลาด beacon → หลุด (reason 200 BEACON_TIMEOUT) · มือถือ/PC ไม่ประหยัดไฟแบบนี้จึงไม่เจอ
+       แก้: WiFi.setSleep(false) · บอร์ดเสียบไฟบ้านตลอด ไม่ต้องประหยัดไฟ = ต้นเหตุ "หลุดบ่อย" ตัวจริง
+       ⚠️ กินไฟเฉลี่ยเพิ่ม ~20-40mA — ถ้าหลัง flash แล้วเจอ last_reset_reason = BROWNOUT บ่อยขึ้น
+       ให้สงสัยภาคจ่ายไฟก่อน (โปรเจกต์นี้มีประวัติ brownout เป็นผู้ต้องสงสัย) แล้วค่อยพิจารณาย้อนข้อนี้
+    2) core auto-reconnect (default true) แย่งวิทยุกับ wifiMulti.run() — run() สั่ง WiFi.disconnect()
+       กลางทาง = ฆ่า attempt ของ core ที่กำลังจะติดพอดี วนกันไปมาจนไม่ติดเลย
+       ⚠️ บั๊กชนิดเดียวกับที่เคยแก้ด้วย Firebase.reconnectWiFi(false) ตอน v2.1.0 — ครั้งนั้นนับผู้จัดการวิทยุ
+       แค่ 2 ตัว (lib กับ wifiMulti) มองข้าม "ตัวที่ 3" คือ core ของ ESP32 เอง
+       แก้: grace window 45 วิแรกห้าม wifiMulti แตะวิทยุ ปล่อย core ไล่ SSID เดิมเอง (เร็วกว่า ไม่ต้อง scan)
+       พ้น 45 วิแล้ว core เอาไม่อยู่ → wifiMulti รับช่วงไล่ทุก SSID ทุก 30 วิ = ผู้จัดการทีละคน ไม่ทับกัน
+    3) loop() เรียก wifiMulti.run() "ไม่ใส่อาร์กิวเมนต์" = ได้ default 5000ms ของไลบรารี ขณะที่ตอนบูต
+       ให้ 15000ms → ทางกลับมาใจร้อนกว่าทางบูต 3 เท่า · AP บริษัทที่คนใช้เยอะ assoc+DHCP เกิน 5 วิ เป็นปกติ
+       แก้: WIFI_RECONNECT_TIMEOUT_MS 20000 ส่งเข้า run() ตรงๆ
+    4) รอบเปล่าจาก markAsFailed() — run() ที่ต่อไม่ติดตีตรา AP ว่า "พัง" รอบต่อไปข้าม AP นั้นเป็นตัวเลือก
+       → bestIndex = -1 → scan เสร็จแล้วไม่ยิง begin() เลย = ยิงจริงแค่รอบเว้นรอบ (แต่ยังเสียเวลา scan
+       แบบบล็อก 3-5 วิ ทุกรอบเท่าเดิม) · ไลบรารี resetFails() ให้เองก็จริง แต่ทำ "หลัง" ลูปเลือก AP
+       แก้: run() ล้ม → APlistClean() + addAP ใหม่ (resetFails เป็น private) = ทุกรอบเป็นรอบยิงจริง
+    + escalation ใหม่: run() ล้มติดกัน 3 ครั้ง → ปิด/เปิดวิทยุ (mode OFF→STA, setSleep(false) ซ้ำ)
+      แก้เคส stack ค้างระดับที่ disconnect()/begin() เอาไม่ลง · ยังไม่ reboot — reboot ยังเป็นไม้ตาย
+      สุดท้ายที่ 30 นาที one-shot เหมือนเดิม (reboot = relay ดับ + hourly หาย จึงยังเป็นทางเลือกท้ายสุด)
+    + diagnostics: WiFi.onEvent() เก็บ reason code ตอนหลุด → Serial (พิมพ์เมื่อ "เหตุผลเปลี่ยน" กัน log ท่วม)
+      + push status/wifi_drop_count + status/wifi_drop_reason ขึ้น dashboard (แนวเดียวกับ last_reset_reason
+      ของ v2.2.0) · เดิม log แค่ "หลุด"/"กลับมาแล้ว" ไล่สาเหตุจริงไม่ได้เลย · database.rules.json เพิ่ม 2 key
+      (status มี "$other": false — ไม่เพิ่มใน rules = server ปฏิเสธการเขียน)
+    + lastWifiRetry ตั้งใหม่ตอน "หลุด" (เดิมใช้ค่าค้างจากรอบก่อน) และนับ interval จากเวลาที่ run() "จบ"
+      ไม่ใช่ตอนเริ่ม — run() บล็อกได้ถึง ~25 วิ ถ้านับจากตอนเริ่มรอบถัดไปจะมาเร็วกว่า 30 วิที่ตั้งใจ
+    + แก้ millis() วนรอบใน cooldown lock (เจอตอน audit หลังแก้ WiFi — ยังไม่เคยเกิดหน้างาน):
+      6 จุดเทียบ millis() กับ pumpLockUntil/fanLockUntil "ตรงๆ" ซึ่งพังเงียบๆ ที่ ~49.7 วัน
+      เคสร้ายสุด: millis() วนรอบระหว่างที่ล็อกค้าง → millis() เล็กกว่า lockUntil ไปอีก ~49 วัน
+      = พัดลม+ปั๊มถูกล็อกปิดยาว 49 วัน โดย log ไม่บอกอะไรเลย (auto ไม่เคยเปิดช่อง) = โรงเรือนตายเงียบ
+      ⚠️ บั๊กนี้ "เอื้อมถึงง่ายขึ้น" เพราะ v2.9.0 เอง — WiFi นิ่งแล้วบอร์ดมีโอกาสรันต่อเนื่องถึง 49 วันจริง
+      แก้: lockIsActive(now, lockUntil) ใช้ผลต่างแบบ signed (uint32_t/int32_t ตายตัว ห้าม long —
+      บนเครื่องเทสต์ long = 64 bit จะไม่วนรอบที่ 2^32 = เทสต์ผ่านโดยไม่ได้ทดสอบพฤติกรรมบอร์ดจริง)
+      + pumpSafetyCheck() ล้าง lockUntil เป็น 0 เมื่อหมดอายุทุกรอบ (ปิดช่อง deadline เก่าเกิน 24.8 วัน)
+      + ย้ายไปไว้ auto_control_logic.h = เทสต์ถึงแล้ว (13 เคส รวมคาบวนรอบทั้ง 2 ทาง)
+      mutation test ยืนยัน: ย้อนกลับไปใช้ (now < lockUntil) แบบเดิม เทสต์ FAIL 3 เคส
+    + ย้าย pumpSafetyCheck() ทั้งก้อนไปเป็น stepSafetyTimers() ใน auto_control_logic.h (pure/เทสต์ได้)
+      ปิด review finding v2.8.0 ข้อ "ตัวจับเวลา safety ไม่มีเทสต์เลย" — โค้ดคุมความปลอดภัยที่มีบั๊กมาแล้ว
+      2 รอบ (false water alarm, lock desync) แต่ไม่เคยมีเทสต์แตะเลย · .ino เหลือแค่ adapter:
+      ป้อน state เข้า → เอาผลไปสั่งรีเลย์/log/Firebase alert · พฤติกรรมเดิมเป๊ะ ไม่ได้เปลี่ยนกฎอะไร
+      + static_assert ว่า PUMP_/FAN_ COOLDOWN และ MAX_RUNTIME เท่ากัน (stepSafetyTimers รับตัวเดียว
+        เพราะ v2.8.0 กำหนดให้พักคู่กัน) — กันใครแก้ให้ต่างกันแล้วพฤติกรรมเปลี่ยนเงียบๆ
+      + 20 เทสต์: ขอบ 15 นาที, manual ไม่ถูกตัด, ตัวจับเวลาคาบ millis() วนรอบ, deadline ล้นเป็น 0 พอดี
+        mutation test ยืนยันทั้ง 2 บั๊กเดิม: gate ล็อกด้วยโหมด FAIL 2 เคส · pumpMaxed=didCutoff FAIL 1 เคส
+    + dashboard: เพิ่มชิป "สัญญาณ WiFi" (RSSI + จำนวนครั้งที่หลุด · เหตุผลอยู่ใน tooltip) และช่อง
+      "รีสตาร์ทล่าสุด" (last_reset_reason + boot_count) — 2 ค่าหลัง fw push มาตั้งแต่ v2.2.0 แต่ไม่มีที่
+      แสดงเลย ต้องเปิด Firebase console ดู · จำเป็นสำหรับเคส restart ที่ยังหาสาเหตุไม่ได้
+      + CSS chip-warn (เหลืองอำพัน) แยกจาก chip-off (เทา = ปิด/ไม่ทำงาน) — สัญญาณอ่อน/หลุดบ่อยคือ
+        "มีปัญหาแต่ยังทำงาน" ไม่ใช่ "ปิด" · fw เก่าที่ไม่มี field จะไม่แสดง (ไม่โชว์ 0 = อ่านผิดว่าไม่เคยหลุด)
+  Changelog v2.8.0 (2026-07-24) — พัดลมกลับมาพักคู่ปั๊ม (max run 15 นาที + พัก 5 นาที พร้อมกัน):
+    - ตามคำสั่งหน้างาน: ให้พัดลมมี max-runtime 15 นาทีเท่าปั๊ม แล้วพัก 5 นาทีพร้อมกัน
+    - ⚠️ นี่คือการ "ย้อน" decouple ของ v2.6.0 — v2.6.0 แยกพัดลมออกเพราะ CSV 2026-07-20 พบว่า
+      การพักคู่ปั๊มทำให้พัดลมดับ ~33% ของช่วงร้อน 7 ชม. = ต้นเหตุ temperature overshoot
+      v2.8.0 ยอมรับ trade-off นี้ตามที่ผู้ใช้สั่ง (ถ้าอากาศร้อนตอนปั๊มพัก พัดลมจะดับตามไปด้วย)
+    - pumpSafetyCheck() รวมเป็นเช็คเดียว: จับเวลาเดินต่อเนื่องแยกช่อง (pumpOnSince/fanOnSince)
+      ครบ 15 นาทีช่องใดช่องหนึ่ง → ตัด "ทั้งคู่" (เฉพาะช่อง auto) + ล็อกพัก 5 นาทีพร้อมกัน
+    - re-add fanLockUntil + fanOnSince (ถอดไปตอน v2.6.0) · gate fan-ON ด้วย millis() >= fanLockUntil
+    - checkSchedule(): พัดลมบน schedule เคารพ fanLockUntil ด้วย (เดิมเฉพาะปั๊ม)
+    - status/fan_locked กลับมา push ค่าจริง (millis() < fanLockUntil) — เดิม pin false ไว้ตั้งแต่ v2.6.0
+    - dashboard: แก้ข้อความ noti ปั๊มพัก "เดินครบ 10 นาที" -> "15 นาที" (ค้างมาตั้งแต่ v2.5.0 bump)
+    - FAN_MAX_RUNTIME_MS / FAN_COOLDOWN_MS = ค่าเดียวกับปั๊ม (15/5 นาที) · เป็น #define ต้อง reflash
+    - fix (code review รอบ 2): ตอน cutoff ตั้ง pumpLockUntil + fanLockUntil "ทั้งคู่เสมอ" ไม่ผูกกับโหมด
+      เดิมตั้งเฉพาะช่องที่เป็น auto → ถ้าปั๊มเป็น manual ตอน cutoff แล้วผู้ใช้สลับกลับเป็น auto กลางช่วงพัก
+      ปั๊มเปิดได้ทันทีขณะพัดลมยังล็อกปิด = ปั๊มพ่นน้ำโดยไม่มีพัดลม (ผิด invariant ที่ v2.8.0 ตั้งไว้)
+      การสั่งรีเลย์ "ปิด" ยังทำเฉพาะช่อง auto ตามเดิม (manual คนคุมเอง ไม่แตะ)
   Changelog v2.7.1 (2026-07-24) — ปิดช่อง "ปั๊มพ่นน้ำขณะพัดลมไล่ความชื้น" + ย้าย clamp เข้า logic ที่เทสต์ได้:
     - ⚠️ บั๊ก: v2.7.0 ต้องการแค่ humidity_vent > humidity_max ซึ่ง "ไม่พอ"
       wet latch ค้างเปิดได้ทั้งช่วง [ventOff, ventOn) แต่ปั๊มถูก humid gate ตัดเฉพาะตอน RH ≥ humidity_max
@@ -353,6 +463,9 @@ unsigned long lastNtpSync    = 0;
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
 #define PUMP_MAX_RUNTIME_MS  (15UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 15 นาที (auto/schedule) — ยืดจาก 10 นาที ให้ความชื้นสะสมได้นานขึ้น 2026-07-20 (เดิม 10 นาที / ก่อนหน้า 5)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
+// v2.8.0: พัดลมกลับมาพักคู่ปั๊ม (ยกเลิก decouple v2.6.0 ตามคำสั่งหน้างาน) — max run + cooldown เท่ากัน
+#define FAN_MAX_RUNTIME_MS   PUMP_MAX_RUNTIME_MS  // พัดลมเดินต่อเนื่องได้สูงสุด 15 นาที (เท่าปั๊ม)
+#define FAN_COOLDOWN_MS      PUMP_COOLDOWN_MS     // หลังตัด พักพัดลม 5 นาที (พร้อมปั๊ม)
 // VENT_HYST ย้ายไปเป็น const ใน auto_control_logic.h (แหล่งความจริงเดียวฝั่ง C++)
 // ห้าม #define ซ้ำที่นี่ — macro จะ shadow const แล้วจูนค่าที่ header ไม่มีผลกับ .ino
 #define AIR_TEMP_MIN         -20.0              // ช่วงค่าอุณหภูมิที่สมเหตุผล (นอกช่วง = sensor เพี้ยน)
@@ -379,10 +492,24 @@ unsigned long lastNtpSync    = 0;
                                                 // ไม่ใช่ทุกรอบ 30 วิ ไม่งั้น buzzer ดังทั้งคืนและเขียน Firebase ซ้ำข้อความเดิมเป็นพันครั้ง
 // WiFi — ESP32 core auto-reconnect เองได้ แต่เฉพาะ SSID "ตัวเดิม" ที่เคยต่อ ถ้าตัวนั้นหายถาวร
 // (เราเตอร์เจ๊ง/เปลี่ยนชื่อ) มันจะไม่ลองตัวสำรองใน config.h ให้เลย ต้อง wifiMulti.run() เท่านั้น
-#define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: ลอง wifiMulti.run() (ไล่ทุก SSID) ทุก 30 วิ
+#define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: ลอง wifiMulti.run() (ไล่ทุก SSID) ทุก 30 วิ — นับจาก "เวลาจบ" ของ run() ก่อนหน้า
 #define WIFI_CONNECT_TIMEOUT_MS 15000           // timeout ที่ส่งเข้า wifiMulti.run() ตอนบูต — ให้ "มัน" รอ อย่าไปวนเรียกซ้ำ
                                                 // run() ข้างในทำ scanNetworks()+disconnect()+begin()+รอ ครบชุดอยู่แล้ว
                                                 // เรียกซ้ำๆ = แต่ละรอบ disconnect() ฆ่า attempt ของรอบก่อนทิ้ง → ต่อติดแบบสุ่ม
+// v2.9.0 — 3 ค่าใหม่ แก้อาการ "หลุดแล้วต่อไม่กลับ ทั้งที่มือถือ/PC ต่อเน็ตเดียวกันได้" (ดู changelog ด้านบน)
+#define WIFI_RECONNECT_TIMEOUT_MS 20000         // timeout ที่ส่งเข้า run() ตอน "reconnect" ใน loop()
+                                                // ⚠️ เดิม loop() เรียก wifiMulti.run() "ไม่ใส่อาร์กิวเมนต์" = ได้ default 5000 ของไลบรารี
+                                                // ขณะที่ตอนบูตให้ 15000 → ทางกลับมาใจร้อนกว่าทางบูต 3 เท่า
+                                                // AP ของบริษัทที่คนใช้เยอะ assoc+DHCP เกิน 5 วิ เป็นเรื่องปกติ → run() หมดเวลา
+                                                // → markAsFailed() ตีตรา AP นั้นว่า "พัง" (ดู WIFI_GRACE_MS/APlistClean ด้านล่าง)
+#define WIFI_GRACE_MS           (45UL*1000)      // หลุดแล้ว "ห้าม" wifiMulti แตะวิทยุใน 45 วิแรก — ปล่อยให้ core auto-reconnect
+                                                // (setAutoReconnect default = true) ไล่ SSID เดิมเองก่อน มันเร็วกว่ามาก (ไม่ต้อง scan)
+                                                // ⚠️ นี่คือบั๊กเดียวกับที่เคยแก้เรื่อง Firebase.reconnectWiFi(false) แต่มองข้าม
+                                                // "ตัวที่ 3": core ของ ESP32 เองก็เป็นผู้จัดการวิทยุอีกคน · run() สั่ง disconnect()
+                                                // กลางทาง = ฆ่า attempt ของ core ที่กำลังจะติดพอดี วนกันไปมาจนไม่ติดเลย
+#define WIFI_HARD_RESET_AFTER   3                // run() ล้มติดกันครบ 3 ครั้ง → ปิด/เปิดวิทยุ (mode OFF→STA) ก่อนลองรอบต่อไป
+                                                // กันเคส WiFi stack ค้างระดับที่ disconnect()/begin() ธรรมดาแก้ไม่ตก
+                                                // ยัง "ไม่" reboot — reboot ยังเป็นไม้ตายสุดท้ายที่ 30 นาที (one-shot เดิม)
 #define WIFI_OFFLINE_RESTART_MS (30UL*60*1000)  // ไม่ติดครบ 30 นาที → ESP.restart() "ครั้งเดียว" (ผู้ใช้ตัดสินใจ 2026-07-16)
                                                 // เป็นข้อยกเว้นของการถอด runtime recovery layer เมื่อ 2026-07-03: จำกัดเฉพาะ WiFi
                                                 // (ไม่ใช่ sensor/relay) เกณฑ์ยาว 30 นาที และ auto control ทำงานต่อได้ตลอดช่วงนั้น
@@ -405,7 +532,8 @@ unsigned long lastNtpSync    = 0;
 #define CONTROL_POLL_MS      1500              // poll คำสั่งควบคุมทุก 1.5 วิ (เดิม 5 วิ — relay ตอบไวขึ้น)
 unsigned long pumpOnSince     = 0;             // เวลาเริ่มเดินปั๊ม (0 = หยุด)
 unsigned long pumpLockUntil   = 0;             // ล็อกห้ามเปิดปั๊มจนถึงเวลานี้ (cooldown)
-// fanLockUntil ถูกถอดออก v2.6.0 — พัดลมไม่พักคู่ปั๊มอีกต่อไป (ทำงานตาม latch อิสระ)
+unsigned long fanOnSince      = 0;             // v2.8.0: เวลาเริ่มเดินพัดลม (0 = หยุด) — สำหรับ max-runtime
+unsigned long fanLockUntil    = 0;             // v2.8.0: ล็อกห้ามเปิดพัดลมจนถึงเวลานี้ (พักคู่ปั๊ม — กลับมาจาก v2.6.0)
 Preferences   ctrlPrefs;                       // NVS (flash) เก็บ control config ให้รอด reboot + ไฟดับ (v2.4.0)
 bool          controlDirty   = false;          // มี config เปลี่ยนจาก dashboard รอบนี้ → เซฟลง NVS (กันเขียนทุก poll = NVS wear)
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
@@ -418,6 +546,31 @@ bool shtMissingLogged  = false;                // latch: พิมพ์ "ไม
 bool airNotReadyLogged = false;                // latch: พิมพ์ "sensor ยังไม่พร้อม" ไปแล้ว
 bool airStaleLatched   = false;                // latch: เข้าสถานะเซนเซอร์เสียแล้ว — ใช้จับ "ขอบ" ตอนเข้า/ออก
 unsigned long wifiOfflineSince = 0;            // millis() ตอน WiFi หลุด (0 = ออนไลน์อยู่) — ใช้นับครบ 30 นาทีก่อน restart
+// ── WiFi diagnostics (v2.9.0) ────────────────────────
+// เดิมไม่เคยเก็บ "เหตุผล" ที่ AP เตะเราออกเลย — log แค่ "หลุด" กับ "กลับมาแล้ว" ทำให้ไล่สาเหตุจริงไม่ได้
+// (แนวเดียวกับ last_reset_reason ที่เพิ่มใน v2.2.0 เพื่อไล่เคส restart — เก็บ "เหตุผล" ไม่ใช่แค่ bool)
+// reason code สำคัญ: 200 BEACON_TIMEOUT (ส่วนใหญ่มาจาก modem sleep — v2.9.0 ปิดแล้ว) · 201 NO_AP_FOUND
+// 202 AUTH_FAIL (รหัสผิด/AP เปลี่ยน security) · 203 ASSOC_FAIL · 204 HANDSHAKE_TIMEOUT · 8 ASSOC_LEAVE (AP เตะเอง)
+// 15 4WAY_HANDSHAKE_TIMEOUT (AP โหลดหนัก) · 205 CONNECTION_FAIL
+volatile uint8_t  lastWifiDropReason = 0;      // reason code ของการหลุดครั้งล่าสุด (0 = ยังไม่เคยหลุด)
+// ⚠️ v2.9.2: นับที่ "ขอบ online→offline" ใน loop() เท่านั้น ไม่ใช่ในตัว event handler
+//    เดิมนับทุก ARDUINO_EVENT_WIFI_STA_DISCONNECTED — แต่ core auto-reconnect ยิง event นั้น "ทุกครั้งที่ลองแล้วไม่ติด"
+//    ระหว่าง grace window 45 วิ และ wifiMulti.run() ก็ disconnect()+begin() เองอีกรอบละครั้ง
+//    → เราเตอร์ดับ 10 นาทีครั้งเดียว ตัวเลขพุ่งไปหลายสิบ = ผิดเจตนาที่เขียนไว้ว่า "พุ่งเร็ว = มีปัญหาจริง"
+//    และ dashboard latch ชิปเป็นสีเหลืองถาวรที่ dropCount >= 5 (dashboard/index.html:1385) โดยไม่มีวันลดลง
+volatile uint32_t wifiDropCount      = 0;      // นับ "จำนวนครั้งที่หลุด" (1 ครั้งต่อ 1 ช่วงที่ออฟไลน์) — พุ่งเร็ว = AP/สัญญาณมีปัญหาจริง
+// ⚠️ v2.9.2: กัน escalation ของเราเองไปปนกับ "เหตุผลที่หลุดจริง"
+//    WIFI_HARD_RESET_AFTER เรียก WiFi.disconnect(true,false) เอง → event ยิง reason 8 (ASSOC_LEAVE)
+//    ซึ่ง legend ทั้งใน pushStatus() และ dashboard แปลว่า "AP เตะเราเอง (client เยอะ) — แก้ที่เราเตอร์"
+//    = หลังพยายาม 3 ครั้งไม่ติด บอร์ดจะรายงานว่า "เราเตอร์เตะ" สำหรับ disconnect ที่ตัวเองสั่ง = ชี้ผิดตัว
+// ⚠️ ข้อจำกัดที่ควรรู้: flag นี้ถูกล้างหลัง WiFi.mode(WIFI_STA) จบ — การกันจึงอาศัย "จังหวะ" ว่า driver
+//    dispatch event STA_DISCONNECTED ภายในช่วง delay(500) ที่คั่นอยู่ · ในทางปฏิบัติมันยิงภายในไม่กี่ ms
+//    และขา WIFI_OFF→WIFI_STA ปล่อย STA_START ไม่ใช่ DISCONNECTED → ช่วงที่ต้องกันถูกครอบหมด
+//    แต่เป็นการอาศัยพฤติกรรมจริง ไม่ใช่การรับประกันจากสเปก · ถ้าวันหลังเห็น reason 8 (ASSOC_LEAVE)
+//    โผล่บน dashboard ทันทีหลัง log "ปิด/เปิดวิทยุ" ให้สงสัยตรงนี้ก่อนโทษเราเตอร์
+volatile bool wifiSelfDisconnect = false;      // true ระหว่างที่ "เราเอง" สั่งปิดวิทยุ — handler ต้องไม่บันทึกเป็นการหลุด
+uint8_t  wifiDropReasonLogged = 0;             // reason ที่พิมพ์ลง Serial ไปแล้ว (พิมพ์เมื่อ "เหตุผลเปลี่ยน" กัน log ท่วม)
+int      wifiRunFailStreak    = 0;             // run() ล้มติดกันกี่ครั้ง — ครบ WIFI_HARD_RESET_AFTER แล้วปิด/เปิดวิทยุ
 unsigned long lastPushTime = 0;                // millis() ที่ push ขึ้น Firebase ครั้งล่าสุด — loop() เว้น 2 วิก่อน poll กัน SSL ชน
                                                // ตั้งใน pushStatus() (จุดเดียว) เพราะทั้ง pushToFirebase() และ manual-change path เรียกผ่านมันหมด
 bool fbNotReadyLogged = false;                 // latch: พิมพ์ "Firebase not ready" ไปแล้ว (กัน log ท่วมตอนเน็ตดับ)
@@ -486,6 +639,30 @@ static const char* resetReasonStr(esp_reset_reason_t r) {
 }
 
 // ─────────────────────────────────────────────────────
+// WiFi event handler (v2.9.0) — เก็บ "เหตุผล" ที่หลุด ไม่ใช่แค่รู้ว่าหลุด
+// ⚠️ ฟังก์ชันนี้รันบน WiFi event task (คนละ task กับ loop()) — ห้ามทำอะไรหนักหรือบล็อกในนี้
+// ห้าม Serial.print / ห้ามแตะ Firebase / ห้าม delay() · เก็บค่าลงตัวแปรเท่านั้น แล้วให้ loop() ไปพิมพ์/push เอง
+// (Serial.print ข้าม task เสี่ยงชนกับ loop() ที่กำลังพิมพ์อยู่ · Firebase ในนี้ = SSL บน task ที่ stack เล็ก)
+static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    // เราสั่งปิดวิทยุเอง (escalation ที่ WIFI_HARD_RESET_AFTER) — ไม่ใช่ "หลุด" ห้ามทับ reason ของจริง
+    if (wifiSelfDisconnect) return;
+    lastWifiDropReason = info.wifi_sta_disconnected.reason;
+    // ⚠️ ไม่นับ wifiDropCount ตรงนี้ — event นี้ยิงซ้ำทุกครั้งที่ retry ไม่ติด (ดูคอมเมนต์ที่ประกาศตัวแปร)
+    //    loop() นับให้ที่ "ขอบ online→offline" ครั้งเดียวต่อช่วงออฟไลน์
+  }
+}
+
+// ชื่อเหตุผลที่หลุด — ห่อ WiFi.disconnectReasonName() ไว้ 2 เรื่อง:
+//   1) reason 0 = "ยังไม่เคยหลุด" (enum เริ่มที่ 1) · ตัวไลบรารีคืน "" เฉยๆ ทำให้ dashboard โชว์ "0 = " ลอยๆ
+//   2) reason ที่ไลบรารีไม่รู้จักก็คืน "" เหมือนกัน — ใส่ UNKNOWN ให้ยังอ่านออกว่าเป็นเลขอะไร
+static String wifiDropReasonStr(uint8_t reason) {
+  if (reason == 0) return "ยังไม่เคยหลุดตั้งแต่บูต";
+  const char* n = WiFi.disconnectReasonName((wifi_err_reason_t)reason);
+  return String((int)reason) + " = " + ((n && n[0]) ? n : "UNKNOWN");
+}
+
+// ─────────────────────────────────────────────────────
 // Firebase Auth (Anonymous) — เรียกได้ทั้งตอน setup() และ retry จาก loop()
 // เดิม: auth พลาด 4 ครั้งตอนบูต → ESP.restart() · เจตนาดี (กันบอร์ดวิ่งต่อแบบไม่ auth ตลอดไป เงียบสนิท)
 // แต่ผลจริงคือ reboot loop ตอนเน็ต/Firebase มาช้ากว่าบอร์ด — ซึ่งเป็นเรื่องปกติมากตอนไฟกลับมาทั้งตึก
@@ -507,14 +684,14 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.7.1 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.2 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
   bootResetReason = esp_reset_reason();
   Serial.printf("[BOOT] สาเหตุ reset: %s\n", resetReasonStr(bootResetReason));
-  Serial.printf("[BOOT] Heap ว่าง %u bytes (ก้อนต่อเนื่องใหญ่สุด %u)\n",
-                ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  Serial.printf("[BOOT] Heap ว่าง %lu bytes (ก้อนต่อเนื่องใหญ่สุด %lu)\n",
+                (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
 
   // ── กู้ hourly accumulator จาก RTC memory ──────────
   // magic ไม่ตรง = RTC RAM เป็นขยะ (ไฟดับ/brownout/flash firmware ใหม่) → เริ่มนับใหม่
@@ -576,7 +753,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.7.1");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.2");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -587,18 +764,37 @@ void setup() {
   //    เดิมวน run() 40 ครั้ง + delay(500): แต่ละรอบ disconnect() ไปฆ่า attempt ของรอบก่อนที่กำลังจะติดพอดี
   //    = churn ได้ถึง ~6 นาที และผลลัพธ์สุ่ม ("บางทีติดบางทีไม่ติด") → เรียกครั้งเดียว ให้ "มัน" รอเอง
   WiFi.mode(WIFI_STA);
+  // ⚠️ v2.9.0 — ปิด modem sleep (default ของ ESP32 STA คือ WIFI_PS_MIN_MODEM = เปิดอยู่)
+  // modem sleep = วิทยุงีบระหว่าง beacon เพื่อประหยัดไฟ → พลาด beacon ของ AP ได้ → AP/สถานะเรามองว่าหลุด
+  // (reason 200 BEACON_TIMEOUT) เป็นสาเหตุคลาสสิกของอาการ "ESP32 หลุดบ่อย แต่มือถือ/PC บนเน็ตเดียวกันปกติ"
+  // เพราะมือถือ/PC ไม่ได้ประหยัดไฟแบบนี้ · บอร์ดนี้เสียบไฟบ้านตลอด ไม่มีเหตุผลต้องประหยัดไฟเลย
+  // แลกกับกินไฟเพิ่ม ~20-40mA เฉลี่ย — ดูหมายเหตุ brownout ใน changelog v2.9.0
+  WiFi.setSleep(false);
+  // เก็บ reason code ตอนหลุด — ต้อง register ก่อน connect ครั้งแรก ไม่งั้นพลาด event ช่วงบูต
+  WiFi.onEvent(onWiFiEvent);
   for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
-  Serial.print("Connecting WiFi... ");
+  // ⚠️ ไม่พิมพ์อะไร "ก่อน" ต่อ — เดิม Serial.print ไม่มี newline ค้างไว้ระหว่าง run() บล็อก 15 วิ
+  //    ถ้าบอร์ด reset กลางคัน (เช่น brownout ตอนวิทยุ TX) บรรทัดค้างนี้จะต่อกันเป็นพืดใน serial monitor
+  //    ("Connecting WiFi... " ซ้ำนับพันครั้งบนบรรทัดเดียว — เจอจริงหน้างาน 2026-07-31)
+  //    พิมพ์ "หลัง" รู้ผลครั้งเดียว จบด้วย newline เสมอ = เงียบและ paste ออกมาอ่านรู้เรื่อง
   wifiMulti.run(WIFI_CONNECT_TIMEOUT_MS);
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
+    Serial.println("WiFi OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
   } else {
     // ⚠️ ห้าม ESP.restart() ตรงนี้เด็ดขาด — loop() ออกแบบมาให้ทน offline ได้ 30 นาทีและคุมโรงเรือน
     // ต่อได้ตลอดช่วงนั้น (auto control อ่าน SHT35 + threshold ใน RAM ไม่ต้องใช้เน็ตเลย)
     // setup() ที่ reboot ตอนต่อไม่ติด = ขัดกับ loop() เอง และทำให้ restart ครั้งเดียวจากสาเหตุอะไรก็ตาม
     // + เราเตอร์ยังไม่ฟื้น → reboot loop ไม่รู้จบ ทุกรอบ relay ดับ + accumulator หาย
     // = ต้นเหตุอาการ "ระบบไม่ต่อเนื่อง" ที่รายงานมา 2026-07-16 · loop() จะไล่ต่อให้เองทุก 30 วิ
-    Serial.println("FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ทุก 30 วิ");
+    Serial.println("WiFi FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ทุก 30 วิ");
+    // ⚠️ v2.9.2: ต้องล้าง fail flag ตรงนี้ด้วย ไม่ใช่เฉพาะในเส้น retry ของ loop()
+    //    run() ที่ล้มเพิ่ง markAsFailed() ตีตรา AP ไว้ → ถ้าปล่อยค้าง รอบ retry แรกของ loop() (t≈45 วิ)
+    //    จะได้ bestIndex = -1 คือ scan แบบบล็อก 3-5 วิแล้ว "ไม่เรียก begin() เลย" = รอบเปล่า
+    //    → การพยายามต่อจริงครั้งแรกถูกเลื่อนไปถึง ~75-80 วิหลังบูต ทั้งที่เราเตอร์อาจฟื้นตั้งแต่วินาทีที่ 50
+    //    (เคสนี้เกิดประจำตอนไฟกลับมาทั้งตึก — ESP32 บูตเร็วกว่าเราเตอร์ ดูคอมเมนต์ WIFI_GRACE_MS)
+    //    เป็นบั๊กเดียวกับที่ :852 แก้ไปแล้ว แต่เส้น setup() ตกสำรวจ
+    wifiMulti.APlistClean();
+    for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
   }
 
   // NTP (UTC+7 ประเทศไทย) — ต้องการสำหรับ path ของ hourly log
@@ -677,11 +873,65 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     if (wifiOfflineSince == 0) {
       wifiOfflineSince = now;
-      Serial.println("[WiFi] หลุด — ลองต่อใหม่ทุก 30 วิ · auto control ยังทำงานต่อบนค่า threshold เดิม");
+      lastWifiRetry    = now;   // เริ่มนับ grace จากจุดที่ "หลุด" — ไม่ใช่ค่าค้างจากรอบหลุดครั้งก่อน
+      // ⚠️ v2.9.2: นับตรงนี้ที่ "ขอบ" เท่านั้น — 1 ช่วงออฟไลน์ = 1 ครั้ง (ดูคอมเมนต์ตอนประกาศ wifiDropCount)
+      wifiDropCount = wifiDropCount + 1;   // read+assign ไม่ใช่ ++ — C++20 เลิกรับ ++ บน volatile (-Wvolatile)
+      Serial.printf("[WiFi] หลุด (ครั้งที่ %lu ตั้งแต่บูต) เหตุผล %s\n",
+                    (unsigned long)wifiDropCount,
+                    wifiDropReasonStr(lastWifiDropReason).c_str());
+      Serial.println("[WiFi] ปล่อยให้ core ลอง SSID เดิมเอง 45 วิแรก แล้วค่อยไล่ทุก SSID ทุก 30 วิ · auto control ทำงานต่อ");
+      wifiDropReasonLogged = lastWifiDropReason;
+    } else if (lastWifiDropReason != wifiDropReasonLogged) {
+      // เหตุผลเปลี่ยนระหว่างที่ยังหลุดอยู่ (เช่น 200 BEACON_TIMEOUT → 201 NO_AP_FOUND = AP หายไปเลย)
+      // พิมพ์เฉพาะตอน "เปลี่ยน" ไม่ใช่ทุกรอบ (แนวเดียวกับ controlLoadError / lastAuthErr)
+      wifiDropReasonLogged = lastWifiDropReason;
+      Serial.printf("[WiFi] เหตุผลเปลี่ยนเป็น %s\n",
+                    wifiDropReasonStr(lastWifiDropReason).c_str());
     }
-    if (now - lastWifiRetry >= WIFI_RETRY_EVERY_MS) {
-      lastWifiRetry = now;
-      wifiMulti.run();   // ไล่ทุก SSID ใน config.h — core auto-reconnect ลองแค่ตัวเดิม
+    // ── grace window: 45 วิแรกห้ามแตะวิทยุ ────────────
+    // core auto-reconnect (default true) กำลังไล่ SSID เดิมอยู่ — เร็วกว่า wifiMulti มาก เพราะไม่ต้อง scan
+    // ถ้า run() เข้าไปแทรก มันจะ WiFi.disconnect() ฆ่า attempt ของ core ทิ้งกลางทาง = 2 ตัวแย่งวิทยุตัวเดียว
+    // (บั๊กแบบเดียวกับที่เคยแก้ด้วย Firebase.reconnectWiFi(false) — ครั้งนั้นมองข้ามว่า core เองก็เป็นอีกตัว)
+    if (now - wifiOfflineSince >= WIFI_GRACE_MS && now - lastWifiRetry >= WIFI_RETRY_EVERY_MS) {
+      // พ้น grace แล้ว core เอาไม่อยู่ → wifiMulti รับช่วง (ไล่ทุก SSID ใน config.h)
+      // ⚠️ ต้องใส่ timeout เอง — ไม่ใส่ = ได้ default 5000 ของไลบรารี ซึ่งสั้นเกินสำหรับ AP ที่คนใช้เยอะ
+      uint8_t r = wifiMulti.run(WIFI_RECONNECT_TIMEOUT_MS);
+      if (r == WL_CONNECTED) {
+        wifiRunFailStreak = 0;
+      } else {
+        wifiRunFailStreak++;
+        // ── ล้าง fail flag ของทุก AP ─────────────────
+        // run() ที่ต่อไม่ติดจะ markAsFailed() ตีตรา AP นั้นไว้ แล้วรอบต่อไปมันจะ "ข้าม" AP นั้นเป็นตัวเลือก
+        // ผลคือรอบต่อไป bestIndex = -1 → scan เสร็จแล้วไม่ยิง begin() เลยแม้แต่ครั้งเดียว = รอบเปล่า
+        // (ไลบรารีจะ resetFails() ให้เองก็จริง แต่มันทำ "หลัง" ลูปเลือก AP = ช่วยได้แค่รอบถัดไป)
+        // = ยิงจริงแค่รอบเว้นรอบ ทั้งที่แต่ละรอบเปล่ายังเสียเวลา scan แบบบล็อก 3-5 วิเท่าเดิม
+        // resetFails() เป็น private เรียกตรงไม่ได้ → ใช้ APlistClean() แล้ว addAP ใหม่ ได้ผลเท่ากันด้วย public API
+        wifiMulti.APlistClean();
+        for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
+        // ล้มติดกันหลายครั้ง = สงสัย WiFi stack ค้างระดับที่ disconnect()/begin() แก้ไม่ตก → ปิด/เปิดวิทยุ
+        // ยังไม่ reboot (relay ดับ + hourly หาย) — reboot ยังเป็นไม้ตายสุดท้ายที่ 30 นาที เหมือนเดิม
+        if (wifiRunFailStreak >= WIFI_HARD_RESET_AFTER) {
+          wifiRunFailStreak = 0;
+          Serial.println("[WiFi] ต่อไม่ติดติดกัน 3 ครั้ง — ปิด/เปิดวิทยุ (mode OFF→STA) เผื่อ stack ค้าง");
+          // ⚠️ v2.9.2: กัน disconnect ที่ "เราสั่งเอง" ไปทับ lastWifiDropReason เป็น 8 (ASSOC_LEAVE)
+          //    ซึ่ง legend แปลว่า "AP เตะเราเอง — แก้ที่เราเตอร์" = ชี้คนหน้างานไปผิดอุปกรณ์
+          wifiSelfDisconnect = true;
+          WiFi.disconnect(true, false);   // wifioff=true, eraseap=false (ห้ามลบ config ที่เก็บไว้)
+          WiFi.mode(WIFI_OFF);
+          delay(500);
+          WiFi.mode(WIFI_STA);
+          WiFi.setSleep(false);           // mode ใหม่ = ค่า power save กลับเป็น default ต้องปิดซ้ำ
+          wifiSelfDisconnect = false;     // พ้นช่วงที่เราถือวิทยุแล้ว — event หลังจากนี้คือของจริง
+        }
+      }
+      // ⚠️ นับ interval จาก "เวลาที่ run() จบ" ไม่ใช่ตอนเริ่ม — run() บล็อกได้ถึง ~25 วิ (scan 3-5 + connect 20)
+      // ถ้าใช้ now (ก่อนเรียก) รอบถัดไปจะมาเร็วกว่า 30 วิที่ตั้งใจ = ยิงรัวเกินจนวิทยุไม่ได้พัก
+      lastWifiRetry = millis();
+      // ⚠️ v2.9.2: now ถูกอ่านไว้ตอนต้น loop() แต่ run() เพิ่งบล็อกไป ~25 วิ (บวก 500ms ถ้าเข้าเส้น hard reset)
+      //    ทุกตัวจับเวลาที่อยู่ล่างจากตรงนี้ "assign now" ทับตัวเอง (lastSensorTime/lastControlPoll/lastSchedTime/
+      //    lastNtpSync) → ถูกย้อนหลังไป ~25 วิ = รอบถัดไปมาเร็วกว่าที่ตั้งใจมาก (sensor cycle 30 วิ เหลือ ~5 วิ)
+      //    อ่านนาฬิกาใหม่ตรงนี้จุดเดียว แก้ได้ทั้งการ "เทียบ" และการ "assign" ของทุกตัวด้านล่าง
+      now = millis();
     }
     // restart ได้ครั้งเดียวเท่านั้น (rtcWifiRestartDone จำข้าม reboot ผ่าน RTC memory)
     // เหตุผล: reboot แก้ได้แค่ "WiFi stack ค้าง" — แก้ "เราเตอร์เจ๊ง/ไฟดับทั้งตึก" ไม่ได้เลย
@@ -695,9 +945,10 @@ void loop() {
     }
   } else {
     if (wifiOfflineSince != 0) {
-      Serial.printf("[WiFi] กลับมาแล้ว (หลุดไป %lu วินาที) — SSID: %s\n",
-                    (now - wifiOfflineSince) / 1000, WiFi.SSID().c_str());
-      wifiOfflineSince = 0;
+      Serial.printf("[WiFi] กลับมาแล้ว (หลุดไป %lu วินาที) — SSID: %s RSSI: %d\n",
+                    (now - wifiOfflineSince) / 1000, WiFi.SSID().c_str(), WiFi.RSSI());
+      wifiOfflineSince  = 0;
+      wifiRunFailStreak = 0;   // ต่อติดแล้ว = เริ่มนับ streak ใหม่สำหรับเคสหลุดครั้งหน้า
     }
     // ต่อได้แล้ว = คืนสิทธิ์ restart ให้เคส stack ค้างครั้งหน้า
     // ⚠️ ต้องเคลียร์ตรงนี้ ไม่ใช่ในบล็อก "กลับมาแล้ว" ด้านบน — บล็อกนั้นยิงเฉพาะตอนมี "ขอบ" offline→online
@@ -1150,10 +1401,9 @@ void autoControl() {
   // precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
   // CH3 พัดลม — เปิดตาม dec.fanOn (ร้อน หรือ แห้ง)
   if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
-    // พัดลมทำงานตาม latch อิสระ ไม่ผูกกับ pump safety cutoff (v2.6.0 — ยกเลิก fanLockUntil)
-    // เหตุผล: พัดลมไม่พ่นน้ำ ไม่มีเหตุผลด้านความปลอดภัยต้องพัก · CSV 2026-07-20 พิสูจน์ว่าการพักคู่ปั๊ม
-    // ทำให้พัดลมดับ 33% ของเวลาช่วงร้อน 7 ชม. = ต้นเหตุ overshoot · พัดลมพักเองเมื่อ latch ร้อน/แห้งเคลียร์
-    if (dec.fanOn && !ch3_fanIn) {
+    // v2.8.0: พัดลมกลับมาผูกกับ safety cutoff — เปิดได้เฉพาะพ้น fanLockUntil (พักคู่ปั๊ม)
+    // ⚠️ trade-off: พัดลมอาจพักช่วงร้อน = เสี่ยง overshoot (CSV 2026-07-20) — ยอมรับตามคำสั่งหน้างาน
+    if (dec.fanOn && !ch3_fanIn && !lockActive(fanLockUntil)) {
       ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);
       Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanWhy, avgAT, avgAH);
     }
@@ -1165,7 +1415,7 @@ void autoControl() {
   }
   // CH4 ปั๊มน้ำ — เปิดตาม dec.pumpOn (ปั๊มไล่ร้อน หรือ แห้ง) · เปิดได้เฉพาะพ้น safety lock (cooldown)
   if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
-    if (dec.pumpOn && !ch4_spare && millis() >= pumpLockUntil) {
+    if (dec.pumpOn && !ch4_spare && !lockActive(pumpLockUntil)) {
       ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis();
       Serial.printf("[AUTO] ปั๊มเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOn, avgAT, avgAH);
     }
@@ -1228,43 +1478,111 @@ void setRelay(int pin, bool state) {
 }
 
 // ─────────────────────────────────────────────────────
-// นาฬิกาถูกต้องไหม (ปี >= 2024 = NTP sync แล้ว)
-// ⚠️ getLocalTime(&t, 0) — timeout 0 = ไม่บล็อก · default คือ 5000ms ซึ่งจะ busy-wait 5 วินาทีทุกครั้งที่
-// นาฬิกายัง "ไม่ติด" (tm_year < 2016) · loop() เรียก timeValid() ทุกรอบ (เลือก NTP interval + gate hourly)
-// ถ้าใช้ default = บูต offline แล้วนาฬิกายังไม่ sync → loop บล็อก ~10 วิ/รอบ (2 call) ทั้งช่วง = ระบบอืดหนัก
-// ระหว่างที่ควรตอบสนองไวที่สุด · ค่าเวลามีอยู่ใน RTC อยู่แล้ว อ่านทันที ไม่ต้องรอ
+// อ่านนาฬิกาแบบไม่บล็อก และ "ไม่มี race" — v2.9.1 ใช้ตัวนี้แทน getLocalTime(&t, 0) ทุกที่
+//
+// เจตนาเดิมของ getLocalTime(&t, 0) ถูกแล้ว: ms=0 = ไม่บล็อก (default 5000ms จะ busy-wait 5 วิทุกครั้ง
+// ที่นาฬิกายังไม่ติด และ loop() เรียกทุกรอบ = ระบบอืดหนักตอนบูต offline) · ปัญหาอยู่ที่ "วิธี" ไม่ใช่เจตนา
+//
+// ⚠️ core ทำแบบนี้ (esp32-hal-time.c:115-127):
+//       uint32_t start = millis();
+//       while ((millis() - start) <= ms) { ...เช็คปี... return true; }
+//       return false;
+//    ถ้า millis() ขยับ 1 ms คาบเกี่ยวระหว่าง 2 บรรทัดนั้นพอดี → (millis()-start) = 1, `1 <= 0` เป็นเท็จ
+//    → ลูปไม่ทำงานเลย → คืน false ทั้งที่นาฬิกาติดดี และ t ไม่เคยถูกเขียนค่า (ผู้เรียกได้ struct ขยะ)
+//
+// โอกาสต่อ 1 call น้อยมาก แต่ loop() เรียก timeValid() ทุกรอบ (พันครั้ง/วินาที) และเงื่อนไข NTP ที่ :958
+// ต้องการ false แค่ "ครั้งเดียว" หลังพ้น 60 วิ → ntpInterval กลายเป็น NTP_RETRY_INVALID_MS แล้วยิงทันที
+//   = อาการจริงหน้างาน 2026-07-30: "NTP sync OK" ทุก ~62 วิตลอดกาล (16:47:15 / 16:48:17 / 16:49:19)
+//     ทั้งที่ NTP_RESYNC_MS ตั้งไว้ 6 ชม. · พ่วง checkSchedule() ข้ามรอบ และ hourly log หายเป็นชั่วโมง
+//     (canLog=false ที่ :1234 — ตรงกับ /logs วันที่ 2026-07-30 ที่ขาดชั่วโมง 11/12/13 ไป) แบบเงียบสนิท
+//
+// time()/localtime_r() อ่านจาก RTC ตรงๆ ไม่มีลูป ไม่แตะ millis() = deterministic ไม่บล็อก
+static bool readLocalTime(struct tm &t) {
+  time_t now;
+  time(&now);
+  localtime_r(&now, &t);
+  return t.tm_year > (2016 - 1900);   // เกณฑ์เดียวกับ core: ปีถูกตั้งแล้ว = NTP sync มาแล้ว
+}
+
+// ─────────────────────────────────────────────────────
+// นาฬิกาถูกต้องไหม (ปี >= 2024 = NTP sync แล้ว) — เกณฑ์เข้มกว่า readLocalTime() ที่ใช้ 2016 ตาม core
 bool timeValid() {
   struct tm t;
-  if (!getLocalTime(&t, 0)) return false;
+  if (!readLocalTime(t)) return false;
   return (t.tm_year + 1900) >= 2024;
 }
 
 // ─────────────────────────────────────────────────────
-// PUMP SAFETY — ตัดปั๊มถ้าเดินต่อเนื่องเกิน 15 นาที (เฉพาะ auto/schedule)
-// กันน้ำท่วม / ปั๊มไหม้แห้ง · โหมด manual = คนคุมเอง ไม่ตัดอัตโนมัติ
+// ยังติดล็อก cooldown อยู่ไหม (v2.9.0) — ทนต่อ millis() วนรอบที่ ~49.7 วัน
+// ⚠️ เดิมเทียบตรงๆ ว่า millis() < fanLockUntil ซึ่งพังตอนวนรอบ:
+//   - ถ้าวนรอบ "ระหว่าง" ที่ล็อกค้างอยู่ → millis() เล็กกว่า lockUntil ไปอีก ~49 วัน
+//     = พัดลม+ปั๊มถูกล็อกปิดยาว 49 วัน โดย log ไม่บอกอะไร (auto ไม่เคยเปิดช่องเลย) ← อันตรายสุด
+//   - ถ้า now + COOLDOWN ล้นตอนตั้งค่า → ได้เลขเล็ก = ล็อกหมดอายุทันที (พักไม่เกิดขึ้นจริง)
+// ตรรกะจริงอยู่ใน auto_control_logic.h (lockIsActive) เพื่อให้เทสต์ถึง — ตรงนี้แค่ป้อน millis() เข้าไป
+static inline bool lockActive(unsigned long lockUntil) {
+  return lockIsActive((uint32_t)millis(), (uint32_t)lockUntil);
+}
+
+// ─────────────────────────────────────────────────────
+// SAFETY — ตัดปั๊ม+พัดลมถ้าเดินต่อเนื่องเกิน 15 นาที แล้วพักคู่กัน 5 นาที (เฉพาะ auto/schedule)
+// v2.8.0: พัดลมกลับมาพักคู่ปั๊ม (ยกเลิก decouple v2.6.0 ตามคำสั่งหน้างาน)
+//   - จับเวลาเดินต่อเนื่องแยกช่อง (pumpOnSince / fanOnSince) · manual = คนคุมเอง ไม่จับ ไม่ตัด
+//   - ครบ 15 นาทีช่องใดช่องหนึ่ง → ตัด "ทั้งคู่" (เฉพาะช่องที่เป็น auto) + ล็อกพัก 5 นาทีพร้อมกัน
+//   ⚠️ พัดลมพักช่วงร้อนได้ = เสี่ยง overshoot (CSV 2026-07-20) — เป็น trade-off ที่ยอมรับตามคำสั่ง
 void pumpSafetyCheck() {
   unsigned long now = millis();
-  bool automated = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
+  // ⚠️ ตรรกะเวลา/สถานะทั้งหมดย้ายไป stepSafetyTimers() ใน auto_control_logic.h แล้ว (v2.9.0)
+  //    เพื่อให้เทสต์ถึง — ตรงนี้เหลือแค่ adapter: ป้อน state เข้า → เอาผลไปสั่งรีเลย์ + log + alert
+  //    ⚠️ PUMP_COOLDOWN_MS กับ FAN_COOLDOWN_MS ต้องเท่ากัน (พักคู่กันตามคำสั่ง v2.8.0)
+  //    stepSafetyTimers รับ cooldown ตัวเดียว — เช็คตรงนี้กันใครแก้ให้ต่างกันแล้วพฤติกรรมเปลี่ยนเงียบๆ
+  static_assert(PUMP_COOLDOWN_MS == FAN_COOLDOWN_MS,   "พัดลมต้องพักคู่ปั๊ม — cooldown ต้องเท่ากัน");
+  static_assert(PUMP_MAX_RUNTIME_MS == FAN_MAX_RUNTIME_MS, "max runtime ปั๊ม/พัดลมต้องเท่ากัน");
 
-  if (ch4_spare && automated) {
-    if (pumpOnSince == 0) {
-      pumpOnSince = now;
-    } else if (now - pumpOnSince >= PUMP_MAX_RUNTIME_MS) {
-      ch4_spare = false; setRelay(PIN_RELAY_CH4, false);
-      lastPumpSwitchTime = now;
-      pumpOnSince   = 0;
-      pumpLockUntil = now + PUMP_COOLDOWN_MS;
-      // v2.6.0: ตัดเฉพาะปั๊ม — พัดลมไม่ถูกแตะ ทำงานต่อตาม latch (ยกเลิกการพักคู่ v2.3.0)
-      Serial.println("[SAFETY] ตัดปั๊ม — เดินเกิน 15 นาที (พักปั๊ม 5 นาที · พัดลมทำงานต่อ)");
-      if (fbReady()) {
+  SafetyTimerInputs in;
+  in.now          = (uint32_t)now;
+  in.pumpRelayOn  = ch4_spare;
+  in.fanRelayOn   = ch3_fanIn;
+  in.pumpAuto     = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
+  in.fanAuto      = ch_isAuto[IDX_FAN]  || ch_schedEnabled[IDX_FAN];
+  in.maxRuntimeMs = PUMP_MAX_RUNTIME_MS;
+  in.cooldownMs   = PUMP_COOLDOWN_MS;
+
+  SafetyTimerState cur{ (uint32_t)pumpOnSince, (uint32_t)fanOnSince,
+                        (uint32_t)pumpLockUntil, (uint32_t)fanLockUntil };
+  SafetyTimerResult res = stepSafetyTimers(in, cur);
+
+  pumpOnSince   = res.state.pumpOnSince;
+  fanOnSince    = res.state.fanOnSince;
+  pumpLockUntil = res.state.pumpLockUntil;
+  fanLockUntil  = res.state.fanLockUntil;
+
+  if (res.didCutoff) {
+    // ล็อกถูกตั้ง "ทั้งคู่เสมอ" ใน stepSafetyTimers() ไม่ผูกโหมด · ส่วนการสั่งรีเลย์ปิดทำเฉพาะช่อง auto
+    // ⚠️ เหตุผลที่ lock ต้องตั้งทั้งคู่แม้ช่องนั้นเป็น manual ตอน cutoff (code review v2.8.0):
+    //   lock ถูกอ่านแค่ทาง auto (autoControl) กับ schedule เท่านั้น — manual ตั้งใจข้าม lock อยู่แล้ว
+    //   ถ้าตั้งเฉพาะช่อง auto: cutoff ตอนปั๊มเป็น manual → pumpLockUntil ไม่ถูกตั้ง → ผู้ใช้สลับปั๊มกลับเป็น
+    //   auto กลางช่วงพัก 5 นาที → ปั๊มเปิดได้ทันทีขณะพัดลมยังถูกล็อกปิด = ปั๊มพ่นน้ำโดยไม่มีพัดลม (เคสที่ห้าม)
+    //   ตั้งทั้งคู่แล้ว lock ที่ค้างอยู่จะคุมช่องนั้นทันทีที่มันกลับเข้าโหมด auto/schedule
+    if (res.cutPumpRelay) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = now; }
+    if (res.cutFanRelay)  { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
+    const bool pumpMaxed = res.pumpMaxed;
+    const char* trigger = pumpMaxed ? "ปั๊ม" : "พัดลม";
+    Serial.printf("[SAFETY] ตัดปั๊ม+พัดลม — %s เดินครบ 15 นาที (พักคู่กัน 5 นาที)\n", trigger);
+    // เตือน "ตรวจสอบระดับน้ำ" + buzzer เฉพาะตอน "ปั๊ม" เดินครบ 15 นาที (ปั๊มเดินนาน = อาจน้ำหมด)
+    // ถ้า "พัดลม" เป็นตัว trigger (ร้อน+ชื้น หรือ ฝนตก ปั๊มไม่ได้เดิน) = ปกติ ไม่ใช่เรื่องน้ำ → ไม่ปลุก buzzer
+    // (กัน false water alarm ทุก ~20 นาทีตลอดบ่ายร้อน — พบโดย code review v2.8.0)
+    if (fbReady()) {
+      if (pumpMaxed) {
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
         Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
-          "ตัดปั๊มอัตโนมัติ — ปั๊มทำงานต่อเนื่องเกิน 15 นาที (พักปั๊ม 5 นาที) ตรวจสอบระดับน้ำ");
+          "ตัดปั๊มอัตโนมัติ — ปั๊มเดินต่อเนื่องเกิน 15 นาที (พักคู่พัดลม 5 นาที) ตรวจสอบระดับน้ำ");
+      } else {
+        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "fan_cutoff");
+        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+          "พัดลมพักอัตโนมัติ — เดินต่อเนื่องเกิน 15 นาที (พัก 5 นาที) เป็นปกติช่วงร้อน/ฝน");
       }
-      if (buzzerEnabled) buzzerBeep(2);
     }
-  } else {
-    pumpOnSince = 0;   // ปั๊มหยุด หรืออยู่โหมด manual → รีเซ็ตตัวจับเวลา
+    if (pumpMaxed && buzzerEnabled) buzzerBeep(2);   // buzzer เฉพาะเคสน้ำ ไม่ใช่ทุกครั้งที่พัดลมพัก
   }
 }
 
@@ -1274,56 +1592,77 @@ void pumpSafetyCheck() {
 // เดิม lastPushTime ตั้งเฉพาะหลัง pushToFirebase() ทำให้ตอนกด Manual → pushStatus() ยิง SSL 13 ครั้ง
 // แต่ guard "เว้น 2 วิก่อน poll" ไม่รู้ตัว → control poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL ที่เพิ่งเขียนเสร็จ
 // = เคสที่ guard ตั้งใจกันพอดี แต่ครอบไม่ถึง
+// ⚠️ v2.9.1: รวมเป็น JSON ก้อนเดียว + updateNodeSilent 1 ครั้ง — เดิมยิง Firebase.setX() แยก 21 ครั้ง
+//    เดิม: 21 SSL round trip ต่อการเรียก pushStatus() 1 ครั้ง (pushToFirebase อีก 3 = 24 ต่อรอบ 30 วิ)
+//    ที่ RSSI -76 แต่ละ round trip กินเวลาเป็นวินาที → รอบ push เดียวใช้เวลาเกิน SENSOR_INTERVAL (30 วิ)
+//    = dashboard เห็น "ข้อมูลค้าง 90-120 วิ" (updateHealth ที่ dashboard/index.html:1317) ทั้งที่บอร์ดปกติ
+//    และทุก round trip = โอกาสเจอ handshake ล้มเพิ่มอีก 1 ครั้ง (ดู BSSL_SSL_Client.cpp:1823 mUpdateEngine)
+//    read path ใช้ getJSON ก้อนเดียวมาตั้งแต่ v2.x แล้ว (ดู loadControlFromFirebase) — write path ตกสำรวจ
+//    updateNodeSilent = PATCH และไม่คืน payload กลับมา → RX น้อย เหมาะกับ BSSL buffer 512 ที่ตั้งไว้
+//    PATCH merge เฉพาะ key ที่ส่งไป → key ที่ไม่ส่ง (เช่น water_temp ตอนอ่านไม่ได้) คาค่าเดิมไว้ ไม่ถูกลบ
+//    = semantics เดิมเป๊ะ แต่เหลือ 1 round trip
 void pushStatus() {
   lastPushTime = millis();
-  const String base = "/smartfarm/";
-  Firebase.setBool  (fbData, base + "status/online",      true);
-  Firebase.setBool  (fbData, base + "status/ch1_pump",    ch1_pump);
-  Firebase.setBool  (fbData, base + "status/ch2_fan_out", ch2_fanOut);
-  Firebase.setBool  (fbData, base + "status/ch3_fan_in",  ch3_fanIn);
-  Firebase.setBool  (fbData, base + "status/ch4_spare",   ch4_spare);
-  Firebase.setString(fbData, base + "status/firmware",    "2.7.1");
+  FirebaseJson j;
+  j.set("online",      true);
+  j.set("ch1_pump",    ch1_pump);
+  j.set("ch2_fan_out", ch2_fanOut);
+  j.set("ch3_fan_in",  ch3_fanIn);
+  j.set("ch4_spare",   ch4_spare);
+  j.set("firmware",    "2.9.2");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
-  Firebase.setString(fbData, base + "status/last_reset_reason", resetReasonStr(bootResetReason));
-  Firebase.setInt  (fbData, base + "status/boot_count",   (int)rtcBootCount);
+  j.set("last_reset_reason", resetReasonStr(bootResetReason));
+  j.set("boot_count",   (int)rtcBootCount);
   // heap: เฝ้า fragmentation — ถ้า max_alloc_heap หดลงเรื่อยๆ ทั้งที่ free_heap ยังเยอะ = heap แตกเป็นเสี่ยง
   // → malloc ก้อนใหญ่ (SSL buffer) พลาด → crash หลังรันไปหลายชั่วโมง = ผู้ต้องสงสัยอันดับ 1 ของอาการนี้
-  Firebase.setInt  (fbData, base + "status/free_heap",      (int)ESP.getFreeHeap());
-  Firebase.setInt  (fbData, base + "status/max_alloc_heap", (int)ESP.getMaxAllocHeap());
+  j.set("free_heap",      (int)ESP.getFreeHeap());
+  j.set("max_alloc_heap", (int)ESP.getMaxAllocHeap());
   // Health / worst-case status — ให้ dashboard เห็นสถานะระบบ
-  Firebase.setBool (fbData, base + "status/sensor_ok",   (airSensorFailCount == 0));
+  j.set("sensor_ok",   (airSensorFailCount == 0));
   // แยกจาก sensor_ok: พลาด 1 ครั้ง = sensor_ok false แต่ auto ยังทำงานบนค่าล่าสุดอยู่
   // sensor_stale = พลาดจนเลิกเชื่อแล้ว → auto ปิดทุกช่อง = เรื่องใหญ่กว่ามาก dashboard ต้องแยกให้เห็น
-  Firebase.setBool (fbData, base + "status/sensor_stale", (airSensorFailCount >= SENSOR_STALE_AFTER));
-  Firebase.setBool (fbData, base + "status/water_ok",    waterSensorOk);
-  Firebase.setBool (fbData, base + "status/failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
-  Firebase.setBool (fbData, base + "status/pump_locked", (millis() < pumpLockUntil));
-  Firebase.setBool (fbData, base + "status/fan_locked",  false);   // v2.6.0: พัดลมไม่ล็อกแล้ว — คงไว้เป็น false กัน dashboard พังจาก field หาย
-  Firebase.setBool (fbData, base + "status/time_ok",     timeValid());
-  Firebase.setInt  (fbData, base + "status/wifi_rssi",   WiFi.RSSI());
+  j.set("sensor_stale", (airSensorFailCount >= SENSOR_STALE_AFTER));
+  j.set("water_ok",    waterSensorOk);
+  j.set("failsafe",    false);   // failsafe ถูกถอดออก (rollback 2026-07-03) — คงไว้เป็น false กัน dashboard พังจาก field หาย
+  j.set("pump_locked", lockActive(pumpLockUntil));
+  j.set("fan_locked",  lockActive(fanLockUntil));   // v2.8.0: พัดลมพักคู่ปั๊มอีกครั้ง
+  j.set("time_ok",     timeValid());
+  j.set("wifi_rssi",   (int)WiFi.RSSI());
+  // WiFi diagnostics (v2.9.0) — ไล่อาการ "หลุดบ่อย/ต่อไม่กลับ" ย้อนหลังได้จาก dashboard ไม่ต้องเฝ้า Serial
+  // wifi_drop_count พุ่งเร็ว = สัญญาณ/AP มีปัญหาจริง · reason บอกทิศทางแก้:
+  //   200 BEACON_TIMEOUT → สัญญาณอ่อน/สัญญาณรบกวน (ย้ายตำแหน่ง/เพิ่มเสาอากาศ) — modem sleep ปิดไปแล้วใน v2.9.0
+  //   201 NO_AP_FOUND    → AP หายจากอากาศจริง (เราเตอร์ดับ/เปลี่ยนชื่อ) — แก้ที่เราเตอร์
+  //   202 AUTH_FAIL      → รหัสผิด/AP เปลี่ยน security — แก้ config.h
+  //   8 ASSOC_LEAVE / 15 4WAY_HANDSHAKE_TIMEOUT → AP เตะเราเอง (client เยอะ/AP โหลดหนัก) — แก้ที่เราเตอร์
+  j.set("wifi_drop_count",  (int)wifiDropCount);
+  j.set("wifi_drop_reason", wifiDropReasonStr(lastWifiDropReason));
+
+  if (!Firebase.updateNodeSilent(fbData, "/smartfarm/status", j))
+    Serial.println("[Firebase] push status ล้ม: " + fbData.errorReason());
 }
 
 void pushToFirebase() {
-  const String base = "/smartfarm/";
-
-  Firebase.setFloat (fbData, base + "sensors/air_temp",          airTemp);
-  Firebase.setFloat (fbData, base + "sensors/air_humidity",      airHumidity);
+  FirebaseJson j;
+  j.set("air_temp",     airTemp);
+  j.set("air_humidity", airHumidity);
   // น้ำ: push เฉพาะตอนอ่านได้ — กันค่าขยะ 0.0/ค่าเดิม ขึ้นไปหลอกหน้าจอ (dashboard เช็ค water_ok เพื่อโชว์ "—")
+  // ⚠️ updateNodeSilent = PATCH → ไม่ใส่ key นี้ = ค่าเดิมใน DB คาไว้เฉยๆ ไม่ถูกลบ (เหมือน setFloat เดิมที่ข้ามไป)
   if (waterSensorOk)
-    Firebase.setFloat (fbData, base + "sensors/water_temp",      waterTemp);
-  Firebase.setInt   (fbData, base + "sensors/uptime_sec",        (int)(millis() / 1000));
+    j.set("water_temp", waterTemp);
+  j.set("uptime_sec",   (int)(millis() / 1000));
+
+  bool sensorsOk = Firebase.updateNodeSilent(fbData, "/smartfarm/sensors", j);
+  if (!sensorsOk) Serial.println("[Firebase] push sensors ล้ม: " + fbData.errorReason());
 
   pushStatus();
 
-  if (fbData.errorReason() != "") {
-    Serial.println("[Firebase] Error: " + fbData.errorReason());
-  } else {
-    // heap ทุก push (30 วิ) — เอาไว้ไล่ว่า "รันไปสักพักแล้วรีสตาร์ท" เกิดจาก heap ค่อยๆ หมด/แตกเป็นเสี่ยงไหม
-    // free ลดเรื่อยๆ = leak · free นิ่งแต่ ก้อนใหญ่สุด หด = fragmentation (อันนี้อันตรายกว่า เพราะดูเหมือนปกติ)
-    Serial.printf("[Firebase] Push OK · heap ว่าง %u (ก้อนใหญ่สุด %u)\n",
-                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-  }
+  // heap ทุก push (30 วิ) — เอาไว้ไล่ว่า "รันไปสักพักแล้วรีสตาร์ท" เกิดจาก heap ค่อยๆ หมด/แตกเป็นเสี่ยงไหม
+  // free ลดเรื่อยๆ = leak · free นิ่งแต่ ก้อนใหญ่สุด หด = fragmentation (อันนี้อันตรายกว่า เพราะดูเหมือนปกติ)
+  // พิมพ์เฉพาะรอบที่ sensors ผ่าน — รอบที่ล้มมีบรรทัด "push sensors ล้ม" รายงานไปแล้ว ไม่ต้องซ้ำ
+  if (sensorsOk)
+    Serial.printf("[Firebase] Push OK · heap ว่าง %lu (ก้อนใหญ่สุด %lu)\n",
+                  (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
 }
 
 // ─────────────────────────────────────────────────────
@@ -1420,29 +1759,43 @@ void pushHourlyLog(const String& path) {
     return;
   }
 
+  // ⚠️ v2.9.2: รวมเป็น JSON ก้อนเดียว เหมือนที่ v2.9.1 ทำกับ pushStatus()/pushToFirebase()
+  //    เดิมยิง setFloat/setInt แยก 7-10 ครั้งต่อขอบชั่วโมง = 7-10 SSL round trip รวด
+  //    เหตุผลเดียวกับ v2.9.1 เป๊ะ: ที่ RSSI -76 แต่ละ round trip กินเวลาเป็นวินาที → ค้างยาวทีเดียว
+  //    ต่างกันแค่ "ชั่วโมงละครั้ง" แทนที่จะทุก 30 วิ — v2.9.1 แก้ 2 เส้น แต่เส้นนี้ตกสำรวจ
+  //    ⚠️ ใช้ updateNodeSilent (PATCH/merge) ไม่ใช่ setJSON (แทนที่ทั้งก้อน) โดยเจตนา — เพราะ setFloat/setInt
+  //    ทีละตัวแบบเดิมก็คือ merge อยู่แล้ว การรวมก้อนนี้เป็น "ลด round trip" ล้วนๆ ห้ามแอบเปลี่ยน semantics
+  //    ปกติไม่ต่างกันเลย เพราะ path /logs/YYYY-MM-DD/HH ถูกเขียนครั้งเดียวต่อชั่วโมง
+  //    เคสเดียวที่ต่าง: NTP แก้เวลา "ถอยหลัง" ทำให้ curPath != rtcLogPath ยิงซ้ำชั่วโมงเดิม
+  //    → PATCH จะทิ้ง key ของรอบแรกคาไว้ปนกับรอบสอง · ถ้าวันหลังอยากได้ "ทับทั้งก้อน" ให้เปลี่ยนเป็น
+  //    Firebase.setJSON(fbData, path, j) แล้วอัปเดตคอมเมนต์นี้ด้วย
+  FirebaseJson j;
   float avgAT = 0, avgAH = 0, avgWT = 0;
   if (haveAir) {
     avgAT = h_sumAT / h_count;
     avgAH = h_sumAH / h_count;
-    Firebase.setFloat(fbData, path + "/air_temp_avg",     avgAT);
-    Firebase.setFloat(fbData, path + "/air_temp_max",     h_maxAT);
-    Firebase.setFloat(fbData, path + "/air_temp_min",     h_minAT);
-    Firebase.setFloat(fbData, path + "/air_humidity_avg", avgAH);
-    Firebase.setFloat(fbData, path + "/air_humidity_max", h_maxAH);
-    Firebase.setFloat(fbData, path + "/air_humidity_min", h_minAH);
-    Firebase.setInt  (fbData, path + "/sample_count",     h_count);
+    j.set("air_temp_avg",     avgAT);
+    j.set("air_temp_max",     h_maxAT);
+    j.set("air_temp_min",     h_minAT);
+    j.set("air_humidity_avg", avgAH);
+    j.set("air_humidity_max", h_maxAH);
+    j.set("air_humidity_min", h_minAH);
+    j.set("sample_count",     h_count);
   }
   if (haveWater) {   // เขียนเฉพาะเมื่อมี sample ที่อ่านได้ (กันค่าขยะ/ช่องว่างจากสายยาว)
     avgWT = h_sumWT / h_countWT;
-    Firebase.setFloat(fbData, path + "/water_temp_avg",   avgWT);
-    Firebase.setFloat(fbData, path + "/water_temp_max",   h_maxWT);
-    Firebase.setFloat(fbData, path + "/water_temp_min",   h_minWT);
+    j.set("water_temp_avg",   avgWT);
+    j.set("water_temp_max",   h_maxWT);
+    j.set("water_temp_min",   h_minWT);
   }
+
+  if (!Firebase.updateNodeSilent(fbData, path, j))
+    Serial.println("[Log] เขียน hourly log ล้ม: " + fbData.errorReason());
 
   Serial.printf("[Log] Hourly → %s | T:%.1f°C RH:%.1f%% WT:%.1f°C (n=%d, nWT=%d)\n",
     path.c_str(), avgAT, avgAH, avgWT, h_count, h_countWT);
 
-  // burst SSL ~7-10 write เพิ่งจบ — ตั้ง lastPushTime ให้ control poll เว้น 2 วิก่อนยิง getJSON
+  // เหลือ SSL write เดียวแล้ว (เดิม 7-10) — ยังต้องตั้ง lastPushTime ให้ control poll เว้น 2 วิก่อนยิง getJSON
   // ไม่งั้น poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL session เดียวกัน = เคสเดียวกับที่ v2.1.1 แก้ให้ pushStatus()
   lastPushTime = millis();
 
@@ -1458,16 +1811,32 @@ void resetAccumulators() {
 }
 
 // ─────────────────────────────────────────────────────
+// ⚠️ v2.9.2: ลูปรอตรงนี้เคยทำ loop() ค้างจน watchdog เตะ (TASK_WDT) — ต้นเหตุ reboot loop จริง
+//    เดิม: `while (!getLocalTime(&t) && tries < 20) { delay(500); ... }`
+//    getLocalTime(&t) "ไม่ใส่อาร์กิวเมนต์ที่ 2" = ได้ default 5000ms แบบบล็อก (ไม่ใช่ 0 เหมือนที่อื่นในไฟล์นี้)
+//    worst case = 20 × (5000 + 500) = 110 วิ ในการวน loop() รอบเดียว · WDT_TIMEOUT_S = 60 → โดนเตะแน่นอน
+//    แล้ววนซ้ำ: บูตใหม่ นาฬิกายังไม่ติด → timeValid() false → ntpInterval = NTP_RETRY_INVALID_MS (60 วิ)
+//    → syncNTP() → ค้าง 110 วิ → WDT reboot → บูตใหม่... = reboot loop (boot_count 11 → 19 ใน ~1 วัน)
+//    ตัวจุดชนวนคือเน็ตสะดุด: NTP เป็น UDP ไม่มีใครตอบ → เข้าเส้น 110 วิเต็มๆ
+//    (หน้างานเห็น wifi_drop_reason "204 = HANDSHAKE_TIMEOUT" ตอน RSSI -74)
+//    ⚠️ header ของไฟล์นี้เตือนเรื่อง default 5000ms ไว้แล้วสำหรับ timeValid() — แต่ลูปนี้ตกสำรวจ
+//    แก้: ใช้ readLocalTime() (ไม่บล็อกเลย) → แต่ละรอบเหลือแค่ delay(500) = worst case 20 × 500ms = 10 วิ
+//    ⚠️ เจตนา "ไม่" ป้อน watchdog ในลูปนี้ — ขอบ 10 วิคือตัวกันของจริง ส่วน WDT คือตาข่ายชั้นสุดท้าย
+//       ถ้าวันหลังมีใครเพิ่มจำนวนรอบ/timeout จนเกิน 60 วิอีก เราต้องการให้ WDT เตะและรายงาน TASK_WDT
+//       เหมือนที่มันเพิ่งช่วยจับบั๊กรอบนี้ · ป้อน watchdog ตรงนี้ = ปิดปากเครื่องตรวจจับบั๊กชนิดเดียวกันในอนาคต
 void syncNTP() {
   // UTC+7 (ประเทศไทย): offset = 7 * 3600 = 25200
   configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
   Serial.print("NTP sync");
   struct tm t;
-  int tries = 0;
-  while (!getLocalTime(&t) && tries < 20) {
-    delay(500); Serial.print("."); tries++;
+  // เช็ค ok เป็นตัวตัดสินผล ไม่ใช่ `tries < 20` — เดิมถ้า sync สำเร็จพอดีตอน tries ครบ 20 จะรายงาน FAILED ทั้งที่ติดแล้ว
+  bool ok = readLocalTime(t);
+  for (int tries = 0; !ok && tries < 20; tries++) {
+    delay(500);
+    Serial.print(".");
+    ok = readLocalTime(t);
   }
-  if (tries < 20) {
+  if (ok) {
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &t);
     Serial.println(" OK → " + String(buf));
@@ -1483,7 +1852,7 @@ void syncNTP() {
 // ถ้า on_time > off_time = ข้ามคืน (เช่น 22:00–06:00)
 void checkSchedule() {
   struct tm t;
-  if (!getLocalTime(&t, 0)) return;   // ms=0 = ไม่บล็อก (ดู timeValid) — เดิม default 5000 บล็อก 5 วิ/นาที ตอนนาฬิกายังไม่ติด
+  if (!readLocalTime(t)) return;   // ไม่บล็อกและไม่มี race (ดู readLocalTime) — เดิม getLocalTime(&t,0) หลุด false ได้ = ข้ามรอบ schedule เงียบๆ
   if (!timeValid()) {
     // latch — NTP ไม่ติด = ขึ้นทุก 60 วิ ตลอดกาล
     if (!schedNoTimeLogged) { schedNoTimeLogged = true; Serial.println("[SCHED] ข้าม — นาฬิกายังไม่ sync (schedule จะไม่ทำงานจนกว่า NTP จะติด)"); }
@@ -1511,7 +1880,8 @@ void checkSchedule() {
     }
 
     // ปั๊ม (CH4) เคารพ safety lock — ห้ามเปิดระหว่าง cooldown
-    if (i == IDX_PUMP && shouldBeOn && millis() < pumpLockUntil) continue;
+    if (i == IDX_PUMP && shouldBeOn && lockActive(pumpLockUntil)) continue;
+    if (i == IDX_FAN  && shouldBeOn && lockActive(fanLockUntil))  continue;   // v2.8.0: พัดลมพักคู่ปั๊ม
 
     if (shouldBeOn != *states[i]) {
       *states[i] = shouldBeOn;
@@ -1573,8 +1943,8 @@ void updateLCD() {
 // คืนค่า path สำหรับ hourly log เช่น "/logs/2026-06-19/14"
 String getHourlyPath() {
   struct tm t;
-  if (!getLocalTime(&t, 0)) return "";   // ms=0 = ไม่บล็อก (ดู timeValid) — ถูกเรียกทุกรอบ loop ตอน timeValid()
-  // ปกติ caller เรียกตอน timeValid ผ่านแล้ว (นาฬิกาติด) จึงคืนค่าทันที ไม่แตะ 5 วิ default
+  if (!readLocalTime(t)) return "";   // ไม่บล็อกและไม่มี race (ดู readLocalTime) — เดิม getLocalTime(&t,0) หลุด false ได้ = ทิ้ง hourly log ทั้งชั่วโมงเงียบๆ
+  // ปกติ caller เรียกตอน timeValid ผ่านแล้ว (นาฬิกาติด) จึงคืนค่าทันที
   char path[48];
   strftime(path, sizeof(path), "/logs/%Y-%m-%d/%H", &t);
   return String(path);

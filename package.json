@@ -5,7 +5,8 @@
   "scripts": {
     "test:rules": "firebase emulators:exec --only database \"node --test tests/**/*.test.js\"",
     "test:logic": "g++ -std=c++17 -Wall -Wextra -I smartfarm_firmware tests/auto_control_logic.test.cpp -o /tmp/auto_control_test && /tmp/auto_control_test",
-    "test": "npm run test:rules && npm run test:logic"
+    "test:sync": "node --test tests/vent_hyst_sync.check.js",
+    "test": "npm run test:sync && npm run test:rules && npm run test:logic"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^3.0.4"

@@ -4,7 +4,7 @@
 ไม่ใช่ reference ปัจจุบัน — มีเนื้อหาที่ไม่ตรงกับระบบจริงแล้ว (เช่น Soil Moisture sensor ที่ถอดออกไปแล้ว,
 DHT22 ที่เปลี่ยนเป็น SHT35 แล้ว, GPIO mapping เดิมที่เปลี่ยนไปแล้ว)
 
-**สำหรับสถานะปัจจุบันจริง ให้ดู `PROJECT_MEMORY.md` ที่ root ของโปรเจกต์เท่านั้น**
+**สำหรับสถานะปัจจุบันจริง ให้ดู `PROJECT_MEMORY.md` ใน `docs/` เท่านั้น**
 
 | ไฟล์ | คืออะไร |
 |---|---|
@@ -12,5 +12,6 @@ DHT22 ที่เปลี่ยนเป็น SHT35 แล้ว, GPIO mappin
 | `ESP32_Firmware_Plan.md` | แผน firmware ตอนเริ่มโปรเจกต์ (ก่อนเขียนโค้ดจริง) |
 | `Hardware_Checklist.md` | ลิสต์ซื้อของช่วงวางแผน |
 | `Smart_Farm_Project_Plan.md` | แผนโปรเจกต์เริ่มต้น |
-| `Greenhouse_Equipment_Layout.md`, `_v2.md` | เวอร์ชันร่างของผังอุปกรณ์ — เวอร์ชัน current คือ `Greenhouse_Equipment_Layout_v3.md` ที่ root |
+| `Greenhouse_Equipment_Layout.md`, `_v2.md` | เวอร์ชันร่างของผังอุปกรณ์ — เวอร์ชัน current คือ `Greenhouse_Equipment_Layout_v3.md` ใน `docs/` |
 | `IoT_SmartFarm_Proposal.docx`, `_v2.docx` | เอกสารเสนอโครงการฉบับร่าง |
+| `pinout.docx`, `pinout.pdf` | Pinout ฉบับเก่า — เวอร์ชัน current คือ `pinout_v2.md` ใน `docs/` |

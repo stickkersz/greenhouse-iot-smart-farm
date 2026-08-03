@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.7.1** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.2** · ESP32 DevKit V1
 
 ---
 
@@ -119,7 +119,7 @@ pumpOn = (hot AND pumpHeat) OR dry
 - **`humidity_vent ≥ humidity_max + VENT_HYST`** is *required*. Otherwise there is a humidity band where the fan vents moisture out while the pump sprays it back in. This is enforced in firmware, rules, and dashboard.
 - Sensor unreliable (`sensor_ok = false`, or humidity ≤ 0) → **everything off, all latches cleared**. SHT35 gives temp + humidity from one chip, so a failure means both readings are stale.
 
-**Why latches instead of stateless comparisons:** two hysteresis loops OR'd statelessly either stick open or chatter at the deadband edge. Pump relay switching is the confirmed cause of this project's air-sensor latch-up, so the pump must never chatter. See the header comments and `PROJECT_MEMORY.md`.
+**Why latches instead of stateless comparisons:** two hysteresis loops OR'd statelessly either stick open or chatter at the deadband edge. Pump relay switching is the confirmed cause of this project's air-sensor latch-up, so the pump must never chatter. See the header comments and `docs/PROJECT_MEMORY.md`.
 
 ### Default thresholds (`config.h`)
 
@@ -165,10 +165,11 @@ All three sit exactly on the `vent = humidity_max + VENT_HYST` boundary — whic
 ├── firebase.json                # hosting + database + emulator config
 ├── .firebaserc                  # project alias
 ├── package.json                 # test scripts (no build step)
-└── docs / *.md                  # Firebase structure, pinout, operations, project memory
+├── docs/                        # project docs + archive/ (superseded) + reports/ (deliverables)
+└── media/                       # site photos, board photos (not referenced by code)
 ```
 
-Reference docs worth reading: `Firebase_Database_Structure.md`, `pinout_v2.md`, `PROJECT_INSTRUCTION.md`, `DAILY_OPERATIONS_CHECKLIST.md`, `PROJECT_MEMORY.md`.
+Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinout_v2.md`, `docs/PROJECT_INSTRUCTION.md`, `docs/DAILY_OPERATIONS_CHECKLIST.md`, `docs/PROJECT_MEMORY.md`.
 
 ---
 
@@ -199,7 +200,7 @@ Reference docs worth reading: `Firebase_Database_Structure.md`, `pinout_v2.md`, 
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.7.1 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.2 ===`.
 
 ---
 
@@ -233,7 +234,7 @@ Everything device-specific lives in **`smartfarm_firmware/config.h`** (gitignore
 
 ## Firebase data contract
 
-`database.rules.json` is the source of truth for validation (`"$other": {".validate": false}` rejects any undeclared field silently). Full detail in `Firebase_Database_Structure.md`.
+`database.rules.json` is the source of truth for validation (`"$other": {".validate": false}` rejects any undeclared field silently). Full detail in `docs/Firebase_Database_Structure.md`.
 
 ```
 smartfarm/
@@ -257,15 +258,17 @@ Auth model: ESP32 uses **anonymous auth** (can write sensors/logs/status/alerts,
 No build step — tests match the project's vanilla approach.
 
 ```bash
-npm test              # runs both suites
+npm test              # runs all three suites
+npm run test:sync     # cross-layer constant check (no emulator, no compiler — instant)
 npm run test:rules    # Firebase rules via emulator (requires firebase-tools + Java)
 npm run test:logic    # auto-control logic via g++ (C++17)
 ```
 
-- **`test:logic`** compiles `tests/auto_control_logic.test.cpp` against `auto_control_logic.h` and runs crossing/hysteresis/sensor-fail cases plus exhaustive invariant sweeps. Because the vent clamp lives *inside* the pure function, the sweep exercises the real shipped code (mutating `VENT_HYST` makes tests fail).
+- **`test:sync`** asserts `VENT_HYST` is identical in all three layers that need it, and that every dashboard preset still satisfies the vent constraint — so a tuned constant can't leave firmware and rules disagreeing silently (rules rejecting a value firmware accepts shows up as "the dashboard won't save" with no stated reason). Reads files only; needs neither Java nor a compiler.
+- **`test:logic`** compiles `tests/auto_control_logic.test.cpp` against `auto_control_logic.h` and runs crossing/hysteresis/sensor-fail cases plus exhaustive invariant sweeps. Because the vent clamp lives *inside* the pure function, the sweep exercises the real shipped code (mutating `VENT_HYST` makes tests fail). Also covers the safety timers (max runtime, shared cooldown, `millis()` rollover).
 - **`test:rules`** spins up the RTDB emulator (port 9000) and asserts every accept/reject path, including the vent/max/min cross-field constraints and partial-update guards.
 
-Run both green before flashing or deploying.
+Run all three green before flashing or deploying.
 
 ---
 
@@ -275,10 +278,10 @@ Run both green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.7.1`.
+3. Flash the board, watch serial for `v2.9.2`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.7.1`.
+   - Banner reads `v2.9.2`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -305,10 +308,32 @@ Run both green before flashing or deploying.
 
 - **Auto control is offline-first** — never depends on Wi-Fi/Firebase. Config persists in NVS across reboots.
 - **Air sensor is single point of failure by design** — SHT35 gives temp + humidity from one chip; on failure everything shuts off safely rather than acting on stale data (chosen 2026-07-15).
-- **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`). The C++ side is single-source and mutation-tested; the other two are comment-linked. Tuning it means editing all three.
-- Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `PROJECT_MEMORY.md`.
+- **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
+- Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `docs/PROJECT_MEMORY.md`.
 
-**v2.7.1** (latest) — fixed a pump-vs-vent conflict window (vent must now be ≥ `humidity_max` + `VENT_HYST`), moved the vent clamp into the testable pure logic, added reciprocal guards on `temp_off`/`humidity_min`, and hardened dashboard validation/feedback.
+**v2.9.2** (latest) — fixed the reboot loop that was masquerading as Wi-Fi trouble, plus review follow-ups:
+
+1. **Root cause: `syncNTP()` blocked past the watchdog.** Its wait loop called `getLocalTime(&t)` without the second argument, taking the library's blocking 5000 ms default — worst case 20 × (5000 + 500) = 110 s inside a single `loop()` pass, against `WDT_TIMEOUT_S` 60. TASK_WDT rebooted the board, which came back with an unset clock and did it again (`boot_count` 11 → 19 in ~1 day, `last_reset_reason` = `TASK_WDT`). Now uses the non-blocking `readLocalTime()`, bounding the wait at 10 s. Deliberately **does not** feed the watchdog inside that loop — the 10 s bound is the real guard, and the WDT stays armed as the last-resort detector for exactly this class of bug.
+2. **Hourly log batched** into one `updateNodeSilent` — it was still issuing 7-10 sequential SSL round trips at each hour edge, the same stall v2.9.1 fixed on the 30 s paths.
+3. **Wi-Fi diagnostics now mean what they say.** `wifi_drop_count` increments once per offline episode; previously it counted every `STA_DISCONNECTED` event, so a single 10-minute outage read as dozens and latched the dashboard chip amber permanently. The board's own escalation disconnect no longer overwrites `wifi_drop_reason` with reason 8 `ASSOC_LEAVE`, which the legend reads as "the AP kicked us — fix the router".
+4. **`setup()` clears AP fail flags** on a failed boot connect, so the first reconnect attempt isn't a dead scan round (first real attempt ~75-80 s → ~45 s after boot), and `loop()` re-reads `millis()` after a blocking reconnect so the sensor/poll/schedule/NTP timers aren't back-dated ~25 s.
+
+The firmware version string lives in **six** places — sketch header, serial banner, LCD splash, `pushStatus()`, dashboard footer, and this README (the badge at the top plus the post-flash verification steps). There's a checklist at the top of the sketch listing all six. It had drifted, with the dashboard reporting 2.9.2 while serial and the LCD still said 2.9.0, and the README telling you to check serial for a version it no longer prints. That last one is the quiet hazard: a stale README sends whoever flashed the board looking for the wrong number, and they conclude they flashed the wrong build. Bump all six together.
+
+**v2.9.1** — fixed "dashboard shows data stale 90-120 s while the board is perfectly healthy". `pushStatus()` + `pushToFirebase()` were issuing 24 separate `Firebase.setX()` calls per 30 s cycle; at RSSI -76 each SSL round trip costs seconds, so one push cycle overran `SENSOR_INTERVAL` entirely. Both now send a single `updateNodeSilent` PATCH per node (PATCH, so an absent key — e.g. `water_temp` when the DS18B20 is unreadable — leaves the stored value alone rather than deleting it). Also replaced `getLocalTime(&t, 0)` with a `time()`/`localtime_r()` read that cannot spuriously return false, and fixed a cross-listener race that kept water temperature off the dashboard.
+
+**v2.9.0** — fixed "Wi-Fi drops repeatedly and never reconnects, while phones/PCs on the same AP are fine". Four compounding bugs, all on the reconnect path (the boot path was fine, which is why a reboot appeared to fix it):
+
+1. **Modem sleep was on** (ESP32 STA default `WIFI_PS_MIN_MODEM`) — the radio naps between beacons, misses them, and drops with reason 200 `BEACON_TIMEOUT`. Phones don't power-save this way, hence the asymmetry. Now `WiFi.setSleep(false)`. ⚠️ Costs ~20-40 mA average; if `last_reset_reason` starts showing `BROWNOUT` more often after flashing, suspect the power rail first.
+2. **Core auto-reconnect raced `wifiMulti`** — `run()` calls `WiFi.disconnect()` mid-attempt, killing the core's in-flight reconnect. Same class of bug as the old `Firebase.reconnectWiFi(false)` fix, which counted only two radio managers and missed that the ESP32 core is a third. Now a 45 s grace window lets the core retry the same SSID alone (fast, no scan); only after that does `wifiMulti` take over and sweep all SSIDs.
+3. **`run()` was called with no argument** in `loop()`, taking the library's 5000 ms default while boot used 15000 — the reconnect path was 3× more impatient than boot. Busy APs routinely need more than 5 s for assoc + DHCP. Now 20000 ms.
+4. **Every other retry was a dead round** — a failed `run()` calls `markAsFailed()`, so the next round skips that AP as a candidate, ends with `bestIndex == -1`, and never calls `begin()` at all, while still paying the 3-5 s blocking scan. Now the fail flags are cleared after each failed attempt via `APlistClean()` + re-add (`resetFails()` is private).
+
+Plus: radio power-cycle (`WIFI_OFF` → `WIFI_STA`) after 3 consecutive failures, ahead of the existing one-shot 30-minute reboot; and Wi-Fi disconnect diagnostics (`status/wifi_drop_count`, `status/wifi_drop_reason`) pushed to the dashboard, in the same spirit as `last_reset_reason` from v2.2.0 — previously the logs said only "dropped" / "back", with no way to tell why.
+
+**v2.8.0** — fan now rests with the pump: 15 min max runtime, 5 min shared cooldown (reverses the v2.6.0 decouple, per on-site instruction; accepts the temperature-overshoot trade-off). Follow-up review fixes: no false water alarm when the fan alone triggers cutoff, `status/fan_locked` reports real state again, and both cooldown locks are now set regardless of channel mode so flipping a channel manual→auto mid-cooldown can't let the pump run with the fan locked off.
+
+**v2.7.1** — fixed a pump-vs-vent conflict window (vent must now be ≥ `humidity_max` + `VENT_HYST`), moved the vent clamp into the testable pure logic, added reciprocal guards on `temp_off`/`humidity_min`, and hardened dashboard validation/feedback.
 
 ---
 

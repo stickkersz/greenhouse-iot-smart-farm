@@ -31,6 +31,8 @@
         "boot_count":     { ".validate": "newData.isNumber()" },
         "free_heap":      { ".validate": "newData.isNumber()" },
         "max_alloc_heap": { ".validate": "newData.isNumber()" },
+        "wifi_drop_count":  { ".validate": "newData.isNumber()" },
+        "wifi_drop_reason": { ".validate": "newData.isString() && newData.val().length < 64" },
         "$other":      { ".validate": false }
       },
       "control": {
