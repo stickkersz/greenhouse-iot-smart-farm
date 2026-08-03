@@ -255,4 +255,4 @@ logs:          read=email, write=anon
 
 **Last Updated:** 2026-07-08 (เฉพาะรายการ Hardware/ด่วนที่สุด — ส่วนอื่นของไฟล์นี้ยัง stale ดู PROJECT_MEMORY.md §15 เป็นหลัก)
 **Commits:** `f090dd9` → `f98160e`  
-**Tested by:** Tonkla (IT Intern, KMUTT CS Year 2)
+**Tested by:** Nattakit Prasertsak (IT Intern, KMUTT CS Year 2)

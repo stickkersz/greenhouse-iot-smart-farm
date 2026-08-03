@@ -336,4 +336,4 @@ void pushHourlyLog() {
 
 ---
 
-*จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569*
+*จัดทำโดย: Nattakit Prasertsak (IT Intern) | มิถุนายน 2569*

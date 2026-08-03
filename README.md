@@ -337,4 +337,4 @@ Plus: radio power-cycle (`WIFI_OFF` → `WIFI_STA`) after 3 consecutive failures
 
 ---
 
-*จัดทำโดย Tonkla (IT Intern) · บริษัท ปุ๋ยไวกิ้ง จำกัด*
+*จัดทำโดย Nattakit Prasertsak (IT Intern) · บริษัท ปุ๋ยไวกิ้ง จำกัด*

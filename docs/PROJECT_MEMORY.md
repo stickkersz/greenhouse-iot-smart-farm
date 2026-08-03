@@ -1,6 +1,6 @@
 # Greenhouse IoT Smart Farm — Project Memory
 **บริษัท ปุ๋ยไวกิ้ง จำกัด**
-จัดทำโดย: Tonkla (IT Intern, CS Year 2, KMUTT) | มิถุนายน–กรกฎาคม 2569
+จัดทำโดย: Nattakit Prasertsak (IT Intern, CS Year 2, KMUTT) | มิถุนายน–กรกฎาคม 2569
 
 ---
 
@@ -423,7 +423,7 @@ hardware noise ก่อน — ดูหัวข้อ 🔴 ด้านล่
 - [x] เพิ่ม `TEAM_ONBOARDING.md` — วิธีเพิ่ม/ลบ account พนักงานผ่าน Firebase Console (dashboard ไม่มี
   ปุ่มสมัครเอง โดยตั้งใจ)
 - [x] เพิ่ม `DAILY_OPERATIONS_CHECKLIST.md` — เช็คลิสต์ประจำวัน/สัปดาห์ + ความหมาย error ที่เจอบ่อย
-  + เมื่อไหร่ควรแจ้ง Tonkla ทันที เขียนให้คนไม่มีพื้นฐาน IT เข้าใจได้
+  + เมื่อไหร่ควรแจ้ง Nattakit Prasertsak ทันที เขียนให้คนไม่มีพื้นฐาน IT เข้าใจได้
 
 ### 🔴 ด่วนที่สุด — ผล A/B test ยืนยันแล้ว: ปัญหาคือ Hardware ไม่ใช่ Firmware
 

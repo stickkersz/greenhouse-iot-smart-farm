@@ -1,6 +1,6 @@
 # Greenhouse IoT Smart Farm — สถานะโปรเจกต์
 **บริษัท ปุ๋ยไวกิ้ง จำกัด**
-จัดทำโดย: Tonkla (IT Intern, CS Year 2, KMUTT) | อัปเดต: มิถุนายน 2569
+จัดทำโดย: Nattakit Prasertsak (IT Intern, CS Year 2, KMUTT) | อัปเดต: มิถุนายน 2569
 
 ---
 

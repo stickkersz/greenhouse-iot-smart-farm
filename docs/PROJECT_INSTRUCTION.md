@@ -1,7 +1,7 @@
 # Project Instruction — Greenhouse IoT Smart Farm
 
 ## บริบทโปรเจกต์
-คุณกำลังช่วย **Tonkla** (IT Intern, CS Year 2, KMUTT) พัฒนาระบบ Greenhouse IoT Smart Farm ที่ **บริษัท ปุ๋ยไวกิ้ง จำกัด** ระหว่างฝึกงาน มิถุนายน–กรกฎาคม 2569 โปรเจกต์นี้ควบคุมโรงเรือน 460×240×270 cm (3 แถวปลูกผัก) ผ่าน ESP32 + Firebase + Web Dashboard
+คุณกำลังช่วย **Nattakit Prasertsak** (IT Intern, CS Year 2, KMUTT) พัฒนาระบบ Greenhouse IoT Smart Farm ที่ **บริษัท ปุ๋ยไวกิ้ง จำกัด** ระหว่างฝึกงาน มิถุนายน–กรกฎาคม 2569 โปรเจกต์นี้ควบคุมโรงเรือน 460×240×270 cm (3 แถวปลูกผัก) ผ่าน ESP32 + Firebase + Web Dashboard
 
 ---
 
@@ -157,5 +157,5 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
   - ข้อยกเว้นที่ทำได้: boot-time retry แบบมีขอบเขต (เช่น WiFi connect retry, Firebase Auth retry
     ก่อน ESP.restart()) เพราะเป็น deterministic check ตอนบูตครั้งเดียว ไม่ใช่ heuristic ที่รันตลอดและ
     เคยไปชนกับ noise — ปัจจุบันมีทั้งสองแบบแล้ว
-- **Dashboard ไม่ต้องมีระบบ role/สิทธิ์แยกระดับ** — ทีมงานขนาดเล็ก ทุก account ที่ Tonkla สร้างให้มี
+- **Dashboard ไม่ต้องมีระบบ role/สิทธิ์แยกระดับ** — ทีมงานขนาดเล็ก ทุก account ที่ Nattakit Prasertsak สร้างให้มี
   สิทธิ์เท่ากันหมด (ดู `TEAM_ONBOARDING.md`) ไม่ต้องเสนอทำ RBAC เพิ่มเว้นแต่ผู้ใช้ขอเอง

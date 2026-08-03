@@ -239,4 +239,4 @@ export_daily_summary('farm.db', 'greenhouse_data_for_SPSS.xlsx')
 
 ---
 
-*จัดทำโดย: Tonkla (IT Intern) | โปรเจกต์: Greenhouse IoT Smart Farm*
+*จัดทำโดย: Nattakit Prasertsak (IT Intern) | โปรเจกต์: Greenhouse IoT Smart Farm*

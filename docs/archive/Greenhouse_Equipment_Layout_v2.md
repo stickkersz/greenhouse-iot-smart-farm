@@ -158,4 +158,4 @@
 
 ---
 
-*อัปเดตโดย: Tonkla (IT Intern) | June 2026 | ข้อมูลจาก Layout ที่ User วาด + รูปถ่ายใหม่*
+*อัปเดตโดย: Nattakit Prasertsak (IT Intern) | June 2026 | ข้อมูลจาก Layout ที่ User วาด + รูปถ่ายใหม่*

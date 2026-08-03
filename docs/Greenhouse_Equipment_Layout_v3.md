@@ -276,4 +276,4 @@ Control Box IP65 (ผนังนอกโรงเรือน ด้าน 460
 
 ---
 
-*อัปเดตโดย: Tonkla (IT Intern) | June 2026 | v3 Final — แก้ไขทิศทาง Tier, Fan ผนัง 240cm, LED 12 ดวง, 18 หัวฉีด*
+*อัปเดตโดย: Nattakit Prasertsak (IT Intern) | June 2026 | v3 Final — แก้ไขทิศทาง Tier, Fan ผนัง 240cm, LED 12 ดวง, 18 หัวฉีด*

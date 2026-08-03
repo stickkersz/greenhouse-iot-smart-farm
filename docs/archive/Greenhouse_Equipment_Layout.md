@@ -169,4 +169,4 @@
 
 ---
 
-*จัดทำโดย: Tonkla (IT Intern) | วิเคราะห์จากรูป 13 ใบ | June 2026*
+*จัดทำโดย: Nattakit Prasertsak (IT Intern) | วิเคราะห์จากรูป 13 ใบ | June 2026*

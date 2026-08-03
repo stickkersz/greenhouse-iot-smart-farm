@@ -272,4 +272,4 @@ Rules จริงอยู่ที่ **`database.rules.json`** (deploy ด้
 
 ---
 
-*จัดทำโดย: Tonkla (IT Intern) | อัปเดตให้ตรง firmware v2.2.1 — กรกฎาคม 2569*
+*จัดทำโดย: Nattakit Prasertsak (IT Intern) | อัปเดตให้ตรง firmware v2.2.1 — กรกฎาคม 2569*

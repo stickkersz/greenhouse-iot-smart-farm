@@ -1,7 +1,7 @@
 /*
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
-  จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
+  จัดทำโดย: Nattakit Prasertsak (IT Intern) | มิถุนายน 2569
   Version: 2.9.2
   ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
      (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
