@@ -119,7 +119,7 @@ pumpOn = (hot AND pumpHeat) OR dry
 - **`humidity_vent ≥ humidity_max + VENT_HYST`** is *required*. Otherwise there is a humidity band where the fan vents moisture out while the pump sprays it back in. This is enforced in firmware, rules, and dashboard.
 - Sensor unreliable (`sensor_ok = false`, or humidity ≤ 0) → **everything off, all latches cleared**. SHT35 gives temp + humidity from one chip, so a failure means both readings are stale.
 
-**Why latches instead of stateless comparisons:** two hysteresis loops OR'd statelessly either stick open or chatter at the deadband edge. Pump relay switching is the confirmed cause of this project's air-sensor latch-up, so the pump must never chatter. See the header comments and `PROJECT_MEMORY.md`.
+**Why latches instead of stateless comparisons:** two hysteresis loops OR'd statelessly either stick open or chatter at the deadband edge. Pump relay switching is the confirmed cause of this project's air-sensor latch-up, so the pump must never chatter. See the header comments and `docs/PROJECT_MEMORY.md`.
 
 ### Default thresholds (`config.h`)
 
@@ -165,10 +165,11 @@ All three sit exactly on the `vent = humidity_max + VENT_HYST` boundary — whic
 ├── firebase.json                # hosting + database + emulator config
 ├── .firebaserc                  # project alias
 ├── package.json                 # test scripts (no build step)
-└── docs / *.md                  # Firebase structure, pinout, operations, project memory
+├── docs/                        # project docs + archive/ (superseded) + reports/ (deliverables)
+└── media/                       # site photos, board photos (not referenced by code)
 ```
 
-Reference docs worth reading: `Firebase_Database_Structure.md`, `pinout_v2.md`, `PROJECT_INSTRUCTION.md`, `DAILY_OPERATIONS_CHECKLIST.md`, `PROJECT_MEMORY.md`.
+Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinout_v2.md`, `docs/PROJECT_INSTRUCTION.md`, `docs/DAILY_OPERATIONS_CHECKLIST.md`, `docs/PROJECT_MEMORY.md`.
 
 ---
 
@@ -233,7 +234,7 @@ Everything device-specific lives in **`smartfarm_firmware/config.h`** (gitignore
 
 ## Firebase data contract
 
-`database.rules.json` is the source of truth for validation (`"$other": {".validate": false}` rejects any undeclared field silently). Full detail in `Firebase_Database_Structure.md`.
+`database.rules.json` is the source of truth for validation (`"$other": {".validate": false}` rejects any undeclared field silently). Full detail in `docs/Firebase_Database_Structure.md`.
 
 ```
 smartfarm/
@@ -308,7 +309,7 @@ Run all three green before flashing or deploying.
 - **Auto control is offline-first** — never depends on Wi-Fi/Firebase. Config persists in NVS across reboots.
 - **Air sensor is single point of failure by design** — SHT35 gives temp + humidity from one chip; on failure everything shuts off safely rather than acting on stale data (chosen 2026-07-15).
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
-- Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `PROJECT_MEMORY.md`.
+- Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `docs/PROJECT_MEMORY.md`.
 
 **v2.9.2** (latest) — fixed the reboot loop that was masquerading as Wi-Fi trouble, plus review follow-ups:
 
