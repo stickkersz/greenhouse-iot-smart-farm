@@ -128,9 +128,9 @@ Firebase Realtime Database
 | Key | Relay/GPIO | อุปกรณ์ | คุมด้วย |
 |-----|-----------|---------|---------|
 | `ch1_pump` | CH1 / GPIO26 | สำรอง | manual / schedule เท่านั้น (ไม่มี auto) |
-| `ch2_fan_out` | CH2 / GPIO27 | ไม่ได้ใช้ | ค้าง OFF (ซ่อนใน dashboard) |
+| `ch2_fan_out` | CH2 / GPIO25 | ไม่ได้ใช้ | ค้าง OFF (ซ่อนใน dashboard) — GPIO สลับกับ CH4 เมื่อ 2026-08-03 |
 | `ch3_fan_in` | CH3 / GPIO14 | **พัดลม 220V (ดูดเข้า)** | อุณหภูมิ + ความชื้น + vent (3 latch OR กัน — ดูตาราง thresholds ด้านล่าง) |
-| `ch4_spare` | CH4 / GPIO25 | **ปั๊มน้ำ 24V** | ความชื้น + evaporative cooling + pump safety |
+| `ch4_spare` | CH4 / GPIO27 | **ปั๊มน้ำ 24V** | ความชื้น + evaporative cooling + pump safety — GPIO ย้ายจาก 25 มา 27 เมื่อ 2026-08-03 (ปั๊มมีปัญหา) |
 
 > ⚠️ ชื่อ key เป็นชื่อ "ตำแหน่งเดิม" ไม่ตรงกับหน้าที่จริง (`ch4_spare` = ปั๊ม, `ch1_pump` = สำรอง) —
 > คงชื่อไว้เพื่อไม่ให้ dashboard/rules/firmware หลุด sync · ดู `IDX_FAN`/`IDX_PUMP` ใน firmware

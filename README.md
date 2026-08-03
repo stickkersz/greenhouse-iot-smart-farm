@@ -77,9 +77,9 @@ Three independently deployable layers:
 | Channel | GPIO | Load | Controlled by |
 |---|---|---|---|
 | **CH1** | 26 | สำรอง (spare) | manual / schedule only — no auto |
-| **CH2** | 27 | ไม่ได้ใช้ (unused) | hidden in dashboard, forced OFF |
+| **CH2** | 25 | ไม่ได้ใช้ (unused) | hidden in dashboard, forced OFF |
 | **CH3** | 14 | พัดลม 220 V AC (ดูดเข้า) | **temperature + humidity** (auto) |
-| **CH4** | 25 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) |
+| **CH4** | 27 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) |
 
 ### Other pins
 
@@ -88,7 +88,7 @@ Three independently deployable layers:
 | Buzzer | 33 | 3-pin module, active-LOW |
 | Status LED | 2 | onboard |
 
-> CH4 pump moved from GPIO12 → GPIO25 (GPIO12 is a strapping pin that caused boot failure). Do not move it back.
+> CH4 pump moved from GPIO12 → GPIO25 (GPIO12 is a strapping pin that caused boot failure) → **GPIO27** (2026-08-03, pump had an unrelated problem — swapped GPIO with the then-idle CH2). Never go back to GPIO12. Swapping CH2/CH4's GPIOs again is safe since neither is a strapping pin; firmware always drives them through the `PIN_RELAY_CH*` symbols, never a hardcoded number.
 
 ---
 
@@ -294,7 +294,7 @@ Run all three green before flashing or deploying.
 |---|---|---|
 | `config.h: No such file` at compile | didn't create config.h | `cp config.h.example config.h` and fill in |
 | "Sketch too big" / text section exceeds | wrong partition | ensure `huge_app` (it's in `sketch.yaml`; IDE users set Partition Scheme) |
-| Board reboots at boot | pump on a strapping pin | CH4 must be GPIO25, not GPIO12 |
+| Board reboots at boot | pump on a strapping pin | CH4 must be GPIO27, never GPIO12 |
 | Relays inverted (ON = OFF) | module polarity | flip `RELAY_ACTIVE_LOW` in config.h |
 | Buzzer always sounds | active-HIGH module | set `BUZZER_ACTIVE_LOW false` |
 | `[AUTO] ⚠️ ปิด vent` in serial | `humidity_vent < humidity_max + 5` | raise vent or lower humidity_max |

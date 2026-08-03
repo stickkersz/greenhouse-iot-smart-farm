@@ -2,7 +2,13 @@
 
 **Board:** ESP32 DevKit V1 (30-pin) บน Expansion Board HW-777
 **Firmware:** v2.9.2 (`smartfarm_firmware.ino` + `config.h`)
-**อัปเดตล่าสุด:** 2026-08-03 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า) · pin mapping ไม่เปลี่ยนตั้งแต่ v1.5.0 (บั๊ก v2.x ทั้งหมดเป็นเรื่อง logic/network/reboot ไม่แตะขา) · เอกสาร `pinout.docx`/`pinout.pdf` เก่าถูกลบทิ้งแล้ว ไฟล์นี้คือฉบับเดียวที่ใช้อ้างอิง
+**อัปเดตล่าสุด:** 2026-08-03 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า) · เอกสาร `pinout.docx`/`pinout.pdf` เก่าถูกลบทิ้งแล้ว ไฟล์นี้คือฉบับเดียวที่ใช้อ้างอิง
+
+> ⚠️ **ปั๊มน้ำย้ายจาก GPIO25 → GPIO27 แล้ว (2026-08-03)** — ปั๊มมีปัญหา สลับไปใช้ช่อง CH2 (เดิมว่าง) แทน
+> CH4 เดิม · เป็นการสลับเลข GPIO ระหว่าง CH2/CH4 เท่านั้น ไม่กระทบ Firebase key/logic ใดๆ (`ch4_spare`
+> ยังคือปั๊มเหมือนเดิม, `IDX_PUMP` ไม่เปลี่ยน) เพราะ firmware เรียกผ่าน `PIN_RELAY_CH4` เป็นสัญลักษณ์เสมอ
+> ไม่มีที่ไหน hardcode เลข GPIO ตรงๆ · **ต้องย้ายสายปั๊มทางกายภาพจากช่อง CH4 ไปเสียบช่อง CH2 บนบอร์ด
+> relay ด้วย** ไม่ใช่แค่แก้โค้ดแล้วจบ — ถ้าลืมย้ายสาย ปั๊มจะไม่ทำงานเพราะเปิดผิดช่อง
 
 > ✅ **เปลี่ยนเซนเซอร์อากาศจาก DHT22 (GPIO18) → SHT35 (I2C) แล้ว (2026-07-11)** — GPIO18 ว่างแล้ว, SHT35
 > ใช้บัส I2C ร่วมกับ LCD (GPIO21/22) แทน address auto-detect 0x44/0x45 — ดูตารางด้านล่าง + PROJECT_MEMORY.md §15
@@ -27,9 +33,9 @@
 | **GPIO18** | ว่าง (ไม่ได้ใช้) | — | เคยเป็น DHT22 DATA — ถอดออกแล้ว 2026-07-11 (เปลี่ยนไปใช้ SHT35 แบบ I2C แทน ไม่มี pin แยก) |
 | **GPIO21** | I2C — SDA (ร่วม LCD + SHT35) | จอ LCD 16x2 + เซนเซอร์อากาศ SHT35 | LCD ต้องใช้ไฟ 5V ไม่ใช่ 3.3V — ✅ ยืนยันทำงานแล้ว (2026-07-08 เปลี่ยนจอตัวใหม่) |
 | **GPIO22** | I2C — SCL (ร่วม LCD + SHT35) | จอ LCD 16x2 + เซนเซอร์อากาศ SHT35 | Address auto-scan: LCD 0x27/0x3F, SHT35 0x44/0x45 (ไม่ hardcode), I2C clock ลดเหลือ 50kHz กัน noise |
-| **GPIO25** | Relay CH4 | ปั๊มน้ำ 24V DC | Auto ตามความชื้น (HUMIDITY_MIN); เดิมเคยใช้ GPIO12 แต่ชนกับ strapping pin ทำ boot fail จึงย้ายมา |
+| **GPIO25** | Relay CH2 | ไม่ได้ใช้งาน (ซ่อนใน dashboard) | สลับมาจาก GPIO27 เมื่อ 2026-08-03 (สลับกับ CH4) |
 | **GPIO26** | Relay CH1 | สำรอง (manual/schedule เท่านั้น) | Key เก่าใน Firebase: `ch1_pump` |
-| **GPIO27** | Relay CH2 | ไม่ได้ใช้งาน (ซ่อนใน dashboard) | |
+| **GPIO27** | Relay CH4 | ปั๊มน้ำ 24V DC | Auto ตามความชื้น (HUMIDITY_MIN); ย้ายมาจาก GPIO25 เมื่อ 2026-08-03 (ปั๊มมีปัญหา) — ก่อนหน้านั้นเคยอยู่ GPIO12 แต่ชนกับ strapping pin ทำ boot fail |
 | **GPIO33** | Buzzer Module (Active) | เสียงแจ้งเตือน | Active-LOW (LOW=ดัง, HIGH=เงียบ), 3 ขา GND–I/O–VCC |
 | **GPIO34** | ว่าง (ไม่ได้ใช้) | — | ADC1, Input-Only — เคยจองไว้สำหรับ Capacitive Soil Moisture แต่**ยกเลิกแผนถาวรแล้ว (2026-07-07)** ไม่ต้องซื้อเซนเซอร์ |
 
@@ -63,9 +69,9 @@
 | Channel | GPIO | อุปกรณ์ | โหมด |
 |---|---|---|---|
 | CH1 | GPIO26 | สำรอง | Manual only |
-| CH2 | GPIO27 | ไม่ใช้ | ซ่อนใน dashboard |
+| CH2 | GPIO25 | ไม่ใช้ | ซ่อนใน dashboard — สลับมาจาก GPIO27 (2026-08-03) |
 | CH3 | GPIO14 | พัดลม 220V AC | Auto (อุณหภูมิ) |
-| CH4 | GPIO25 | ปั๊มน้ำ 24V DC | Auto (ความชื้น) |
+| CH4 | GPIO27 | ปั๊มน้ำ 24V DC | Auto (ความชื้น) — ย้ายมาจาก GPIO25 (2026-08-03, ปั๊มมีปัญหา) |
 
 ---
 
