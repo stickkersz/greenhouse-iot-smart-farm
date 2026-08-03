@@ -10,14 +10,15 @@
 | อุปกรณ์ | GPIO / รายละเอียด |
 |---|---|
 | ESP32 DevKit V1 **30-pin** บน Expansion Board HW-777 | WiFi 2.4GHz เท่านั้น |
-| DS18B20 Waterproof | GPIO4, Pull-up 5.1kΩ (VCC–DATA) ที่ฝั่ง ESP32 |
-| DHT22 | GPIO18 (Pin1=VCC, Pin2=DATA, Pin3=NC, Pin4=GND) — ย้ายจาก GPIO32 เมื่อ 2026-07-02 ให้ไกลกลุ่ม relay กัน noise (ตัวแปรในโค้ดยังชื่อ `PIN_DHT11` ตามชื่อเดิม แต่ต่อกับ DHT22 จริง) |
-| Buzzer Module (Active) | GPIO33 (GND–I/O–VCC) |
+| DS18B20 Waterproof | GPIO4, Pull-up 4.7kΩ ระหว่าง DATA กับ **3V3 เท่านั้น** — ห้ามต่อไป VCC/5V (เกิน abs max ของขา ผ่าน ESD clamp ดู `pinout.md`) |
+| SHT35 (อุณหภูมิ+ความชื้นอากาศ) | I2C — SDA=GPIO21, SCL=GPIO22 ร่วมบัสกับ LCD, address auto-scan 0x44/0x45 (ไม่ hardcode) — แทน DHT22 ตั้งแต่ 2026-07-11 (GPIO18 ว่างแล้ว) |
+| Buzzer Module (Active) | GPIO33 (GND–I/O–VCC), active-LOW |
 | LCD I2C 16x2 | SDA=GPIO21, SCL=GPIO22, Address auto-detect 0x27/0x3F ตอนบูต, **ต้องการ 5V** |
 | Relay CH1 | GPIO26 = สำรอง (manual only) |
 | Relay CH2 | GPIO27 = ไม่ใช้ (ซ่อนใน dashboard) |
-| Relay CH3 | GPIO14 = พัดลม 220V AC (auto ตามอุณหภูมิ) |
+| Relay CH3 | GPIO14 = พัดลม 220V AC (auto ตามอุณหภูมิ + ความชื้น + vent) |
 | Relay CH4 | GPIO25 = ปั๊มน้ำ 24V DC (auto ตามความชื้น) |
+| Status LED | GPIO2 (onboard), active-HIGH |
 
 **ระบบจ่ายไฟ:**
 ```
@@ -31,10 +32,11 @@
 - Relay เป็น Active-LOW: LOW=เปิด, HIGH=ปิด, ใช้ขา NO เสมอ
 - ปิดไฟก่อนต่อ/ถอดสาย Boost Converter และปั๊มเสมอ
 - GPIO34 (ADC1, Input-Only) ว่างอยู่ — เคยจองไว้สำหรับ Capacitive Soil Moisture แต่ยกเลิกแผนถาวรแล้ว (ดู "สิ่งที่ยกเลิกแล้ว")
+- DS18B20 pull-up ต้องไป 3V3 ไม่ใช่ VCC/5V (ดูแถวด้านบน)
 
 ---
 
-## Firmware v2.2.1
+## Firmware v2.9.2
 
 **ไฟล์:** `smartfarm_firmware/smartfarm_firmware.ino` + `config.h`
 
@@ -46,15 +48,19 @@
 
 **สิ่งที่ยกเลิกแล้ว:** DHT22 (เปลี่ยนไปใช้ SHT35 I2C แล้ว 2026-07-11), ระบบแจ้งเตือนออกนอกเครือข่ายทุกรูปแบบ (ไม่ใช้แล้ว — เตือนด้วย buzzer + dashboard เท่านั้น), Capacitive Soil Moisture (ยกเลิกถาวร) — ถูกลบออกจาก firmware/dashboard ทั้งหมดแล้ว
 
-**Auto-Control Thresholds (default, ปรับได้จาก Dashboard Settings):**
-- TEMP_ON = 35°C / TEMP_OFF = 32°C → พัดลม CH3 (คุมด้วย "อุณหภูมิอากาศ" อย่างเดียว — ถอดการผูกกับอุณหภูมิน้ำออกแล้ว v1.6.0 · น้ำเหลือหน้าที่ แสดง/log/alert)
-- HUMIDITY_MIN = 60% / humidity_max = 75% → ปั๊ม CH4 (hysteresis กันปั๊มกระพริบ)
-- thresh_temp_alert = 38°C, thresh_hum_alert = 40% → เกณฑ์แจ้งเตือน (buzzer + banner บน dashboard)
-- Pump Safety: เดินต่อเนื่องได้สูงสุด **10 นาที** (ตัดสินใจสุดท้าย 2026-07-07, เดิม 5 นาที), พัก 5 นาที
+**Auto-Control — 4 hysteresis latch จากค่า SHT35 (`auto_control_logic.h`, unit-tested แยกจาก I/O):**
+- **hot**: temp ≥ `temp_on` (default 35°C) จน temp ≤ `temp_off` (32°C) → พัดลม
+- **dry**: humidity < `humidity_min` (60%) จน humidity ≥ `humidity_max` (75%) → พัดลม + ปั๊ม
+- **pumpHeat**: temp ≥ `temp_on` จน temp ≤ `temp_off` **หรือ** humidity ≥ `humidity_max` → ปั๊มอย่างเดียว
+- **wet (vent)**: humidity ≥ `humidity_vent` (default 80%) จน humidity ≤ `humidity_vent − VENT_HYST` (5%) → พัดลมอย่างเดียว (ระบายความชื้นเกิน)
+- Output: `fanOn = hot OR dry OR wet` · `pumpOn = (hot AND pumpHeat) OR dry` — **`pumpOn → fanOn` เสมอ** (ปั๊มห้ามทำงานลำพัง กันน้ำท่วมไม่ระเหย)
+- `humidity_vent ≥ humidity_max + VENT_HYST` เป็น constraint บังคับ ต้องตรงกันทั้ง firmware/rules/dashboard — เช็คอัตโนมัติด้วย `npm run test:sync`
+- Pump Safety: เดินต่อเนื่องได้สูงสุด **15 นาที** (ยืดจาก 10 นาทีเมื่อ 2026-07-20) แล้วพัก **5 นาที** — พัดลมพักคู่ปั๊มเสมอตั้งแต่ v2.8.0 (`PUMP_MAX_RUNTIME_MS`/`FAN_MAX_RUNTIME_MS` เป็น `#define` ต้อง reflash ถึงจะเปลี่ยน)
+- thresh_temp_alert = 38°C, thresh_hum_alert = 40% → เกณฑ์แจ้งเตือน (buzzer + banner บน dashboard, แยกจาก auto control)
 
-**LCD:** 3 หน้า สลับทุก 5 วิ (หน้า 0: Air Temp/Hum → หน้า 1: Water Temp/WiFi RSSI → หน้า 2: Pump/Fan Status) — ✅ ทำงานปกติ (2026-07-08: จอตัวเดิมเสีย ไม่ใช่ปัญหาสาย/โค้ดตามที่สงสัยไว้ก่อนหน้า เปลี่ยนจอใหม่ต่อสายเดิมแล้วติดทันที)
+**LCD:** 3 หน้า สลับทุก 5 วิ (หน้า 0: Air Temp/Hum → หน้า 1: Water Temp/WiFi RSSI → หน้า 2: Pump/Fan Status)
 
-**Control:** Polling Firebase `/smartfarm/control` ทุก 1.5 วิ (ไม่ใช้ Stream)
+**Control:** Polling Firebase `/smartfarm/control` ทุก 1.5 วิ (ไม่ใช้ Stream) · Push status/sensors ทุก 30 วิ แบบ batched PATCH เดียว (`updateNodeSilent`) ตั้งแต่ v2.9.1 — ไม่ใช่ยิง `setX()` แยกทีละฟิลด์แบบเดิม
 
 ---
 
@@ -105,7 +111,7 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 |---|---|---|
 | DS18B20 อ่าน -127°C | ต่อสายผิดด้าน | Flat side หันหาตัวเอง: ซ้าย=GND, กลาง=DATA, ขวา=VCC |
 | Boot fail "invalid header" | GPIO12 strapping pin | เปลี่ยน pin Relay |
-| Buzzer ดังตลอด | DHT22 ไม่ต่อ → humidity=0 < 40% | ต่อ DHT22 หรือ check null guard |
+| Buzzer ดังตลอด | SHT35 อ่านไม่ได้ → humidity=0 < 40% | เช็คสาย I2C (GPIO21/22) และ address auto-scan |
 | LCD ไม่ทำงาน | VCC ต่อ 3.3V หรือ wiring ผิด | ต้องใช้ 5V |
 | Port ไม่ขึ้น Arduino IDE (Mac M3) | ไม่มี CH340 driver | ติดตั้งจาก wch-ic.com |
 | Boost Converter พัง | Short ขณะมีไฟ | ปิดไฟก่อนต่อสายเสมอ |
@@ -127,16 +133,20 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 ```
 /Greenhouse IoT Smart Farm/
 ├── smartfarm_firmware/
-│   ├── smartfarm_firmware.ino   (v2.2.1)
-│   └── config.h
+│   ├── smartfarm_firmware.ino   (v2.9.2)
+│   ├── auto_control_logic.h     ← decision math ล้วน แยกจาก I/O เพื่อ unit test
+│   └── config.h                 (gitignored)
 ├── dashboard/
-│   ├── index.html
-│   └── index.v1.1.0.backup.html
-├── pinout.md                    ← สรุปการต่อสายล่าสุด (ฉบับเดียว — pinout.docx/pdf เก่าถูกลบทิ้งแล้ว)
-├── TEAM_ONBOARDING.md           ← วิธีเพิ่ม/ลบ account พนักงานผ่าน Firebase Console
-├── DAILY_OPERATIONS_CHECKLIST.md ← เช็คลิสต์ประจำวัน/สัปดาห์ สำหรับทีมที่ไม่ใช่สาย IT
-├── PROJECT_MEMORY.md            ← ข้อมูลเทคนิคละเอียด
-└── PROJECT_INSTRUCTION.md       ← ไฟล์นี้
+│   └── index.html
+├── docs/
+│   ├── pinout.md                 ← สรุปการต่อสายล่าสุด (ฉบับเดียว — pinout.docx/pdf เก่าถูกลบทิ้งแล้ว)
+│   ├── TEAM_ONBOARDING.md        ← วิธีเพิ่ม/ลบ account พนักงานผ่าน Firebase Console
+│   ├── DAILY_OPERATIONS_CHECKLIST.md ← เช็คลิสต์ประจำวัน/สัปดาห์ สำหรับทีมที่ไม่ใช่สาย IT
+│   ├── HANDOFF_GUIDE.md          ← สำหรับใครก็ตามที่รับช่วงดูแลระบบต่อ
+│   ├── PROJECT_MEMORY.md         ← ข้อมูลเทคนิคละเอียด
+│   ├── PROJECT_INSTRUCTION.md    ← ไฟล์นี้
+│   └── archive/                  ← เอกสารก่อนสร้างระบบจริง (ประวัติเท่านั้น)
+└── media/                        ← รูปภาพ ไม่เกี่ยวกับโค้ด
 ```
 
 ---

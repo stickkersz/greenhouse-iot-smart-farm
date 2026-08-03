@@ -8,6 +8,7 @@ DHT22 ที่เปลี่ยนเป็น SHT35 แล้ว, GPIO mappin
 
 | ไฟล์ | คืออะไร |
 |---|---|
+| `CHECKPOINT.md` | Snapshot สถานะวันที่ 2026-07-02 (ยุค firmware v1.5.0) — ผู้เขียนเองก็ทำเครื่องหมาย stale ไว้แล้วในไฟล์ ไม่ใช่ pre-build doc เหมือนรายการอื่นด้านล่าง แต่เก็บไว้ที่นี่เพราะเหตุผลเดียวกัน: เก่ากว่า PROJECT_MEMORY.md มาก |
 | `STATUS.md` | Snapshot สถานะช่วงกลางเดือนมิถุนายน — เก่ากว่า PROJECT_MEMORY.md มาก |
 | `ESP32_Firmware_Plan.md` | แผน firmware ตอนเริ่มโปรเจกต์ (ก่อนเขียนโค้ดจริง) |
 | `Hardware_Checklist.md` | ลิสต์ซื้อของช่วงวางแผน |
