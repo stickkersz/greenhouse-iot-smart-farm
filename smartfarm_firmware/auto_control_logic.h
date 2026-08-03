@@ -43,6 +43,102 @@
 #ifndef AUTO_CONTROL_LOGIC_H
 #define AUTO_CONTROL_LOGIC_H
 
+#include <stdint.h>
+
+// ── safety cooldown lock: ยังล็อกอยู่ไหม (v2.9.0) ─────
+// ย้ายมาไว้ในนี้เพื่อให้เทสต์ถึง — ตัวจับเวลา cooldown ใน pumpSafetyCheck() เดิมไม่มีเทสต์เลย
+// (code review v2.8.0 จับได้) และตรรกะ "วนรอบ" แบบนี้คือชนิดที่อ่านโค้ดเปล่าๆ แล้วมองไม่เห็นบั๊ก
+//
+// รับ now เข้ามาเป็นพารามิเตอร์ ไม่เรียก millis() เอง → เทสต์ป้อนเวลาใกล้จุดวนรอบได้ตรงๆ
+//
+// ⚠️ ต้องใช้ uint32_t/int32_t ตายตัว ห้ามใช้ unsigned long/long:
+//   บน ESP32  long = 32 bit → การลบวนรอบที่ 2^32 แล้ว cast ได้เครื่องหมายถูก
+//   บนเครื่องเทสต์ (macOS/Linux 64-bit) long = 64 bit → การลบ "ไม่วนรอบ" ที่ 2^32
+//   ถ้าเขียนด้วย long เทสต์จะผ่านโดยไม่ได้ทดสอบพฤติกรรมจริงบนบอร์ดเลย (false confidence)
+//
+// ⚠️ กัน lockUntil == 0 (ยังไม่เคยตั้งล็อก) แยกก่อน — ไม่งั้นพอ now > 2^31 (~24.8 วัน)
+// (int32_t)(now - 0) จะติดลบ = รายงานว่า "ล็อกอยู่" ตลอดกาลทั้งที่ไม่เคยล็อก
+//
+// ⚠️ ถูกต้องเฉพาะในหน้าต่าง ±24.8 วันรอบ deadline — ผู้เรียกต้องล้าง lockUntil เป็น 0 เมื่อหมดอายุ
+// (pumpSafetyCheck() ทำให้ทุกรอบ loop) ไม่งั้น deadline เก่าเกิน 24.8 วันจะวนกลับมาอ่านว่า "ล็อกอยู่"
+inline bool lockIsActive(uint32_t now, uint32_t lockUntil) {
+  if (lockUntil == 0) return false;
+  return (int32_t)(now - lockUntil) < 0;
+}
+
+// ── pump/fan safety timers — max runtime + cooldown ที่พักคู่กัน (v2.9.0 ย้ายมาให้เทสต์ถึง) ──
+// ตรรกะนี้เคยอยู่ใน pumpSafetyCheck() ของ .ino ทั้งก้อน = เทสต์ไม่ถึงเลย (code review v2.8.0 จับได้)
+// ทั้งที่เป็นโค้ดที่ "คุมความปลอดภัยจริง" และมีบั๊กมาแล้ว 2 รอบ (false water alarm, lock desync)
+// แยกส่วนที่เป็นตรรกะเวลา/สถานะล้วนออกมา — ส่วนที่เหลือใน .ino คือสั่งรีเลย์ + log + Firebase alert
+//
+// กฎ (v2.8.0 ตามคำสั่งหน้างาน):
+//   - จับเวลาเดินต่อเนื่องแยกช่อง · manual = คนคุมเอง ไม่จับเวลา ไม่ตัด
+//   - ครบ maxRuntime ช่องใดช่องหนึ่ง → ตัดทั้งคู่ (เฉพาะช่อง auto) + ล็อกพักพร้อมกันทั้งคู่
+//   - ล็อกตั้ง "ทั้งคู่เสมอ" ไม่ผูกโหมด · การสั่งรีเลย์ปิดทำเฉพาะช่อง auto (ดูเหตุผลใน .ino)
+struct SafetyTimerState {
+  uint32_t pumpOnSince;    // เวลาเริ่มเดินปั๊ม (0 = ไม่ได้เดิน/ไม่จับ)
+  uint32_t fanOnSince;     // เวลาเริ่มเดินพัดลม (0 = ไม่ได้เดิน/ไม่จับ)
+  uint32_t pumpLockUntil;  // deadline ปลดล็อกปั๊ม (0 = ไม่ล็อก)
+  uint32_t fanLockUntil;   // deadline ปลดล็อกพัดลม (0 = ไม่ล็อก)
+};
+
+struct SafetyTimerInputs {
+  uint32_t now;
+  bool     pumpRelayOn;    // สถานะรีเลย์ปั๊มตอนนี้
+  bool     fanRelayOn;     // สถานะรีเลย์พัดลมตอนนี้
+  bool     pumpAuto;       // ปั๊มอยู่โหมด auto หรือ schedule (ไม่ใช่ manual)
+  bool     fanAuto;
+  uint32_t maxRuntimeMs;   // เดินต่อเนื่องได้สูงสุด
+  uint32_t cooldownMs;     // พักหลังถูกตัด
+};
+
+struct SafetyTimerResult {
+  SafetyTimerState state;  // state ใหม่ที่ผู้เรียกต้องเก็บกลับ
+  bool cutPumpRelay;       // ต้องสั่งปิดรีเลย์ปั๊มรอบนี้
+  bool cutFanRelay;        // ต้องสั่งปิดรีเลย์พัดลมรอบนี้
+  bool pumpMaxed;          // ปั๊มเป็นตัว trigger — ใช้เลือกข้อความ alert (ปั๊มเดินนาน = สงสัยน้ำหมด)
+  bool fanMaxed;           // พัดลมเป็นตัว trigger — ไม่ใช่เรื่องน้ำ ห้ามปลุก water alarm
+  bool didCutoff;          // เกิด cutoff รอบนี้ (pumpMaxed || fanMaxed)
+};
+
+inline SafetyTimerResult stepSafetyTimers(const SafetyTimerInputs& in, SafetyTimerState st) {
+  SafetyTimerResult r{st, false, false, false, false, false};
+
+  // 1) ล้างล็อกที่หมดอายุให้กลับเป็น 0 — จำเป็นเพราะ lockIsActive() ถูกต้องเฉพาะหน้าต่าง ±24.8 วัน
+  //    รอบ deadline · ถ้าปล่อยค่าเก่าค้าง deadline ที่ผ่านไปเกิน 24.8 วันจะวนกลับมาอ่านว่า "ล็อกอยู่"
+  if (st.pumpLockUntil != 0 && !lockIsActive(in.now, st.pumpLockUntil)) st.pumpLockUntil = 0;
+  if (st.fanLockUntil  != 0 && !lockIsActive(in.now, st.fanLockUntil))  st.fanLockUntil  = 0;
+
+  // 2) จับเวลาเดินต่อเนื่อง — เริ่มจับเมื่อรีเลย์เปิด "และ" อยู่โหมด auto · นอกนั้นรีเซ็ต
+  //    manual ไม่จับเวลา = ไม่มีวันถูกตัด (คนสั่งเองต้องคุมเอง — เจตนาเดิมของระบบ)
+  if (in.pumpRelayOn && in.pumpAuto) { if (st.pumpOnSince == 0) st.pumpOnSince = in.now; }
+  else                                 st.pumpOnSince = 0;
+  if (in.fanRelayOn  && in.fanAuto)  { if (st.fanOnSince  == 0) st.fanOnSince  = in.now; }
+  else                                 st.fanOnSince  = 0;
+
+  // 3) ครบเวลาหรือยัง — ลบกันแบบ unsigned (ทน millis() วนรอบ) ไม่ใช่เทียบ absolute
+  r.pumpMaxed = (st.pumpOnSince != 0) && ((uint32_t)(in.now - st.pumpOnSince) >= in.maxRuntimeMs);
+  r.fanMaxed  = (st.fanOnSince  != 0) && ((uint32_t)(in.now - st.fanOnSince)  >= in.maxRuntimeMs);
+  r.didCutoff = r.pumpMaxed || r.fanMaxed;
+
+  // 4) cutoff — ล็อกทั้งคู่เสมอ (ไม่ผูกโหมด) · สั่งปิดรีเลย์เฉพาะช่อง auto ที่กำลังเปิดอยู่
+  if (r.didCutoff) {
+    st.pumpLockUntil = in.now + in.cooldownMs;
+    st.fanLockUntil  = in.now + in.cooldownMs;
+    // ⚠️ deadline อาจล้นเป็นเลขเล็กได้ตอน now ใกล้ 2^32 — lockIsActive() รับมือด้วยผลต่าง signed
+    //    แต่ถ้าล้นแล้วได้ 0 พอดี จะกลายเป็น "ไม่ล็อก" → เลื่อนเป็น 1 (1ms ไม่มีผลเชิงพฤติกรรม)
+    if (st.pumpLockUntil == 0) st.pumpLockUntil = 1;
+    if (st.fanLockUntil  == 0) st.fanLockUntil  = 1;
+    r.cutPumpRelay = in.pumpAuto && in.pumpRelayOn;
+    r.cutFanRelay  = in.fanAuto  && in.fanRelayOn;
+    st.pumpOnSince = 0;
+    st.fanOnSince  = 0;
+  }
+
+  r.state = st;
+  return r;
+}
+
 struct AutoControlInputs {
   bool  sensorOk;     // เซนเซอร์อากาศเชื่อได้ไหม (false = อ่านพลาดติดกันนานเกิน → ค่าเก่า) · false = ปิดทุกช่อง
   float airTemp;      // ค่าเฉลี่ยอุณหภูมิอากาศ (°C) — คุม latch ร้อน
@@ -54,12 +150,33 @@ struct AutoControlInputs {
   bool  hotOn;        // latch ปัจจุบัน: อากาศร้อนอยู่ไหม (คุมพัดลม)
   bool  dryOn;        // latch ปัจจุบัน: อากาศแห้งอยู่ไหม (คุมทั้ง 2 ช่อง)
   bool  pumpHeatOn;   // latch ปัจจุบัน: ปั๊มกำลังไล่ร้อนอยู่ไหม (โดน humid gate ล้างได้)
-  // ── v2.7.0 vent (ระบายความชื้น) — append ท้าย struct เจตนา: initializer เก่า (10 ค่า) จะ zero-init 3 ตัวนี้
-  //    → ventOnHum=0 = ฟีเจอร์ปิด = พฤติกรรมเดิมเป๊ะ (backward compatible ไม่ต้องแก้เทสต์เก่า) ──
-  float ventOnHum;    // RH ≥ ค่านี้ → wet latch เปิด (พัดลมไล่ความชื้น) · ≤0 = ปิดฟีเจอร์
-  float ventOffHum;   // RH ≤ ค่านี้ → wet latch ปิด (= ventOnHum - deadband · firmware คำนวณให้)
-  bool  wetOn;        // latch ปัจจุบัน: กำลังระบายความชื้นอยู่ไหม (คุมพัดลมเท่านั้น)
+  // ── v2.7.0 vent (ระบายความชื้น) — append ท้าย struct เจตนา: initializer เก่า (10 ค่า) จะ zero-init 2 ตัวนี้
+  //    → ventThreshold=0 = ฟีเจอร์ปิด = พฤติกรรมเดิมเป๊ะ (backward compatible ไม่ต้องแก้เทสต์เก่า) ──
+  float ventThreshold; // ค่า humidity_vent ดิบจาก config · ≤0 = ปิดฟีเจอร์
+                       // ventOn/ventOff คำนวณ "ข้างใน" computeAutoDecisions() ไม่ใช่ที่ firmware
+                       // — ไม่งั้น clamp อยู่ชั้น .ino ที่เทสต์ไม่ถึง แล้วเทสต์ต้องเขียน clamp ซ้ำเอง
+                       //   (เขียนซ้ำ = จูน VENT_HYST แล้วเทสต์ยังผ่านทั้งที่ firmware เพี้ยน)
+  bool  wetOn;         // latch ปัจจุบัน: กำลังระบายความชื้นอยู่ไหม (คุมพัดลมเท่านั้น)
 };
+
+// deadband ของ wet latch · ปิดที่ ventOn - VENT_HYST กันพัดลมกระพริบที่เส้น
+// ⚠️ นี่คือ "แหล่งความจริง" ของค่านี้ทั้งโปรเจกต์ — .ino ต้องอ้างค่านี้ ห้าม #define ซ้ำ
+//
+// ค่านี้ต้องมีสำเนาอยู่อีก 2 ที่ เพราะเป็น runtime ที่ import กันไม่ได้:
+//   1. dashboard/index.html  → const VENT_HYST_PCT
+//   2. database.rules.json   → เขียนเลขลงไปตรงๆ 3 จุด (Firebase rules ไม่มีตัวแปร/import เลย)
+// **จูนค่านี้ = ต้องแก้ทั้ง 3 ที่** · `npm run test:sync` จะ fail ถ้าไม่ตรงกัน (tests/vent_hyst_sync.check.js)
+// จึงไม่ต้องจำเอง — แต่ห้ามข้าม test:sync ตอนจูน ไม่งั้น firmware กับ rules จะขัดกันเงียบๆ
+// (rules ปฏิเสธค่าที่ firmware ยอมรับ = ตั้งค่าจาก dashboard ไม่ได้ โดยไม่มีอะไรบอกว่าทำไม)
+static const float VENT_HYST = 5.0f;
+
+// vent ใช้งานได้ไหม — เงื่อนไขเดียว ใช้ร่วมทุกชั้น
+// ต้อง ventOff (= vent - VENT_HYST) ≥ pumpOffHum ไม่งั้นมีช่วง RH ที่ wet ยังค้าง (พัดลมไล่ชื้นออก)
+// แต่ปั๊มยังไม่ถูก humid gate ตัด (พ่นเข้า) = ตีกันเอง · จึงต้อง vent ≥ pumpOffHum + VENT_HYST
+// (preset ทั้ง 3 ตัวอยู่พอดีเส้นนี้ จึงเป็น ≥ ไม่ใช่ >)
+inline bool ventIsUsable(float ventThreshold, float pumpOffHum) {
+  return ventThreshold > VENT_HYST && ventThreshold >= pumpOffHum + VENT_HYST;
+}
 
 struct AutoControlDecisions {
   bool hotOn, dryOn, pumpHeatOn, wetOn;  // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
@@ -100,12 +217,15 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   else if (in.airTemp <= in.fanOffTemp) pumpHeat = false;
   // else: คงสถานะ
 
-  // latch เปียก (vent) — ระบายความชื้น · ventOnHum ≤ 0 = ปิดฟีเจอร์ (backward compatible)
-  // hysteresis เดียวกับ latch อื่น: ข้าม ventOnHum ติด · ตกใต้ ventOffHum ดับ · กลางคงสถานะ
+  // latch เปียก (vent) — ระบายความชื้น · clamp อยู่ตรงนี้ (ไม่ใช่ที่ .ino) เทสต์จึงกินโค้ดจริง
+  // ventThreshold ที่ใช้ไม่ได้ (ต่ำเกิน / เว้นจาก pumpOffHum ไม่ถึง VENT_HYST) → ปิดฟีเจอร์
+  const float ventOn  = ventIsUsable(in.ventThreshold, in.pumpOffHum) ? in.ventThreshold : 0.0f;
+  const float ventOff = ventOn - VENT_HYST;   // ventOn > VENT_HYST การันตี ventOff > 0
+  // hysteresis เดียวกับ latch อื่น: ข้าม ventOn ติด · ตกใต้ ventOff ดับ · กลางคงสถานะ
   bool wet = in.wetOn;
-  if (in.ventOnHum <= 0)                    wet = false;   // ฟีเจอร์ปิด
-  else if (in.airHumidity >= in.ventOnHum)  wet = true;
-  else if (in.airHumidity <= in.ventOffHum) wet = false;
+  if (ventOn <= 0)                       wet = false;   // ฟีเจอร์ปิด
+  else if (in.airHumidity >= ventOn)     wet = true;
+  else if (in.airHumidity <= ventOff)    wet = false;
   // else: คงสถานะ
 
   d.hotOn      = hot;

@@ -151,6 +151,11 @@
     .sys-chip.chip-off .sys-v{color:var(--muted)}
     .sys-chip.chip-off .sys-ico{background:var(--surface-2);filter:grayscale(.4) opacity(.8)}
     .sys-chip.chip-on{border-color:var(--g400)}
+    /* v2.9.0 — สถานะ "มีปัญหาแต่ยังทำงาน" (สัญญาณอ่อน/หลุดบ่อย) · ต่างจาก chip-off ที่หมายถึง "ปิด/ไม่ทำงาน"
+       ใช้สีเดียวกับ .sysbanner.sev-warn เพื่อให้ภาษาสีทั้งหน้าตรงกัน */
+    .sys-chip.chip-warn{border-color:#fbbf24}
+    .sys-chip.chip-warn .sys-v{color:#b45309}
+    .sys-chip.chip-warn .sys-ico{background:#fef3c7}
 
     /* ── Sensor grid ── */
     .sensor-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px}
@@ -539,6 +544,9 @@
       <div class="uptime-r">
         <div class="ustat"><span class="ustat-l">Firmware</span><span class="ustat-v" id="firmwareVer">—</span></div>
         <div class="ustat"><span class="ustat-l">อัปเดตล่าสุด</span><span class="ustat-v" id="lastUpdateTime">—</span></div>
+        <!-- v2.9.0: boot diagnostics — fw push มาตั้งแต่ v2.2.0 แต่ไม่มีที่แสดงเลย ต้องเปิด Firebase console ดู
+             จำเป็นสำหรับเคส "บอร์ดรีสตาร์ทเอง" ที่ยังหาสาเหตุไม่ได้ (BROWNOUT = ไฟ · PANIC/TASK_WDT = โค้ด) -->
+        <div class="ustat"><span class="ustat-l">รีสตาร์ทล่าสุด</span><span class="ustat-v" id="resetReason" title="สาเหตุที่บอร์ดบูตรอบนี้">—</span></div>
       </div>
     </div>
 
@@ -552,6 +560,16 @@
         <span class="sys-ico">🔔</span>
         <div class="sys-info"><div class="sys-k">Buzzer เสียงเตือน</div><div class="sys-v" id="chipBuzzerVal">—</div></div>
       </button>
+      <!-- v2.9.0: WiFi diagnostics — เดิม wifi_rssi ถูกอ่านเข้า sysStatus แต่ไม่เคยแสดงที่ไหนเลย
+           และ wifi_drop_count/wifi_drop_reason (ใหม่ v2.9.0) ต้องเปิด Firebase console ดู
+           ทำให้เคส "หลุดบ่อยแล้วต่อไม่กลับ" ไล่สาเหตุจากหน้า dashboard ไม่ได้ — ตรงนี้แก้ข้อนั้น -->
+      <div class="sys-chip" id="chipWifi">
+        <span class="sys-ico">📶</span>
+        <div class="sys-info">
+          <div class="sys-k">สัญญาณ WiFi</div>
+          <div class="sys-v" id="chipWifiVal">—</div>
+        </div>
+      </div>
     </div>
 
     <div>
@@ -844,7 +862,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v2.1.1 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.9.2 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1096,22 +1114,15 @@ function startListeners() {
       document.getElementById('airHumGauge').innerHTML = buildGauge(rh, 0, 100, '#2563eb', '%');
       if      (rh < T.humidity_alert) { setBadge('airHumBadge','badge-danger','แห้งมาก'); setText('airHumStatus',`🔴 ความชื้นต่ำมาก (ต่ำกว่า ${T.humidity_alert}%)`); }
       else if (rh < T.humidity_min)   { setBadge('airHumBadge','badge-warn','ต่ำ');       setText('airHumStatus',`🟡 แห้ง <${T.humidity_min}% — ปั๊ม+พัดลมทำงาน`); }
-      else if (T.humidity_vent > 0 && rh >= T.humidity_vent) { setBadge('airHumBadge','badge-warn','ชื้นมาก'); setText('airHumStatus',`🌬️ ชื้นมาก ≥${T.humidity_vent}% — พัดลมไล่ความชื้น (ปั๊มพัก)`); }
+      // ต้องเช็คเงื่อนไขเดียวกับ ventIsUsable() ใน firmware — ไม่งั้นหน้าจอบอกว่า "พัดลมไล่ความชื้น"
+      // ทั้งที่บอร์ดปิดฟีเจอร์ทิ้งไปแล้ว (และยังบัง badge "ปั๊มพัก" ที่ตรงกับของจริงด้วย)
+      else if (ventUsable(T) && rh >= T.humidity_vent) { setBadge('airHumBadge','badge-warn','ชื้นมาก'); setText('airHumStatus',`🌬️ ชื้นมาก ≥${T.humidity_vent}% — พัดลมไล่ความชื้น (ปั๊มพัก)`); }
       else if (rh >= T.humidity_max)  { setBadge('airHumBadge','badge-warn','สูง');       setText('airHumStatus',`💧 ความชื้นสูง ≥${T.humidity_max}% — ปั๊มพัก (พ่นน้ำไม่ช่วยแล้ว)`); }
       else                            { setBadge('airHumBadge','badge-ok','ปกติ');        setText('airHumStatus','🟢 ความชื้นเหมาะสม'); }
     }
 
-    const wt = d.water_temp;
-    if (sysStatus.water_ok === false) {
-      // DS18B20 อ่านไม่ได้ — ไม่โชว์ค่าเก่าหลอกตา
-      setBadge('waterTempBadge','badge-offline','ไม่พร้อม');
-      setText('waterTempStatus','🌊 เซ็นเซอร์น้ำไม่พร้อม — ตรวจสอบสาย/Pull-up');
-    } else if (wt != null) {
-      document.getElementById('waterTempGauge').innerHTML = buildGauge(wt, 0, 50, '#0f766e', '°C');
-      if      (wt > T.water_temp_alert)     { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus',`🔴 น้ำร้อนเกินไป (เกิน ${T.water_temp_alert}°C)`); }
-      else if (wt > T.water_temp_alert - 3) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น — ใกล้เกณฑ์เตือน'); }
-      else                                  { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
-    }
+    // การ์ดน้ำวาดในฟังก์ชันแยก — ต้องวาดใหม่ได้จาก status listener ด้วย (ดู renderWaterCard)
+    renderWaterCard();
 
     if (d.uptime_sec != null) {
       const u = d.uptime_sec;
@@ -1146,9 +1157,19 @@ function startListeners() {
       water_ok:    d.water_ok    !== false,
       failsafe:    d.failsafe    === true,
       pump_locked: d.pump_locked === true,
+      fan_locked:  d.fan_locked  === true,   // v2.8.0: พัดลมพักคู่ปั๊ม — ไม่มี field (fw เก่า) = false
       time_ok:     d.time_ok     !== false,
       rssi:        d.wifi_rssi,
+      // v2.9.0 — ไม่มี field = fw เก่ากว่า 2.9.0 (แสดง "—" ไม่ใช่ 0 ที่จะอ่านผิดว่า "ไม่เคยหลุด")
+      wifi_drop_count:  d.wifi_drop_count,
+      wifi_drop_reason: d.wifi_drop_reason,
     };
+    updateWifiChip(d.wifi_rssi, d.wifi_drop_count, d.wifi_drop_reason);
+    // boot diagnostics — fw push มาตั้งแต่ v2.2.0 แต่ไม่เคยมีที่แสดง
+    setResetReason(d.last_reset_reason, d.boot_count);
+    // ⚠️ ต้องวาดการ์ดน้ำใหม่ตรงนี้ด้วย — water_ok เพิ่งเปลี่ยนจาก listener นี้
+    // ถ้าไม่เรียก การ์ดจะค้างสถานะเก่าจนกว่า sensors จะยิงรอบถัดไป (บั๊กเดิม ดู renderWaterCard)
+    renderWaterCard();
     updateRelayUI('ch4', d.ch4_spare);   // ปั๊มน้ำ
     updateRelayUI('ch3', d.ch3_fan_in);  // พัดลม
     updateRelayUI('ch1', d.ch1_pump);    // สำรอง
@@ -1180,22 +1201,11 @@ function startListeners() {
         humidity_alert:   th.humidity_alert   ?? alertThresholds.humidity_alert,
         water_temp_alert: th.water_temp_alert ?? alertThresholds.water_temp_alert,
       };
-      // ไฮไลต์ preset ที่ตรง
-      let matched = false;
-      Object.entries(PRESETS).forEach(([k,p]) => {
-        if (p.temp_on===th.temp_on && p.temp_off===th.temp_off && p.humidity_min===th.humidity_min
-            && p.humidity_max===th.humidity_max && (th.humidity_vent ?? p.humidity_vent)===p.humidity_vent
-            && p.temp_alert===th.temp_alert
-            && p.humidity_alert===th.humidity_alert && p.water_temp_alert===th.water_temp_alert) {
-          document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-          document.getElementById('preset-'+k)?.classList.add('active-preset');
-          matched = true;
-        }
-      });
-      if (!matched) {
-        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-        document.getElementById('preset-custom')?.classList.add('active-preset');
-      }
+      // ไฮไลต์ preset ที่ตรง — เทียบกับ alertThresholds ที่เพิ่ง rebuild (แหล่งเดียวกับที่ badge ใช้)
+      // DB ก่อน v2.7.0 ไม่มี humidity_vent จึงต้องผ่าน fallback ตัวนี้ ไม่ใช่ตั้ง fallback ตัวที่ 2
+      // หมายเหตุ: ค่าที่ ESP32 ใช้จริงอาจต่างถ้า NVS ค้างค่าเก่า (ino:855 getFloat("hVent"))
+      // ไฮไลต์นี้จึงเป็นแค่ hint ของ UI ไม่ใช่ ground truth — ของจริงต้องกด Save ทับ
+      highlightMatchingPreset(alertThresholds);
     }
     // Buzzer enable state (ถ้าไม่มีค่า = เปิดอยู่ เพราะ firmware เดิม beep เสมอ)
     updateBuzzerChip(d.buzzer_enabled === false ? false : true);
@@ -1255,6 +1265,37 @@ function onListenerError(name, err) {
   showToast('⚠️ อ่านข้อมูล ' + name + ' ไม่ได้ — ' + friendly);
 }
 
+// ── การ์ดอุณหภูมิน้ำ (DS18B20) ────────────────────────
+// ⚠️ ต้องเรียกจากทั้ง 2 listener (sensors และ status) — นี่คือหัวใจของบั๊กที่แก้ 2026-07-30:
+//
+// อาการ: บอร์ดอ่านค่าน้ำได้ (LCD โชว์ค่าถูกต้อง) แต่ dashboard ค้างที่ "เซ็นเซอร์น้ำไม่พร้อม"
+// สาเหตุ: การ์ดนี้เคยวาด "ข้างใน sensors listener" เท่านั้น แต่เงื่อนไขที่ใช้ตัดสิน (sysStatus.water_ok)
+//         เป็นของ "status listener" — คนละ listener กัน ยิงคนละจังหวะ
+//         firmware ใน pushToFirebase() เขียน sensors/water_temp "ก่อน" status/water_ok ประมาณ 20 writes
+//         → รอบที่เซนเซอร์กลับมาอ่านได้: sensors ยิงมาพร้อมค่าใหม่ แต่ water_ok ยังเป็น false ค้างจากรอบก่อน
+//         → เข้า branch "ไม่พร้อม" ทิ้งค่าใหม่ไปเลย · พอ status ยิงตามมาเป็น true ก็ไม่มีใครวาดการ์ดใหม่
+//         = การ์ดค้าง "ไม่พร้อม" ทั้งที่มีค่าสดอยู่ใน DB แล้ว
+// ทำไม LCD ไม่เจอปัญหานี้: firmware อ่าน waterSensorOk จาก RAM ตรงๆ ไม่มี race ข้าม listener
+//
+// แก้: แยกเป็นฟังก์ชัน แล้วเรียกจากทั้ง 2 listener — ใครมาก่อนมาหลังก็วาดถูกเสมอ (ไม่ผูกกับลำดับ push)
+function renderWaterCard() {
+  const T  = alertThresholds;
+  const wt = sensorLive.waterTemp;   // ค่าล่าสุดที่ sensors เคยส่งมา (cache ไว้แล้วด้านบน)
+
+  if (sysStatus.water_ok === false) {
+    // DS18B20 อ่านไม่ได้ — ไม่โชว์ค่าเก่าหลอกตา
+    setBadge('waterTempBadge','badge-offline','ไม่พร้อม');
+    setText('waterTempStatus','🌊 เซ็นเซอร์น้ำไม่พร้อม — ตรวจสอบสาย/Pull-up');
+    return;
+  }
+  if (wt == null) return;   // ยังไม่เคยได้ค่าเลย — คงสถานะ "รอข้อมูล" ไว้
+
+  document.getElementById('waterTempGauge').innerHTML = buildGauge(wt, 0, 50, '#0f766e', '°C');
+  if      (wt > T.water_temp_alert)     { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus',`🔴 น้ำร้อนเกินไป (เกิน ${T.water_temp_alert}°C)`); }
+  else if (wt > T.water_temp_alert - 3) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น — ใกล้เกณฑ์เตือน'); }
+  else                                  { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
+}
+
 function updateHealth() {
   // เดิมใช้ Infinity เมื่อ lastSensorTs=0 แต่ 2 branch ล่างก็ยัง gate ด้วย `lastSensorTs &&` = บอร์ดที่ตาย
   // ก่อนเปิดหน้าไม่เคยขึ้น banner offline เลย · วัดจาก pageLoadTs แทน (สอดคล้องกับ offline timer ด้านบน)
@@ -1274,8 +1315,18 @@ function updateHealth() {
     sev = 'warn'; msg = '⚠️ Sensor อากาศอ่านค่าไม่ได้ชั่วคราว — กำลังลองใหม่ (auto ยังทำงานบนค่าล่าสุด)';
   } else if (ageMs > 90000) {
     sev = 'warn'; msg = `⏳ ข้อมูลค้าง ${ageSec} วินาที — กำลังรอ ESP32`;
+  } else if (sysStatus.pump_locked && sysStatus.fan_locked) {
+    // v2.8.0: พักคู่กัน — ไม่ระบุว่า "ปั๊มเดินครบ 15" เพราะ trigger อาจเป็นพัดลม (ปั๊มไม่ได้เดินครบ)
+    sev = 'info'; msg = '💧🌬️ ปั๊ม+พัดลมพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
+  // ⚠️ 2 กิ่งล่างนี้ "ไม่มีทางเข้าถึง" กับ firmware ตั้งแต่ v2.8.0 — เก็บไว้โดยเจตนา อย่าเพิ่งลบ
+  //    stepSafetyTimers() ตั้ง pumpLockUntil/fanLockUntil เป็น deadline เดียวกันทุกครั้งที่ cutoff
+  //    (ไม่สนโหมด — v2.9.0 แก้เคส desync ไปแล้ว) และล้างทั้งคู่ในรอบเดียวกัน → 2 ค่านี้เท่ากันเสมอ
+  //    = กิ่ง "พักคู่กัน" ด้านบนกินทุกเคส · ที่คงไว้เพราะ v2.6.0 เคย decouple แล้ว v2.8.0 recouple กลับ
+  //    ถ้าวันหลัง decouple อีก (FAN_COOLDOWN_MS != PUMP_COOLDOWN_MS) 2 กิ่งนี้จะกลับมาทำงานทันทีโดยไม่ต้องเขียนใหม่
   } else if (sysStatus.pump_locked) {
-    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) หลังเดินครบ 10 นาที — จะกลับมาทำงานเอง';
+    sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
+  } else if (sysStatus.fan_locked) {
+    sev = 'info'; msg = '🌬️ พัดลมพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
   } else if (sysStatus.water_ok === false) {
     sev = 'info'; msg = '🌊 Sensor อุณหภูมิน้ำ (DS18B20) อ่านไม่ได้ — ตรวจสอบสาย';
   } else if (sysStatus.time_ok === false) {
@@ -1303,6 +1354,64 @@ function pruneCollection(path, keep) {
 
 // ── System Status Chips ───────────────────────────────
 let buzzerEnabled = true;
+
+// ── WiFi chip (v2.9.0) ────────────────────────────────
+// แสดง RSSI + จำนวนครั้งที่หลุด · เหตุผลที่หลุดอยู่ใน tooltip (title) เพราะยาวเกินใส่ในบรรทัดเดียว
+// ⚠️ ค่าเหล่านี้เป็น "ค่าล่าสุดที่บอร์ดเคย push" — ถ้าบอร์ดออฟไลน์อยู่ มันคือค่าค้างจากตอนยังออนไลน์
+// (banner ออฟไลน์ด้านบนบอกเรื่องนั้นอยู่แล้ว จึงไม่ซ้ำเตือนตรงนี้)
+function updateWifiChip(rssi, dropCount, dropReason) {
+  const chip = document.getElementById('chipWifi');
+  const val  = document.getElementById('chipWifiVal');
+  if (!chip || !val) return;
+
+  // ⚠️ .sys-v เป็น nowrap + ellipsis บนชิปกว้างต่ำสุด 165px → เหลือที่ข้อความ ~105px
+  // บรรทัดหลักจึงต้องสั้น: เก็บแค่ตัวเลข · คำอธิบายคุณภาพ/เหตุผล ไปอยู่ใน tooltip ทั้งหมด
+  // RSSI: ยิ่งใกล้ 0 ยิ่งแรง · ≥-60 แรง, ≥-70 พอใช้, ≥-80 อ่อน, ต่ำกว่านั้นอ่อนมาก (หลุดง่าย)
+  let txt, tip, weak = false;
+  if (rssi == null || rssi === 0) {
+    txt = '—';
+    tip = 'ยังไม่มีข้อมูลสัญญาณจากบอร์ด';
+  } else {
+    let q;
+    if      (rssi >= -60) q = 'แรง';
+    else if (rssi >= -70) q = 'พอใช้';
+    else if (rssi >= -80) { q = 'อ่อน';     weak = true; }
+    else                  { q = 'อ่อนมาก'; weak = true; }
+    txt = `${rssi} dBm`;
+    tip = `สัญญาณ ${q} (${rssi} dBm)`;
+  }
+
+  // drop count: fw < 2.9.0 ไม่ push field นี้ → ข้ามไปเลย
+  // (อย่าแสดง 0 เมื่อไม่มี field — จะอ่านผิดว่า "ไม่เคยหลุด" ทั้งที่จริงคือ "ไม่รู้")
+  if (typeof dropCount === 'number') {
+    if (dropCount > 0) {
+      txt += ` · หลุด ${dropCount}`;
+      // หลุดบ่อยผิดปกติ = เตือนไว้ แม้สัญญาณตอนนี้จะแรงก็ตาม (เคส AP เตะเอง/โหลดหนัก)
+      if (dropCount >= 5) weak = true;
+    }
+    tip += dropCount === 0 ? ' · ไม่เคยหลุดตั้งแต่บูต' : ` · หลุด ${dropCount} ครั้งตั้งแต่บูต`;
+  }
+  // แสดงเหตุผลเฉพาะตอนเคยหลุดจริง — ตอน dropCount = 0 firmware ส่ง reason ว่า "ยังไม่เคยหลุดตั้งแต่บูต"
+  // ซึ่งซ้ำกับบรรทัดข้างบนพอดี (tooltip จะอ่านว่า "ไม่เคยหลุด ... เหตุผลครั้งล่าสุด: ยังไม่เคยหลุด")
+  if (dropReason && dropCount !== 0) tip += `\nเหตุผลครั้งล่าสุด: ${dropReason}`;
+
+  val.textContent = txt;
+  chip.title = tip;
+  chip.classList.toggle('chip-warn', weak);
+  chip.classList.toggle('chip-on',   !weak && rssi != null && rssi !== 0);
+}
+
+// ── สาเหตุ reset ล่าสุด (v2.9.0 แสดงผล · fw push มาตั้งแต่ v2.2.0) ──
+// firmware ส่งมาเป็นข้อความยาว เช่น "BROWNOUT *** ไฟตก — สงสัย relay/ปั๊มสวิตช์ดึงกระแส ***"
+// ตัดเอาคำแรก (ชื่อสาเหตุ) มาแสดง ที่เหลือยัดใน tooltip — ช่องนี้กว้างไม่พอสำหรับข้อความเต็ม
+function setResetReason(reason, bootCount) {
+  const el = document.getElementById('resetReason');
+  if (!el) return;
+  if (!reason) { el.textContent = '—'; el.title = 'firmware เก่ากว่า v2.2.0 หรือยังไม่ push'; return; }
+  const short = String(reason).split(' ')[0];
+  el.textContent = typeof bootCount === 'number' ? `${short} (บูต #${bootCount})` : short;
+  el.title = reason;
+}
 
 function updateBuzzerChip(enabled) {
   buzzerEnabled = enabled;
@@ -1428,6 +1537,30 @@ function updateScheduleUI(id, s) {
 // ── Thresholds ────────────────────────────────────────
 // live copy ของ threshold ทั้งหมด — sensor badges + checkAlerts() ใช้ค่านี้ (ไม่ hardcode)
 // อัปเดตจาก /smartfarm/control listener ทุกครั้งที่พนักงานบันทึกค่าใหม่
+// ต้องตรงกับ VENT_HYST ใน auto_control_logic.h และ rules humidity_vent ใน database.rules.json
+// (ทั้ง 3 layer ต้องแก้พร้อมกันถ้าจูนใหม่ — ไม่มี codegen เชื่อมให้)
+const VENT_HYST_PCT = 5;
+// เงื่อนไขเดียวกับ ventIsUsable() ใน auto_control_logic.h — firmware ปิด vent ทิ้งถ้าไม่ผ่าน
+// รับ object ที่มี humidity_vent / humidity_max (เช่น alertThresholds)
+function ventUsable(t) {
+  return t.humidity_vent > VENT_HYST_PCT && t.humidity_vent >= t.humidity_max + VENT_HYST_PCT;
+}
+
+// 8 field ที่ประกอบเป็น preset — เพิ่ม threshold ใหม่ต้องมาเติมที่นี่ "ที่เดียว"
+const PRESET_FIELDS = ['temp_on','temp_off','humidity_min','humidity_max','humidity_vent',
+                       'temp_alert','humidity_alert','water_temp_alert'];
+
+// หา preset ที่ตรงกับค่าชุดหนึ่ง แล้วไฮไลต์ปุ่ม · คืน key ที่ตรง (null = กำหนดเอง)
+// เดิมโค้ดนี้ถูกก๊อป 2 ที่ (listener กับ saveThresholds) แล้วแก้ไปคนละแบบ — vent เช็คไม่เหมือนกัน
+// รวมเป็นฟังก์ชันเดียวเพื่อให้ field ใหม่เพิ่มที่เดียวจบ ไม่หลุด path ใดpath หนึ่ง
+function highlightMatchingPreset(values) {
+  const key = Object.entries(PRESETS).find(([, p]) =>
+    PRESET_FIELDS.every(f => p[f] === values[f])
+  )?.[0] ?? 'custom';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active-preset'));
+  document.getElementById('preset-' + key)?.classList.add('active-preset');
+  return key === 'custom' ? null : key;
+}
 let alertThresholds = {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:38, humidity_alert:40, water_temp_alert:35};
 
 const PRESETS = {
@@ -1464,12 +1597,29 @@ function saveThresholds() {
   if ([ton, toff, hmin, hmax, hVent, tAlert, hAlert, wtAlert].some(Number.isNaN)) {
     showToast('⚠️ กรอกตัวเลขให้ครบทุกช่อง (มีช่องว่างเปล่าหรือไม่ใช่ตัวเลข)'); return;
   }
+  // เช็คช่วงค่าก่อนเช็คลำดับ — ไม่งั้นค่าเกินพิสัยไปโผล่เป็น error ลำดับที่ทำให้เข้าใจผิด
+  // (เช่น hmax=150 จะฟ้องว่า "vent ต้อง > 150%" ซึ่งทำตามไม่ได้ แทนที่จะฟ้องว่า hmax เกิน 100)
+  // input type=number ไม่กัน user พิมพ์เกิน max — ต้องเช็คเอง ไม่งั้นโดน rules ปัดทีหลัง
+  if ([hmin, hmax, hVent, hAlert].some(v => v < 0 || v > 100)) {
+    showToast('⚠️ ค่าความชื้นทุกช่องต้องอยู่ระหว่าง 0–100%'); return;
+  }
   if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
   if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
   if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
   if (hmax <= hmin) { showToast('⚠️ Humidity Max ต้องมากกว่า Humidity Min'); return; }
-  // vent: 0 = ปิดฟีเจอร์ · ถ้าเปิด (>0) ควร > humidity_max ไม่งั้นชนกับเกณฑ์ปิดปั๊ม
-  if (hVent > 0 && hVent <= hmax) { showToast('⚠️ พัดลมไล่ความชื้นต้องมากกว่า Humidity Max (หรือตั้ง 0 เพื่อปิด)'); return; }
+  // vent: 0 = ปิดฟีเจอร์ · ถ้าเปิดต้องเว้นจาก humidity_max อย่างน้อย VENT_HYST
+  // ไม่ใช่แค่ "> hmax" — wet latch ค้างได้ถึง vent-VENT_HYST ส่วนปั๊มหยุดที่ hmax
+  // ถ้าช่องนี้เหลื่อมกัน จะมีช่วง RH ที่พัดลมไล่ชื้นออกพร้อมกับปั๊มพ่นเข้า (ดู ino:1090)
+  const ventEnabled = hVent > 0;
+  const ventMin = hmax + VENT_HYST_PCT;
+  // ถ้า hmax สูงจน ventMin ทะลุ 100 จะไม่มีค่า vent ใดใช้ได้เลย — บอกให้ลด Humidity Max
+  // ไม่ใช่ขอค่าที่กรอกไม่ได้ (เช่น hmax=97 -> "ต้องอย่างน้อย 102%")
+  if (ventEnabled && ventMin > 100) {
+    showToast(`⚠️ Humidity Max ${hmax}% สูงเกินกว่าจะเปิดพัดลมไล่ความชื้นได้ (ต้องการ ${ventMin}% ซึ่งเกิน 100%) · ลด Humidity Max ให้ ≤ ${100 - VENT_HYST_PCT}% หรือตั้งพัดลมไล่ชื้น = 0`); return;
+  }
+  if (ventEnabled && (hVent < ventMin || hVent <= VENT_HYST_PCT)) {
+    showToast(`⚠️ พัดลมไล่ความชื้นต้องอย่างน้อย ${ventMin}% (= Humidity Max ${hmax}% + ${VENT_HYST_PCT}%) · หรือตั้ง 0 เพื่อปิดฟีเจอร์`); return;
+  }
   const data = {temp_on:ton, temp_off:toff, humidity_min:hmin, humidity_max:hmax, humidity_vent:hVent,
                 temp_alert:tAlert, humidity_alert:hAlert, water_temp_alert:wtAlert};
   db.ref('/smartfarm/control/thresholds').set(data).then(() => {
@@ -1477,20 +1627,14 @@ function saveThresholds() {
     // (เดิม set แค่ 2 field ทำให้ badge อ่าน temp_on/off, humidity_min/max, water_temp_alert เป็น undefined)
     logAction(`ตั้งค่า — พัดลมเปิด ≥${ton}°C ปิด ≤${toff}°C · ปั๊มเปิด ≤${hmin}% ปิด ≥${hmax}% · พัดลมไล่ชื้น ${hVent>0?'≥'+hVent+'%':'ปิด'} · Alert อากาศ ${tAlert}°C / ${hAlert}% · น้ำ ${wtAlert}°C`);
     showToast('✅ บันทึกแล้ว · ESP32 รับค่าใหม่ทันที');
-    // ทำให้ preset ไฮไลต์ถ้า match
-    let matched = false;
-    Object.entries(PRESETS).forEach(([k,p]) => {
-      if (p.temp_on===ton && p.temp_off===toff && p.humidity_min===hmin && p.humidity_max===hmax
-          && p.humidity_vent===hVent && p.temp_alert===tAlert && p.humidity_alert===hAlert && p.water_temp_alert===wtAlert) {
-        document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-        document.getElementById('preset-'+k)?.classList.add('active-preset');
-        matched = true;
-      }
-    });
-    if (!matched) {
-      document.querySelectorAll('.preset-btn').forEach(b=>b.classList.remove('active-preset'));
-      document.getElementById('preset-custom')?.classList.add('active-preset');
-    }
+    // ทำให้ preset ไฮไลต์ถ้า match — ฟังก์ชันเดียวกับ listener (data คือ 8 field ที่เพิ่งเขียนไป)
+    highlightMatchingPreset(data);
+  }, err => {
+    // ใช้ .then(onSuccess, onError) ไม่ใช่ .catch() ต่อท้าย — .catch จะกินสิ่งที่ throw ใน onSuccess ด้วย
+    // (เช่น logAction พัง) แล้วฟ้อง "บันทึกไม่สำเร็จ" ทั้งที่เขียนสำเร็จแล้ว = หลอก user ให้กดซ้ำ
+    // แบบ 2 อาร์กิวเมนต์นี้ดักเฉพาะ .set() reject เท่านั้น — ซึ่งคือกรณี rules ปัดค่า
+    console.error('saveThresholds', err);
+    showToast('❌ บันทึกไม่สำเร็จ — ค่าไม่ผ่าน validation ของ Firebase (ค่าเดิมยังใช้อยู่)');
   });
 }
 

@@ -55,6 +55,7 @@ describe("control/thresholds — hysteresis + type validation", () => {
   const VALID = {
     temp_on: 35, temp_off: 32,
     humidity_min: 60, humidity_max: 75,
+    humidity_vent: 80,
     temp_alert: 40, humidity_alert: 40,
     water_temp_alert: 35,
   };
@@ -74,6 +75,103 @@ describe("control/thresholds — hysteresis + type validation", () => {
     const db = emailUser().database();
     const bad = { ...VALID, humidity_min: 80, humidity_max: 75 };
     await assertFails(db.ref("/smartfarm/control/thresholds").set(bad));
+  });
+
+  // ── humidity_vent (v2.7.0 vent) ────────────────────────────────────────
+  // firmware ปิดฟีเจอร์เงียบๆ ถ้า vent <= VENT_HYST(5) หรือ vent <= humidity_max
+  // rules ต้องกันไว้ก่อน ไม่งั้น dashboard โชว์ว่าตั้งได้ แต่ ESP32 ไม่ทำอะไรเลย
+
+  test("ACCEPTS humidity_vent = 0 (feature disabled)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: 0 }));
+  });
+
+  test("REJECTS humidity_vent <= humidity_max (fan would vent while pump still sprays)", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: 70 }));
+  });
+
+  // wet latch ค้างได้ทั้งช่วง [vent-5, vent) แต่ปั๊มหยุดที่ humidity_max
+  // ถ้า vent - humidity_max < 5 จะมีช่อง RH ที่พัดลมไล่ชื้นออกพร้อมปั๊มพ่นเข้า (พิสูจน์ใน logic test)
+  test("REJECTS humidity_vent within VENT_HYST of humidity_max (pump-vs-vent conflict window)", async () => {
+    const db = emailUser().database();
+    // hmax 79 + vent 80: vent > hmax แต่เว้นแค่ 1% -> ที่ RH 76 ปั๊มกับพัดลมตีกัน
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_max: 79, humidity_vent: 80 }));
+  });
+
+  test("ACCEPTS humidity_vent exactly humidity_max + VENT_HYST (boundary all presets sit on)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_max: 75, humidity_vent: 80 }));
+  });
+
+  test("REJECTS humidity_vent <= VENT_HYST(5) — firmware would silently disable it", async () => {
+    const db = emailUser().database();
+    const bad = { ...VALID, humidity_min: 1, humidity_max: 3, humidity_vent: 4, humidity_alert: 0 };
+    await assertFails(db.ref("/smartfarm/control/thresholds").set(bad));
+  });
+
+  test("REJECTS humidity_vent > 100", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: 150 }));
+  });
+
+  test("REJECTS non-numeric humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/thresholds").set({ ...VALID, humidity_vent: "high" }));
+  });
+
+  // reciprocal guard: ยกแค่ humidity_max ทีหลังต้องไม่แซง humidity_vent ที่เก็บไว้แล้ว
+  test("REJECTS partial update raising humidity_max above stored humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // vent 80 / max 75
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_max: 95 }));
+  });
+
+  test("REJECTS partial update pulling humidity_max within VENT_HYST of humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // vent 80 / max 75
+    // 78 < 80 แต่เว้นแค่ 2% — เคยเขียนเทสต์นี้เป็น assertSucceeds ตอนคิดว่าเงื่อนไขคือ "max < vent"
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_max: 78 }));
+  });
+
+  test("ACCEPTS partial update keeping humidity_max at least VENT_HYST below humidity_vent", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ humidity_max: 70 }));
+  });
+
+  // ทั้ง 3 preset ในหน้า dashboard ต้องเขียนผ่าน rules ได้ — preset ที่ rules ปัดคือบั๊กที่ผู้ใช้เจอทันที
+  // ค่าต้องตรงกับ PRESETS ใน dashboard/index.html (summer / normal / rainy)
+  const DASHBOARD_PRESETS = {
+    summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, humidity_vent:90, temp_alert:38, humidity_alert:50, water_temp_alert:34},
+    normal: {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:40, humidity_alert:40, water_temp_alert:35},
+    rainy:  {temp_on:38, temp_off:35, humidity_min:50, humidity_max:65, humidity_vent:85, temp_alert:42, humidity_alert:35, water_temp_alert:36},
+  };
+  for (const [name, preset] of Object.entries(DASHBOARD_PRESETS)) {
+    test(`ACCEPTS dashboard preset '${name}' verbatim`, async () => {
+      const db = emailUser().database();
+      await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(preset));
+    });
+  }
+
+  // ช่องเดียวกับที่ vent/max เคยมี — partial update ทำให้ ton<=toff หรือ hmax<=hmin ได้
+  // แล้ว autoControl() ติด guard `if (ton <= toff || hmax <= hmin) return;` ทุกรอบ = รีเลย์ค้างถาวร
+  test("REJECTS partial update making temp_off >= temp_on (would freeze autoControl)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // on 35 / off 32
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ temp_off: 40 }));
+  });
+
+  test("REJECTS partial update making humidity_min >= humidity_max (would freeze autoControl)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // min 60 / max 75
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_min: 90 }));
+  });
+
+  test("ACCEPTS valid partial update of temp_off", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ temp_off: 30 }));
   });
 
   test("ACCEPTS water_temp_alert as a standalone number (no ordering constraint)", async () => {
@@ -216,6 +314,85 @@ describe("sensors/status — ESP32 (anonymous) write path stays intact", () => {
   test("email user CAN read sensors", async () => {
     const db = emailUser().database();
     await assertSucceeds(db.ref("/smartfarm/sensors/air_temp").once("value"));
+  });
+});
+
+// v2.9.1: firmware เลิกยิง Firebase.setX() แยก 24 ครั้งต่อรอบ แล้วรวมเป็น updateNodeSilent (PATCH)
+// ก้อนเดียวต่อ node — เพราะ 24 SSL round trip ที่ RSSI -76 กินเวลาเกิน SENSOR_INTERVAL (30 วิ)
+// = dashboard ขึ้น "ข้อมูลค้าง 90-120 วิ" ทั้งที่บอร์ดปกติดี
+// ⚠️ เทสต์ชุดเดิมยิงทีละ leaf (.set()) = คนละรูปทรงกับที่ firmware ส่งจริงตอนนี้
+//    ถ้า rules ไม่รับ PATCH ก้อนใหญ่ = dashboard ดับสนิท ซึ่งคือบั๊กที่ v2.9.1 ตั้งใจแก้พอดี
+//    ชุดนี้จึงล็อก "รูปทรงจริง" ไว้ ไม่ใช่แค่ล็อกว่าแต่ละ field ผ่าน
+describe("v2.9.1 batched PATCH — รูปทรงที่ firmware ส่งจริง (updateNodeSilent)", () => {
+  // ตรงกับ pushStatus() ใน smartfarm_firmware.ino — ครบทุก key
+  const STATUS_BATCH = {
+    online: true,
+    ch1_pump: false,
+    ch2_fan_out: false,
+    ch3_fan_in: true,
+    ch4_spare: true,
+    firmware: "2.9.2",
+    last_reset_reason: "POWERON (เสียบไฟใหม่/กดปุ่ม EN)",
+    boot_count: 3,
+    free_heap: 201528,
+    max_alloc_heap: 110580,
+    sensor_ok: true,
+    sensor_stale: false,
+    water_ok: true,
+    failsafe: false,
+    pump_locked: false,
+    fan_locked: false,
+    time_ok: true,
+    wifi_rssi: -76,
+    wifi_drop_count: 0,
+    wifi_drop_reason: "ยังไม่เคยหลุดตั้งแต่บูต",
+  };
+
+  // ตรงกับ pushToFirebase() — water_temp มีเฉพาะตอน waterSensorOk
+  const SENSORS_BATCH = {
+    air_temp: 34.1,
+    air_humidity: 62.3,
+    water_temp: 31.6,
+    uptime_sec: 934,
+  };
+
+  test("ESP32 (anon) ยิง status ก้อนเดียวครบทุก field ได้", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/status").update(STATUS_BATCH));
+  });
+
+  test("ESP32 (anon) ยิง sensors ก้อนเดียวได้", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/sensors").update(SENSORS_BATCH));
+  });
+
+  test("$other ยังกันอยู่แม้ส่งมาแบบ PATCH ก้อนใหญ่ (key แปลกปน 1 ตัว = ตกทั้งก้อน)", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status").update({ ...STATUS_BATCH, hacked: true }));
+    await assertFails(db.ref("/smartfarm/sensors").update({ ...SENSORS_BATCH, soil_moisture: 42 }));
+  });
+
+  test("type validation ยังทำงานใน PATCH (wifi_rssi เป็น string = ตกทั้งก้อน)", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status").update({ ...STATUS_BATCH, wifi_rssi: "-76" }));
+  });
+
+  // นี่คือ semantics ที่ v2.9.1 พึ่งพา: DS18B20 อ่านไม่ได้ → ไม่ใส่ water_temp ลงก้อน
+  // PATCH merge เฉพาะ key ที่ส่ง → ค่าเดิมคาไว้ ไม่ถูกลบ (เหมือน setFloat เดิมที่ข้ามการเขียนไป)
+  test("ไม่ใส่ water_temp (เซนเซอร์น้ำพัง) → ค่าเดิมใน DB ต้องคาอยู่ ไม่ถูกลบ", async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await ctx.database().ref("/smartfarm/sensors/water_temp").set(31.6);
+    });
+
+    const db = anonUser().database();
+    const noWater = { air_temp: 34.1, air_humidity: 62.3, uptime_sec: 964 };
+    await assertSucceeds(db.ref("/smartfarm/sensors").update(noWater));
+
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const snap = await ctx.database().ref("/smartfarm/sensors").once("value");
+      assert.equal(snap.val().water_temp, 31.6, "water_temp หายไปจาก PATCH = จะไปลบค่าน้ำใน production");
+      assert.equal(snap.val().uptime_sec, 964, "key ที่ส่งไปต้องอัปเดตจริง");
+    });
   });
 });
 
