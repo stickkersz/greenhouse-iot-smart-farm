@@ -2,7 +2,48 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Tonkla (IT Intern) | มิถุนายน 2569
-  Version: 2.9.0
+  Version: 2.9.2
+  ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
+     (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
+     1) บรรทัดนี้  2) Serial banner ใน setup()  3) LCD splash  4) j.set("firmware", ...) ใน pushStatus()
+     5) footer ใน dashboard/index.html
+     6) README.md — badge หัวไฟล์ + ขั้นตอนตรวจหลัง flash ที่บอกให้ "ดู serial ว่าขึ้น vX.Y.Z"
+        ⚠️ ข้อ 6 อันตรายเงียบที่สุด: ถ้าลืม README จะสั่งให้คนหน้างานมองหาเลขเวอร์ชันเก่า
+        แล้วเขาจะสรุปว่า "แฟลชผิดรุ่น" ทั้งที่แฟลชถูกแล้ว
+  Changelog v2.9.2 (2026-07-31) — แก้ reboot loop (TASK_WDT) + เก็บงานจาก code review:
+    อาการหน้างาน: dashboard เห็นบอร์ด "หลุด" ถี่ๆ · ที่จริงไม่ใช่ WiFi หลุด (wifi_drop_count = 1)
+    แต่เป็น "บอร์ด reboot" ซ้ำๆ — boot_count 11 → 19 ใน ~1 วัน, last_reset_reason = TASK_WDT
+    1) ต้นเหตุ: ลูปรอ NTP ใน syncNTP() เรียก getLocalTime(&t) "ไม่ใส่อาร์กิวเมนต์ที่ 2" = default 5000ms
+       แบบบล็อก · worst case 20 × (5000+500) = 110 วิ ในการวน loop() รอบเดียว ขณะที่ WDT_TIMEOUT_S = 60
+       → watchdog เตะแน่นอน · แล้ววนซ้ำ: บูตใหม่ นาฬิกายังไม่ติด → timeValid() false → retry ทุก 60 วิ
+       → ค้าง 110 วิ → reboot อีก = reboot loop ที่เลี้ยงตัวเอง (ตัวจุดชนวนคือเน็ตสะดุด NTP ไม่ตอบ)
+       แก้: ใช้ readLocalTime() (ไม่บล็อก) → worst case เหลือ 20 × 500ms = 10 วิ
+       ⚠️ เจตนาไม่ป้อน watchdog ในลูปนั้น — WDT ต้องเหลือไว้จับ regression ชนิดเดียวกันในอนาคต
+    2) wifiDropCount นับทุก event STA_DISCONNECTED — แต่ core auto-reconnect ยิง event ทุกครั้งที่ retry ไม่ติด
+       → เราเตอร์ดับครั้งเดียวตัวเลขพุ่งหลายสิบ + dashboard latch ชิปเหลืองถาวรที่ >= 5 · ย้ายไปนับที่ขอบ online→offline
+    3) escalation ของเราเอง (WiFi.disconnect) ทำ event reason 8 = ASSOC_LEAVE ซึ่ง legend แปลว่า
+       "AP เตะเราเอง — แก้ที่เราเตอร์" = ชี้คนหน้างานไปผิดอุปกรณ์ · เพิ่ม flag wifiSelfDisconnect กันไว้
+    4) now ที่อ่านตอนต้น loop() เก่าไป ~25 วิ หลัง wifiMulti.run() บล็อก แล้วถูก assign ทับตัวจับเวลา 4 ตัว
+       (lastSensorTime/lastControlPoll/lastSchedTime/lastNtpSync) = รอบถัดไปมาเร็วกว่าที่ตั้งใจ · อ่านนาฬิกาใหม่หลังบล็อก
+    5) setup() ต่อไม่ติด → AP ค้าง hasFailed → retry แรกของ loop() ได้ bestIndex = -1 (scan เปล่า ไม่ begin())
+       = การต่อจริงครั้งแรกถูกเลื่อนไป ~75-80 วิหลังบูต · เพิ่ม APlistClean + addAP ใหม่ (เส้นเดียวกับที่ loop() มีแล้ว)
+    6) pushHourlyLog() เป็นเส้น write สุดท้ายที่ยังไม่ batch (7-10 SSL write) — รวมเป็น updateNodeSilent ก้อนเดียว
+
+  Changelog v2.9.1 (2026-07-30) — แก้ "dashboard ค้าง 90-120 วิ ทั้งที่บอร์ดปกติดี":
+    อาการหน้างาน: LCD อัปเดตปกติ ระบบคุมโรงเรือนต่อเนื่อง แต่ dashboard ขึ้น "ข้อมูลค้าง N วินาที"
+    ไล่แล้วไม่ใช่ DS18B20 ไม่ใช่ race ของ dashboard (a5a57f4) ไม่ใช่ WiFi (drop_count = 0) ไม่ใช่ brownout
+    1) pushStatus() + pushToFirebase() ยิง Firebase.setX() ทีละ field = 21 + 3 = 24 SSL round trip ทุก 30 วิ
+       ที่ RSSI -76 แต่ละ round trip กินเวลาเป็นวินาที → รอบเดียวใช้เวลาเกิน SENSOR_INTERVAL
+       = banner ของ dashboard (index.html:1317, เกณฑ์ 90 วิ) เด้งทั้งที่บอร์ดทำงานถูกต้อง
+       และทุก round trip = โอกาสเจอ handshake ล้มเพิ่มอีก 1 ครั้ง
+       แก้: รวมเป็น FirebaseJson ก้อนเดียว + updateNodeSilent 1 ครั้งต่อ node = 2 round trip
+       (read path ใช้ getJSON ก้อนเดียวมาตั้งแต่ v2.x แล้ว — write path ตกสำรวจ)
+    2) getLocalTime(&t, 0) คืน false แบบสุ่ม: core ทำ `start = millis(); while ((millis()-start) <= ms)`
+       ถ้า millis() ขยับคาบเกี่ยว 2 บรรทัดนั้น ลูปไม่ทำงานเลย → false ทั้งที่นาฬิกาดี และ t ไม่ถูกเขียน
+       loop() เรียก timeValid() ทุกรอบ → พ้น 60 วิแล้ว false หลุดมาครั้งเดียวก็ยิง NTP resync
+       = "NTP sync OK" ทุก ~62 วิ ทั้งที่ตั้ง 6 ชม. · พ่วง schedule ข้ามรอบ + hourly log หายทั้งชั่วโมง
+       แก้: readLocalTime() ใช้ time()/localtime_r() ตรงๆ ไม่มีลูป ไม่แตะ millis()
+
   Changelog v2.9.0 (2026-07-30) — แก้ "WiFi หลุดบ่อยแล้วต่อไม่กลับ ทั้งที่มือถือ/PC บนเน็ตเดียวกันปกติ":
     อาการหน้างาน 2026-07-30: หลุดหลายครั้งในวันเดียว แล้วไม่กลับมาเอง · พบ 4 บั๊กที่ทับกันในทางกลับมา
     (ทางบูตไม่มีปัญหา — จึงอธิบายได้ว่าทำไม "reboot แล้วหาย" แต่ปล่อยไว้เองไม่หาย)
@@ -512,7 +553,22 @@ unsigned long wifiOfflineSince = 0;            // millis() ตอน WiFi หล
 // 202 AUTH_FAIL (รหัสผิด/AP เปลี่ยน security) · 203 ASSOC_FAIL · 204 HANDSHAKE_TIMEOUT · 8 ASSOC_LEAVE (AP เตะเอง)
 // 15 4WAY_HANDSHAKE_TIMEOUT (AP โหลดหนัก) · 205 CONNECTION_FAIL
 volatile uint8_t  lastWifiDropReason = 0;      // reason code ของการหลุดครั้งล่าสุด (0 = ยังไม่เคยหลุด)
-volatile uint32_t wifiDropCount      = 0;      // นับจำนวนครั้งที่หลุดตั้งแต่บูต — พุ่งเร็ว = AP/สัญญาณมีปัญหาจริง ไม่ใช่ fluke
+// ⚠️ v2.9.2: นับที่ "ขอบ online→offline" ใน loop() เท่านั้น ไม่ใช่ในตัว event handler
+//    เดิมนับทุก ARDUINO_EVENT_WIFI_STA_DISCONNECTED — แต่ core auto-reconnect ยิง event นั้น "ทุกครั้งที่ลองแล้วไม่ติด"
+//    ระหว่าง grace window 45 วิ และ wifiMulti.run() ก็ disconnect()+begin() เองอีกรอบละครั้ง
+//    → เราเตอร์ดับ 10 นาทีครั้งเดียว ตัวเลขพุ่งไปหลายสิบ = ผิดเจตนาที่เขียนไว้ว่า "พุ่งเร็ว = มีปัญหาจริง"
+//    และ dashboard latch ชิปเป็นสีเหลืองถาวรที่ dropCount >= 5 (dashboard/index.html:1385) โดยไม่มีวันลดลง
+volatile uint32_t wifiDropCount      = 0;      // นับ "จำนวนครั้งที่หลุด" (1 ครั้งต่อ 1 ช่วงที่ออฟไลน์) — พุ่งเร็ว = AP/สัญญาณมีปัญหาจริง
+// ⚠️ v2.9.2: กัน escalation ของเราเองไปปนกับ "เหตุผลที่หลุดจริง"
+//    WIFI_HARD_RESET_AFTER เรียก WiFi.disconnect(true,false) เอง → event ยิง reason 8 (ASSOC_LEAVE)
+//    ซึ่ง legend ทั้งใน pushStatus() และ dashboard แปลว่า "AP เตะเราเอง (client เยอะ) — แก้ที่เราเตอร์"
+//    = หลังพยายาม 3 ครั้งไม่ติด บอร์ดจะรายงานว่า "เราเตอร์เตะ" สำหรับ disconnect ที่ตัวเองสั่ง = ชี้ผิดตัว
+// ⚠️ ข้อจำกัดที่ควรรู้: flag นี้ถูกล้างหลัง WiFi.mode(WIFI_STA) จบ — การกันจึงอาศัย "จังหวะ" ว่า driver
+//    dispatch event STA_DISCONNECTED ภายในช่วง delay(500) ที่คั่นอยู่ · ในทางปฏิบัติมันยิงภายในไม่กี่ ms
+//    และขา WIFI_OFF→WIFI_STA ปล่อย STA_START ไม่ใช่ DISCONNECTED → ช่วงที่ต้องกันถูกครอบหมด
+//    แต่เป็นการอาศัยพฤติกรรมจริง ไม่ใช่การรับประกันจากสเปก · ถ้าวันหลังเห็น reason 8 (ASSOC_LEAVE)
+//    โผล่บน dashboard ทันทีหลัง log "ปิด/เปิดวิทยุ" ให้สงสัยตรงนี้ก่อนโทษเราเตอร์
+volatile bool wifiSelfDisconnect = false;      // true ระหว่างที่ "เราเอง" สั่งปิดวิทยุ — handler ต้องไม่บันทึกเป็นการหลุด
 uint8_t  wifiDropReasonLogged = 0;             // reason ที่พิมพ์ลง Serial ไปแล้ว (พิมพ์เมื่อ "เหตุผลเปลี่ยน" กัน log ท่วม)
 int      wifiRunFailStreak    = 0;             // run() ล้มติดกันกี่ครั้ง — ครบ WIFI_HARD_RESET_AFTER แล้วปิด/เปิดวิทยุ
 unsigned long lastPushTime = 0;                // millis() ที่ push ขึ้น Firebase ครั้งล่าสุด — loop() เว้น 2 วิก่อน poll กัน SSL ชน
@@ -589,11 +645,11 @@ static const char* resetReasonStr(esp_reset_reason_t r) {
 // (Serial.print ข้าม task เสี่ยงชนกับ loop() ที่กำลังพิมพ์อยู่ · Firebase ในนี้ = SSL บน task ที่ stack เล็ก)
 static void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    // เราสั่งปิดวิทยุเอง (escalation ที่ WIFI_HARD_RESET_AFTER) — ไม่ใช่ "หลุด" ห้ามทับ reason ของจริง
+    if (wifiSelfDisconnect) return;
     lastWifiDropReason = info.wifi_sta_disconnected.reason;
-    // เขียนแบบ read+assign ไม่ใช่ ++ — C++20 เลิกรับ ++ บน volatile (-Wvolatile)
-    // ไม่ atomic ก็จริง แต่ "ผู้เขียนมีคนเดียว" (WiFi event task ตัวนี้เท่านั้น) → ไม่มี RMW ชนกันเอง
-    // loop() เป็นผู้อ่านฝ่ายเดียว อ่านได้ค่าเก่าไป 1 รอบก็ไม่เป็นไร — เป็นตัวนับไว้วินิจฉัย ไม่ได้ใช้ตัดสินใจคุมรีเลย์
-    wifiDropCount = wifiDropCount + 1;
+    // ⚠️ ไม่นับ wifiDropCount ตรงนี้ — event นี้ยิงซ้ำทุกครั้งที่ retry ไม่ติด (ดูคอมเมนต์ที่ประกาศตัวแปร)
+    //    loop() นับให้ที่ "ขอบ online→offline" ครั้งเดียวต่อช่วงออฟไลน์
   }
 }
 
@@ -628,7 +684,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.0 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.2 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -697,7 +753,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.0");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.2");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -717,17 +773,28 @@ void setup() {
   // เก็บ reason code ตอนหลุด — ต้อง register ก่อน connect ครั้งแรก ไม่งั้นพลาด event ช่วงบูต
   WiFi.onEvent(onWiFiEvent);
   for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
-  Serial.print("Connecting WiFi... ");
+  // ⚠️ ไม่พิมพ์อะไร "ก่อน" ต่อ — เดิม Serial.print ไม่มี newline ค้างไว้ระหว่าง run() บล็อก 15 วิ
+  //    ถ้าบอร์ด reset กลางคัน (เช่น brownout ตอนวิทยุ TX) บรรทัดค้างนี้จะต่อกันเป็นพืดใน serial monitor
+  //    ("Connecting WiFi... " ซ้ำนับพันครั้งบนบรรทัดเดียว — เจอจริงหน้างาน 2026-07-31)
+  //    พิมพ์ "หลัง" รู้ผลครั้งเดียว จบด้วย newline เสมอ = เงียบและ paste ออกมาอ่านรู้เรื่อง
   wifiMulti.run(WIFI_CONNECT_TIMEOUT_MS);
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
+    Serial.println("WiFi OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
   } else {
     // ⚠️ ห้าม ESP.restart() ตรงนี้เด็ดขาด — loop() ออกแบบมาให้ทน offline ได้ 30 นาทีและคุมโรงเรือน
     // ต่อได้ตลอดช่วงนั้น (auto control อ่าน SHT35 + threshold ใน RAM ไม่ต้องใช้เน็ตเลย)
     // setup() ที่ reboot ตอนต่อไม่ติด = ขัดกับ loop() เอง และทำให้ restart ครั้งเดียวจากสาเหตุอะไรก็ตาม
     // + เราเตอร์ยังไม่ฟื้น → reboot loop ไม่รู้จบ ทุกรอบ relay ดับ + accumulator หาย
     // = ต้นเหตุอาการ "ระบบไม่ต่อเนื่อง" ที่รายงานมา 2026-07-16 · loop() จะไล่ต่อให้เองทุก 30 วิ
-    Serial.println("FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ทุก 30 วิ");
+    Serial.println("WiFi FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ทุก 30 วิ");
+    // ⚠️ v2.9.2: ต้องล้าง fail flag ตรงนี้ด้วย ไม่ใช่เฉพาะในเส้น retry ของ loop()
+    //    run() ที่ล้มเพิ่ง markAsFailed() ตีตรา AP ไว้ → ถ้าปล่อยค้าง รอบ retry แรกของ loop() (t≈45 วิ)
+    //    จะได้ bestIndex = -1 คือ scan แบบบล็อก 3-5 วิแล้ว "ไม่เรียก begin() เลย" = รอบเปล่า
+    //    → การพยายามต่อจริงครั้งแรกถูกเลื่อนไปถึง ~75-80 วิหลังบูต ทั้งที่เราเตอร์อาจฟื้นตั้งแต่วินาทีที่ 50
+    //    (เคสนี้เกิดประจำตอนไฟกลับมาทั้งตึก — ESP32 บูตเร็วกว่าเราเตอร์ ดูคอมเมนต์ WIFI_GRACE_MS)
+    //    เป็นบั๊กเดียวกับที่ :852 แก้ไปแล้ว แต่เส้น setup() ตกสำรวจ
+    wifiMulti.APlistClean();
+    for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
   }
 
   // NTP (UTC+7 ประเทศไทย) — ต้องการสำหรับ path ของ hourly log
@@ -807,6 +874,8 @@ void loop() {
     if (wifiOfflineSince == 0) {
       wifiOfflineSince = now;
       lastWifiRetry    = now;   // เริ่มนับ grace จากจุดที่ "หลุด" — ไม่ใช่ค่าค้างจากรอบหลุดครั้งก่อน
+      // ⚠️ v2.9.2: นับตรงนี้ที่ "ขอบ" เท่านั้น — 1 ช่วงออฟไลน์ = 1 ครั้ง (ดูคอมเมนต์ตอนประกาศ wifiDropCount)
+      wifiDropCount = wifiDropCount + 1;   // read+assign ไม่ใช่ ++ — C++20 เลิกรับ ++ บน volatile (-Wvolatile)
       Serial.printf("[WiFi] หลุด (ครั้งที่ %lu ตั้งแต่บูต) เหตุผล %s\n",
                     (unsigned long)wifiDropCount,
                     wifiDropReasonStr(lastWifiDropReason).c_str());
@@ -844,16 +913,25 @@ void loop() {
         if (wifiRunFailStreak >= WIFI_HARD_RESET_AFTER) {
           wifiRunFailStreak = 0;
           Serial.println("[WiFi] ต่อไม่ติดติดกัน 3 ครั้ง — ปิด/เปิดวิทยุ (mode OFF→STA) เผื่อ stack ค้าง");
+          // ⚠️ v2.9.2: กัน disconnect ที่ "เราสั่งเอง" ไปทับ lastWifiDropReason เป็น 8 (ASSOC_LEAVE)
+          //    ซึ่ง legend แปลว่า "AP เตะเราเอง — แก้ที่เราเตอร์" = ชี้คนหน้างานไปผิดอุปกรณ์
+          wifiSelfDisconnect = true;
           WiFi.disconnect(true, false);   // wifioff=true, eraseap=false (ห้ามลบ config ที่เก็บไว้)
           WiFi.mode(WIFI_OFF);
           delay(500);
           WiFi.mode(WIFI_STA);
           WiFi.setSleep(false);           // mode ใหม่ = ค่า power save กลับเป็น default ต้องปิดซ้ำ
+          wifiSelfDisconnect = false;     // พ้นช่วงที่เราถือวิทยุแล้ว — event หลังจากนี้คือของจริง
         }
       }
       // ⚠️ นับ interval จาก "เวลาที่ run() จบ" ไม่ใช่ตอนเริ่ม — run() บล็อกได้ถึง ~25 วิ (scan 3-5 + connect 20)
       // ถ้าใช้ now (ก่อนเรียก) รอบถัดไปจะมาเร็วกว่า 30 วิที่ตั้งใจ = ยิงรัวเกินจนวิทยุไม่ได้พัก
       lastWifiRetry = millis();
+      // ⚠️ v2.9.2: now ถูกอ่านไว้ตอนต้น loop() แต่ run() เพิ่งบล็อกไป ~25 วิ (บวก 500ms ถ้าเข้าเส้น hard reset)
+      //    ทุกตัวจับเวลาที่อยู่ล่างจากตรงนี้ "assign now" ทับตัวเอง (lastSensorTime/lastControlPoll/lastSchedTime/
+      //    lastNtpSync) → ถูกย้อนหลังไป ~25 วิ = รอบถัดไปมาเร็วกว่าที่ตั้งใจมาก (sensor cycle 30 วิ เหลือ ~5 วิ)
+      //    อ่านนาฬิกาใหม่ตรงนี้จุดเดียว แก้ได้ทั้งการ "เทียบ" และการ "assign" ของทุกตัวด้านล่าง
+      now = millis();
     }
     // restart ได้ครั้งเดียวเท่านั้น (rtcWifiRestartDone จำข้าม reboot ผ่าน RTC memory)
     // เหตุผล: reboot แก้ได้แค่ "WiFi stack ค้าง" — แก้ "เราเตอร์เจ๊ง/ไฟดับทั้งตึก" ไม่ได้เลย
@@ -1531,7 +1609,7 @@ void pushStatus() {
   j.set("ch2_fan_out", ch2_fanOut);
   j.set("ch3_fan_in",  ch3_fanIn);
   j.set("ch4_spare",   ch4_spare);
-  j.set("firmware",    "2.9.1");
+  j.set("firmware",    "2.9.2");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   j.set("last_reset_reason", resetReasonStr(bootResetReason));
@@ -1681,29 +1759,43 @@ void pushHourlyLog(const String& path) {
     return;
   }
 
+  // ⚠️ v2.9.2: รวมเป็น JSON ก้อนเดียว เหมือนที่ v2.9.1 ทำกับ pushStatus()/pushToFirebase()
+  //    เดิมยิง setFloat/setInt แยก 7-10 ครั้งต่อขอบชั่วโมง = 7-10 SSL round trip รวด
+  //    เหตุผลเดียวกับ v2.9.1 เป๊ะ: ที่ RSSI -76 แต่ละ round trip กินเวลาเป็นวินาที → ค้างยาวทีเดียว
+  //    ต่างกันแค่ "ชั่วโมงละครั้ง" แทนที่จะทุก 30 วิ — v2.9.1 แก้ 2 เส้น แต่เส้นนี้ตกสำรวจ
+  //    ⚠️ ใช้ updateNodeSilent (PATCH/merge) ไม่ใช่ setJSON (แทนที่ทั้งก้อน) โดยเจตนา — เพราะ setFloat/setInt
+  //    ทีละตัวแบบเดิมก็คือ merge อยู่แล้ว การรวมก้อนนี้เป็น "ลด round trip" ล้วนๆ ห้ามแอบเปลี่ยน semantics
+  //    ปกติไม่ต่างกันเลย เพราะ path /logs/YYYY-MM-DD/HH ถูกเขียนครั้งเดียวต่อชั่วโมง
+  //    เคสเดียวที่ต่าง: NTP แก้เวลา "ถอยหลัง" ทำให้ curPath != rtcLogPath ยิงซ้ำชั่วโมงเดิม
+  //    → PATCH จะทิ้ง key ของรอบแรกคาไว้ปนกับรอบสอง · ถ้าวันหลังอยากได้ "ทับทั้งก้อน" ให้เปลี่ยนเป็น
+  //    Firebase.setJSON(fbData, path, j) แล้วอัปเดตคอมเมนต์นี้ด้วย
+  FirebaseJson j;
   float avgAT = 0, avgAH = 0, avgWT = 0;
   if (haveAir) {
     avgAT = h_sumAT / h_count;
     avgAH = h_sumAH / h_count;
-    Firebase.setFloat(fbData, path + "/air_temp_avg",     avgAT);
-    Firebase.setFloat(fbData, path + "/air_temp_max",     h_maxAT);
-    Firebase.setFloat(fbData, path + "/air_temp_min",     h_minAT);
-    Firebase.setFloat(fbData, path + "/air_humidity_avg", avgAH);
-    Firebase.setFloat(fbData, path + "/air_humidity_max", h_maxAH);
-    Firebase.setFloat(fbData, path + "/air_humidity_min", h_minAH);
-    Firebase.setInt  (fbData, path + "/sample_count",     h_count);
+    j.set("air_temp_avg",     avgAT);
+    j.set("air_temp_max",     h_maxAT);
+    j.set("air_temp_min",     h_minAT);
+    j.set("air_humidity_avg", avgAH);
+    j.set("air_humidity_max", h_maxAH);
+    j.set("air_humidity_min", h_minAH);
+    j.set("sample_count",     h_count);
   }
   if (haveWater) {   // เขียนเฉพาะเมื่อมี sample ที่อ่านได้ (กันค่าขยะ/ช่องว่างจากสายยาว)
     avgWT = h_sumWT / h_countWT;
-    Firebase.setFloat(fbData, path + "/water_temp_avg",   avgWT);
-    Firebase.setFloat(fbData, path + "/water_temp_max",   h_maxWT);
-    Firebase.setFloat(fbData, path + "/water_temp_min",   h_minWT);
+    j.set("water_temp_avg",   avgWT);
+    j.set("water_temp_max",   h_maxWT);
+    j.set("water_temp_min",   h_minWT);
   }
+
+  if (!Firebase.updateNodeSilent(fbData, path, j))
+    Serial.println("[Log] เขียน hourly log ล้ม: " + fbData.errorReason());
 
   Serial.printf("[Log] Hourly → %s | T:%.1f°C RH:%.1f%% WT:%.1f°C (n=%d, nWT=%d)\n",
     path.c_str(), avgAT, avgAH, avgWT, h_count, h_countWT);
 
-  // burst SSL ~7-10 write เพิ่งจบ — ตั้ง lastPushTime ให้ control poll เว้น 2 วิก่อนยิง getJSON
+  // เหลือ SSL write เดียวแล้ว (เดิม 7-10) — ยังต้องตั้ง lastPushTime ให้ control poll เว้น 2 วิก่อนยิง getJSON
   // ไม่งั้น poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL session เดียวกัน = เคสเดียวกับที่ v2.1.1 แก้ให้ pushStatus()
   lastPushTime = millis();
 
@@ -1719,16 +1811,32 @@ void resetAccumulators() {
 }
 
 // ─────────────────────────────────────────────────────
+// ⚠️ v2.9.2: ลูปรอตรงนี้เคยทำ loop() ค้างจน watchdog เตะ (TASK_WDT) — ต้นเหตุ reboot loop จริง
+//    เดิม: `while (!getLocalTime(&t) && tries < 20) { delay(500); ... }`
+//    getLocalTime(&t) "ไม่ใส่อาร์กิวเมนต์ที่ 2" = ได้ default 5000ms แบบบล็อก (ไม่ใช่ 0 เหมือนที่อื่นในไฟล์นี้)
+//    worst case = 20 × (5000 + 500) = 110 วิ ในการวน loop() รอบเดียว · WDT_TIMEOUT_S = 60 → โดนเตะแน่นอน
+//    แล้ววนซ้ำ: บูตใหม่ นาฬิกายังไม่ติด → timeValid() false → ntpInterval = NTP_RETRY_INVALID_MS (60 วิ)
+//    → syncNTP() → ค้าง 110 วิ → WDT reboot → บูตใหม่... = reboot loop (boot_count 11 → 19 ใน ~1 วัน)
+//    ตัวจุดชนวนคือเน็ตสะดุด: NTP เป็น UDP ไม่มีใครตอบ → เข้าเส้น 110 วิเต็มๆ
+//    (หน้างานเห็น wifi_drop_reason "204 = HANDSHAKE_TIMEOUT" ตอน RSSI -74)
+//    ⚠️ header ของไฟล์นี้เตือนเรื่อง default 5000ms ไว้แล้วสำหรับ timeValid() — แต่ลูปนี้ตกสำรวจ
+//    แก้: ใช้ readLocalTime() (ไม่บล็อกเลย) → แต่ละรอบเหลือแค่ delay(500) = worst case 20 × 500ms = 10 วิ
+//    ⚠️ เจตนา "ไม่" ป้อน watchdog ในลูปนี้ — ขอบ 10 วิคือตัวกันของจริง ส่วน WDT คือตาข่ายชั้นสุดท้าย
+//       ถ้าวันหลังมีใครเพิ่มจำนวนรอบ/timeout จนเกิน 60 วิอีก เราต้องการให้ WDT เตะและรายงาน TASK_WDT
+//       เหมือนที่มันเพิ่งช่วยจับบั๊กรอบนี้ · ป้อน watchdog ตรงนี้ = ปิดปากเครื่องตรวจจับบั๊กชนิดเดียวกันในอนาคต
 void syncNTP() {
   // UTC+7 (ประเทศไทย): offset = 7 * 3600 = 25200
   configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
   Serial.print("NTP sync");
   struct tm t;
-  int tries = 0;
-  while (!getLocalTime(&t) && tries < 20) {
-    delay(500); Serial.print("."); tries++;
+  // เช็ค ok เป็นตัวตัดสินผล ไม่ใช่ `tries < 20` — เดิมถ้า sync สำเร็จพอดีตอน tries ครบ 20 จะรายงาน FAILED ทั้งที่ติดแล้ว
+  bool ok = readLocalTime(t);
+  for (int tries = 0; !ok && tries < 20; tries++) {
+    delay(500);
+    Serial.print(".");
+    ok = readLocalTime(t);
   }
-  if (tries < 20) {
+  if (ok) {
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &t);
     Serial.println(" OK → " + String(buf));

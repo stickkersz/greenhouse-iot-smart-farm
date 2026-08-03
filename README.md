@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.0** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.2** · ESP32 DevKit V1
 
 ---
 
@@ -199,7 +199,7 @@ Reference docs worth reading: `Firebase_Database_Structure.md`, `pinout_v2.md`, 
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.0 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.2 ===`.
 
 ---
 
@@ -277,10 +277,10 @@ Run all three green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.9.0`.
+3. Flash the board, watch serial for `v2.9.2`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.9.0`.
+   - Banner reads `v2.9.2`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -310,7 +310,18 @@ Run all three green before flashing or deploying.
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `PROJECT_MEMORY.md`.
 
-**v2.9.0** (latest) — fixed "Wi-Fi drops repeatedly and never reconnects, while phones/PCs on the same AP are fine". Four compounding bugs, all on the reconnect path (the boot path was fine, which is why a reboot appeared to fix it):
+**v2.9.2** (latest) — fixed the reboot loop that was masquerading as Wi-Fi trouble, plus review follow-ups:
+
+1. **Root cause: `syncNTP()` blocked past the watchdog.** Its wait loop called `getLocalTime(&t)` without the second argument, taking the library's blocking 5000 ms default — worst case 20 × (5000 + 500) = 110 s inside a single `loop()` pass, against `WDT_TIMEOUT_S` 60. TASK_WDT rebooted the board, which came back with an unset clock and did it again (`boot_count` 11 → 19 in ~1 day, `last_reset_reason` = `TASK_WDT`). Now uses the non-blocking `readLocalTime()`, bounding the wait at 10 s. Deliberately **does not** feed the watchdog inside that loop — the 10 s bound is the real guard, and the WDT stays armed as the last-resort detector for exactly this class of bug.
+2. **Hourly log batched** into one `updateNodeSilent` — it was still issuing 7-10 sequential SSL round trips at each hour edge, the same stall v2.9.1 fixed on the 30 s paths.
+3. **Wi-Fi diagnostics now mean what they say.** `wifi_drop_count` increments once per offline episode; previously it counted every `STA_DISCONNECTED` event, so a single 10-minute outage read as dozens and latched the dashboard chip amber permanently. The board's own escalation disconnect no longer overwrites `wifi_drop_reason` with reason 8 `ASSOC_LEAVE`, which the legend reads as "the AP kicked us — fix the router".
+4. **`setup()` clears AP fail flags** on a failed boot connect, so the first reconnect attempt isn't a dead scan round (first real attempt ~75-80 s → ~45 s after boot), and `loop()` re-reads `millis()` after a blocking reconnect so the sensor/poll/schedule/NTP timers aren't back-dated ~25 s.
+
+The firmware version string lives in **six** places — sketch header, serial banner, LCD splash, `pushStatus()`, dashboard footer, and this README (the badge at the top plus the post-flash verification steps). There's a checklist at the top of the sketch listing all six. It had drifted, with the dashboard reporting 2.9.2 while serial and the LCD still said 2.9.0, and the README telling you to check serial for a version it no longer prints. That last one is the quiet hazard: a stale README sends whoever flashed the board looking for the wrong number, and they conclude they flashed the wrong build. Bump all six together.
+
+**v2.9.1** — fixed "dashboard shows data stale 90-120 s while the board is perfectly healthy". `pushStatus()` + `pushToFirebase()` were issuing 24 separate `Firebase.setX()` calls per 30 s cycle; at RSSI -76 each SSL round trip costs seconds, so one push cycle overran `SENSOR_INTERVAL` entirely. Both now send a single `updateNodeSilent` PATCH per node (PATCH, so an absent key — e.g. `water_temp` when the DS18B20 is unreadable — leaves the stored value alone rather than deleting it). Also replaced `getLocalTime(&t, 0)` with a `time()`/`localtime_r()` read that cannot spuriously return false, and fixed a cross-listener race that kept water temperature off the dashboard.
+
+**v2.9.0** — fixed "Wi-Fi drops repeatedly and never reconnects, while phones/PCs on the same AP are fine". Four compounding bugs, all on the reconnect path (the boot path was fine, which is why a reboot appeared to fix it):
 
 1. **Modem sleep was on** (ESP32 STA default `WIFI_PS_MIN_MODEM`) — the radio naps between beacons, misses them, and drops with reason 200 `BEACON_TIMEOUT`. Phones don't power-save this way, hence the asymmetry. Now `WiFi.setSleep(false)`. ⚠️ Costs ~20-40 mA average; if `last_reset_reason` starts showing `BROWNOUT` more often after flashing, suspect the power rail first.
 2. **Core auto-reconnect raced `wifiMulti`** — `run()` calls `WiFi.disconnect()` mid-attempt, killing the core's in-flight reconnect. Same class of bug as the old `Firebase.reconnectWiFi(false)` fix, which counted only two radio managers and missed that the ESP32 core is a third. Now a 45 s grace window lets the core retry the same SSID alone (fast, no scan); only after that does `wifiMulti` take over and sweep all SSIDs.

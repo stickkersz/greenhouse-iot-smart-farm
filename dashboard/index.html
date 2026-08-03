@@ -862,7 +862,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v2.9.0 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.9.2 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1318,6 +1318,11 @@ function updateHealth() {
   } else if (sysStatus.pump_locked && sysStatus.fan_locked) {
     // v2.8.0: พักคู่กัน — ไม่ระบุว่า "ปั๊มเดินครบ 15" เพราะ trigger อาจเป็นพัดลม (ปั๊มไม่ได้เดินครบ)
     sev = 'info'; msg = '💧🌬️ ปั๊ม+พัดลมพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
+  // ⚠️ 2 กิ่งล่างนี้ "ไม่มีทางเข้าถึง" กับ firmware ตั้งแต่ v2.8.0 — เก็บไว้โดยเจตนา อย่าเพิ่งลบ
+  //    stepSafetyTimers() ตั้ง pumpLockUntil/fanLockUntil เป็น deadline เดียวกันทุกครั้งที่ cutoff
+  //    (ไม่สนโหมด — v2.9.0 แก้เคส desync ไปแล้ว) และล้างทั้งคู่ในรอบเดียวกัน → 2 ค่านี้เท่ากันเสมอ
+  //    = กิ่ง "พักคู่กัน" ด้านบนกินทุกเคส · ที่คงไว้เพราะ v2.6.0 เคย decouple แล้ว v2.8.0 recouple กลับ
+  //    ถ้าวันหลัง decouple อีก (FAN_COOLDOWN_MS != PUMP_COOLDOWN_MS) 2 กิ่งนี้จะกลับมาทำงานทันทีโดยไม่ต้องเขียนใหม่
   } else if (sysStatus.pump_locked) {
     sev = 'info'; msg = '💧 ปั๊มพักอัตโนมัติ (cooldown 5 นาที) — จะกลับมาทำงานเอง';
   } else if (sysStatus.fan_locked) {
