@@ -14,4 +14,3 @@ DHT22 ที่เปลี่ยนเป็น SHT35 แล้ว, GPIO mappin
 | `Smart_Farm_Project_Plan.md` | แผนโปรเจกต์เริ่มต้น |
 | `Greenhouse_Equipment_Layout.md`, `_v2.md` | เวอร์ชันร่างของผังอุปกรณ์ — เวอร์ชัน current คือ `Greenhouse_Equipment_Layout_v3.md` ใน `docs/` |
 | `IoT_SmartFarm_Proposal.docx`, `_v2.docx` | เอกสารเสนอโครงการฉบับร่าง |
-| `pinout.docx`, `pinout.pdf` | Pinout ฉบับเก่า — เวอร์ชัน current คือ `pinout_v2.md` ใน `docs/` |

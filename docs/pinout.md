@@ -1,8 +1,8 @@
 # Pinout — Greenhouse IoT Smart Farm
 
 **Board:** ESP32 DevKit V1 (30-pin) บน Expansion Board HW-777
-**Firmware:** v2.2.1 (`smartfarm_firmware.ino` + `config.h`)
-**อัปเดตล่าสุด:** 2026-07-16 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า) · pin mapping ไม่เปลี่ยนตั้งแต่ v1.5.0 (บั๊ก v2.x เป็นเรื่อง logic/network ไม่แตะขา)
+**Firmware:** v2.9.2 (`smartfarm_firmware.ino` + `config.h`)
+**อัปเดตล่าสุด:** 2026-08-03 — อ้างอิงจาก config.h/ino จริง (ไม่ใช่เอกสารเก่า) · pin mapping ไม่เปลี่ยนตั้งแต่ v1.5.0 (บั๊ก v2.x ทั้งหมดเป็นเรื่อง logic/network/reboot ไม่แตะขา) · เอกสาร `pinout.docx`/`pinout.pdf` เก่าถูกลบทิ้งแล้ว ไฟล์นี้คือฉบับเดียวที่ใช้อ้างอิง
 
 > ✅ **เปลี่ยนเซนเซอร์อากาศจาก DHT22 (GPIO18) → SHT35 (I2C) แล้ว (2026-07-11)** — GPIO18 ว่างแล้ว, SHT35
 > ใช้บัส I2C ร่วมกับ LCD (GPIO21/22) แทน address auto-detect 0x44/0x45 — ดูตารางด้านล่าง + PROJECT_MEMORY.md §15
@@ -22,7 +22,7 @@
 | GPIO | อุปกรณ์ | หน้าที่ | หมายเหตุ |
 |---|---|---|---|
 | **GPIO2** | Onboard Status LED | ไฟแสดงสถานะบอร์ด | Active-HIGH, เพิ่งพบใน .ino (ไม่มีในเอกสารเดิม) |
-| **GPIO4** | DS18B20 (Waterproof) | วัดอุณหภูมิน้ำ | ต้องมี Pull-up 4.7kΩ ระหว่าง VCC–DATA ที่ฝั่ง ESP32 |
+| **GPIO4** | DS18B20 (Waterproof) | วัดอุณหภูมิน้ำ | ต้องมี Pull-up 4.7kΩ ระหว่าง DATA กับ **3V3 เท่านั้น** — ⚠️ ห้ามต่อไป VCC/VIN (5V): pull-up ไป 5V จะดัน GPIO4 เกิน abs max 3.6V ผ่าน ESD diode clamp ของขา (ดูคอมเมนต์ .ino:214-215) |
 | **GPIO14** | Relay CH3 | พัดลม 220V AC (ดูดอากาศเข้า) | Auto ตามอุณหภูมิ (TEMP_ON/OFF) |
 | **GPIO18** | ว่าง (ไม่ได้ใช้) | — | เคยเป็น DHT22 DATA — ถอดออกแล้ว 2026-07-11 (เปลี่ยนไปใช้ SHT35 แบบ I2C แทน ไม่มี pin แยก) |
 | **GPIO21** | I2C — SDA (ร่วม LCD + SHT35) | จอ LCD 16x2 + เซนเซอร์อากาศ SHT35 | LCD ต้องใช้ไฟ 5V ไม่ใช่ 3.3V — ✅ ยืนยันทำงานแล้ว (2026-07-08 เปลี่ยนจอตัวใหม่) |
@@ -58,7 +58,7 @@
 
 - ทุกช่องเป็น **Active-LOW**: LOW = เปิด, HIGH = ปิด
 - ใช้ขา **NO (Normally Open)** เสมอ
-- Pump Safety: เดินต่อเนื่องได้สูงสุด 10 นาที (ตัดสินใจสุดท้าย 2026-07-07, เดิม 5 นาที) แล้วพัก 5 นาที (ป้องกันปั๊มไหม้)
+- Max Runtime: ปั๊มและพัดลมเดินต่อเนื่องได้สูงสุด **15 นาที** แล้วพักคู่กัน **5 นาที** (`PUMP_MAX_RUNTIME_MS`/`FAN_MAX_RUNTIME_MS` — ยืดจาก 10 นาทีเป็น 15 เมื่อ 2026-07-20, พักคู่กันตั้งแต่ v2.8.0) เป็น `#define` ต้อง reflash ถึงจะเปลี่ยน ไม่ใช่ threshold ที่ปรับสดจาก dashboard ได้
 
 | Channel | GPIO | อุปกรณ์ | โหมด |
 |---|---|---|---|
@@ -85,4 +85,3 @@
 
 - `smartfarm_firmware/config.h` — ค่า pin mapping และ threshold ทั้งหมด
 - `smartfarm_firmware/smartfarm_firmware.ino` — logic การอ่าน/ควบคุมจริง
-- `pinout.docx` / `pinout.pdf` — เอกสารเดิม (มีอยู่แล้วในโฟลเดอร์ แต่ยังอ้าง DHT22=GPIO32 ซึ่งล้าสมัย)

@@ -132,7 +132,7 @@ ESP32 รองรับ **2.4GHz เท่านั้น**
 ├── dashboard/
 │   ├── index.html
 │   └── index.v1.1.0.backup.html
-├── pinout_v2.md                 ← สรุปการต่อสายล่าสุด (pinout.docx/pdf เป็นเวอร์ชันเก่า ล้าสมัยบางจุด อย่าอ้างอิง)
+├── pinout.md                    ← สรุปการต่อสายล่าสุด (ฉบับเดียว — pinout.docx/pdf เก่าถูกลบทิ้งแล้ว)
 ├── TEAM_ONBOARDING.md           ← วิธีเพิ่ม/ลบ account พนักงานผ่าน Firebase Console
 ├── DAILY_OPERATIONS_CHECKLIST.md ← เช็คลิสต์ประจำวัน/สัปดาห์ สำหรับทีมที่ไม่ใช่สาย IT
 ├── PROJECT_MEMORY.md            ← ข้อมูลเทคนิคละเอียด
