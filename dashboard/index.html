@@ -173,8 +173,14 @@
     .badge-warn{background:#fef3c7;color:#92400e}
     .badge-danger{background:#fee2e2;color:#991b1b}
     .badge-offline{background:var(--surface-2);color:var(--muted)}
-    .gauge-wrap{width:155px;height:125px}
+    .gauge-wrap{width:155px;height:125px;position:relative;transition:opacity .25s}
     .gauge-wrap svg{width:100%;height:100%}
+    /* v2.9.3: เซนเซอร์อ่านไม่ได้ — เกจต้อง "ดูตายตาม" ด้วย ไม่ใช่โชว์เลขล่าสุดหน้าตาปกติ
+       (เดิมเปลี่ยนแค่ badge เล็กๆ ข้างบน คนกวาดตาผ่านจะอ่านว่าระบบยังวัดค่าอยู่ตามปกติ) */
+    .gauge-wrap.stale{opacity:.32;filter:grayscale(1)}
+    .gauge-wrap.stale::after{content:'ไม่มีสัญญาณ';position:absolute;left:50%;top:58%;transform:translate(-50%,-50%);
+      font-size:.62rem;font-weight:600;color:var(--danger);background:var(--surface);padding:2px 7px;border-radius:5px;
+      white-space:nowrap;opacity:.95;filter:grayscale(0)}
     .sensor-status{margin-top:2px;font-size:.7rem;color:var(--muted);text-align:center;min-height:1.2em}
 
     /* ── Skeleton Loading ── */
@@ -225,6 +231,7 @@
     input:disabled+.slider{opacity:.4;cursor:not-allowed}
     .mode-row{display:flex;gap:4px;background:var(--surface-2);border-radius:8px;padding:3px}
     .mode-btn{flex:1;font-size:.68rem;font-weight:600;padding:5px 0;border-radius:6px;border:none;background:transparent;color:var(--muted);cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
+    .mode-note{flex:2;display:flex;align-items:center;justify-content:center;font-size:.6rem;color:var(--muted);opacity:.75;text-align:center;line-height:1.2}
     .mode-btn.active{background:var(--mode-active-bg);color:var(--accent-text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
 
     /* ── Global Auto/Manual switch (สลับ CH3+CH4 พร้อมกัน) ── */
@@ -684,9 +691,13 @@
             <label class="toggle"><input type="checkbox" id="toggle_ch1" onchange="setRelay('ch1_pump',this.checked)"><span class="slider"></span></label>
             <div class="relay-badge s-off" id="relayBadge_ch1">OFF</div>
           </div>
+          <!-- ⚠️ ไม่มีปุ่ม AUTO โดยเจตนา — firmware ไม่มี auto logic ให้ CH1 เลย (autoControl() คุมแค่
+               IDX_FAN=CH3 กับ IDX_PUMP=CH4) · ปุ่ม AUTO เคยมีอยู่ตรงนี้ แต่กดแล้วจะไม่มีโค้ดฝั่งไหน
+               สั่งรีเลย์ช่องนี้อีกเลย = ค้างสถานะเดิมและคุมจาก dashboard ไม่ได้จนกว่าจะกลับเป็น MANUAL
+               ช่องนี้ใช้ manual หรือตั้งเวลาเท่านั้น (v2.9.3 ถอดปุ่มออก) -->
           <div class="mode-row">
-            <button class="mode-btn" onclick="setMode('ch1_pump','auto',this)">🤖 AUTO</button>
             <button class="mode-btn active" onclick="setMode('ch1_pump','manual',this)">✋ MANUAL</button>
+            <span class="mode-note">ช่องสำรอง — สั่งเอง/ตั้งเวลาเท่านั้น</span>
           </div>
           <details class="schedule-wrap">
             <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
@@ -1136,12 +1147,15 @@ function startListeners() {
       // fw ≥2.0.0: พลาดนานจน auto ปิดทุกช่องแล้ว — ต้องบอกให้ชัดว่าโรงเรือน "หยุดคุมเอง" ไม่ใช่แค่ค่าหาย
       setBadge('airTempBadge','badge-danger','เสีย'); setText('airTempStatus','🛑 เซ็นเซอร์เสีย — ระบบอัตโนมัติหยุด (ปิดพัดลม+ปั๊ม)');
       setBadge('airHumBadge', 'badge-danger','เสีย'); setText('airHumStatus','🛑 เซ็นเซอร์เสีย — ระบบอัตโนมัติหยุด (ปิดพัดลม+ปั๊ม)');
+      setGaugeStale(true);   // v2.9.3: เกจต้องหรี่ตามด้วย ไม่งั้นเลขเดิมยังดูเหมือนค่าสด
       checkAlerts(null, null);
     } else if (sysStatus.sensor_ok === false) {
       setBadge('airTempBadge','badge-warn','ขัดข้อง'); setText('airTempStatus','🔧 อ่านค่าไม่ได้ชั่วคราว — auto ยังทำงานบนค่าล่าสุด');
       setBadge('airHumBadge', 'badge-warn','ขัดข้อง'); setText('airHumStatus','🔧 อ่านค่าไม่ได้ชั่วคราว — auto ยังทำงานบนค่าล่าสุด');
+      setGaugeStale(true);
       checkAlerts(null, null);
     } else {
+      setGaugeStale(false);
       checkAlerts(t, rh);
     }
     updateHealth();
@@ -1214,7 +1228,14 @@ function startListeners() {
     const modesByChannel = {};
     for (const [key, id] of Object.entries(chMap)) {
       if (!d[key]) continue;
-      const mode = d[key].mode || 'auto';
+      let mode = d[key].mode || 'auto';
+      // ⚠️ v2.9.3 กู้คืน CH1 ที่ค้างโหมด auto: ปุ่ม AUTO ถูกถอดออกแล้ว (firmware ไม่เคยมี auto logic
+      //    ให้ช่องนี้) แต่ค่าที่ค้างใน DB จากตอนที่ยังมีปุ่มจะทำให้ toggle ถูก disable ถาวร =
+      //    คุมช่องนี้ไม่ได้เลยและไม่มีปุ่ม AUTO ให้กดกลับด้วย · เขียน manual ทับให้อัตโนมัติครั้งเดียว
+      if (key === 'ch1_pump' && mode === 'auto') {
+        mode = 'manual';
+        db.ref('/smartfarm/control/ch1_pump').update({mode: 'manual'});
+      }
       modesByChannel[key] = mode;
       const toggle = document.getElementById('toggle_' + id);
       if (toggle) toggle.disabled = (mode === 'auto');
@@ -1225,6 +1246,14 @@ function startListeners() {
     }
     updateGlobalModeUI(modesByChannel);   // สะท้อนสถานะรวม (auto/manual/ผสม) ที่ปุ่ม global
   });
+
+  // ── v2.9.3: แจ้งเตือนที่ firmware เป็นคนตรวจเจอ ───────────────────────
+  // เดิม dashboard ไม่เคยอ่าน node นี้เลย — checkAlerts() คำนวณเองฝั่ง client จากค่าอุณหภูมิ/ความชื้นสด
+  // จึงเห็นได้แค่ 2 อย่างนั้น ส่วนเรื่องที่ "มีแต่บอร์ดเท่านั้นที่รู้" หายไปทั้งหมด:
+  //   pump_cutoff / fan_cutoff (ตัดเพราะเดินครบ 15 นาที) · sensor_fail (อ่านเซนเซอร์ไม่ได้จน auto หยุด)
+  //   high_water_temp (อุณหภูมิน้ำ — dashboard ไม่ได้ป้อนค่านี้เข้า checkAlerts เลย)
+  // = น้ำร้อนเกิน/ปั๊มโดนตัด แล้วไม่มีแบนเนอร์ ไม่มีแจ้งเตือน ไม่มีในประวัติ เห็นได้แค่ badge เล็กๆ
+  db.ref('/smartfarm/alerts/last_alert').on('value', snap => handleFirmwareAlert(snap.val()));
 
   db.ref('/smartfarm/alert_history').orderByChild('timestamp').limitToLast(30).on('value', snap => {
     const rows = []; snap.forEach(c => rows.unshift(c.val())); renderAlertHistory(rows);
@@ -1603,6 +1632,20 @@ function saveThresholds() {
   if ([hmin, hmax, hVent, hAlert].some(v => v < 0 || v > 100)) {
     showToast('⚠️ ค่าความชื้นทุกช่องต้องอยู่ระหว่าง 0–100%'); return;
   }
+  // ⚠️ v2.9.3: ฝั่งอุณหภูมิเคยไม่มีการเช็คช่วงเลย ทั้งที่ rules มีขอบเขตของตัวเอง (ดู database.rules.json)
+  //    ผลคือกรอก 500 แล้วผ่านด่าน client ไปโดนปัดที่ Firebase พร้อม toast กลางๆ "ค่าไม่ผ่าน validation"
+  //    ที่ไม่บอกว่าช่องไหนผิด — ต่างจากฝั่งความชื้นที่บอกชัด · ต้องตรงกับ rules เป๊ะ ไม่งั้นจะกลับกัน
+  //    คือ client ยอมแต่ rules ปัด (ผู้ใช้เจอ error ที่แก้ตามไม่ได้)
+  const outOfRange = [
+    ['Temp ON',    ton,     -20, 70],
+    ['Temp OFF',   toff,    -20, 70],
+    ['Alert °C',   tAlert,  -20, 70],
+    ['Alert น้ำ °C', wtAlert, -20, 80],
+  ].find(([, v, lo, hi]) => v <= lo || v >= hi);
+  if (outOfRange) {
+    const [name, v, lo, hi] = outOfRange;
+    showToast(`⚠️ ${name} = ${v} อยู่นอกช่วงที่ระบบรับได้ (ต้องมากกว่า ${lo} และน้อยกว่า ${hi})`); return;
+  }
   if (ton <= toff)  { showToast('⚠️ Temp ON ต้องมากกว่า Temp OFF'); return; }
   if (tAlert <= ton){ showToast('⚠️ Alert °C ต้องมากกว่า Temp ON'); return; }
   if (hAlert >= hmin){ showToast('⚠️ Alert % ต้องน้อยกว่า Humidity Min'); return; }
@@ -1894,8 +1937,63 @@ function updateRelayUI(ch, state) {
   if (card) { on ? card.classList.add('active-card') : card.classList.remove('active-card'); }
 }
 
+// v2.9.3: หรี่เกจอุณหภูมิ/ความชื้นเมื่อเซนเซอร์อ่านไม่ได้
+// เกจคือองค์ประกอบที่ใหญ่และเด่นที่สุดในการ์ด — ถ้ามันยังโชว์ตัวเลขหน้าตาปกติอยู่ คนที่กวาดตาผ่านจะ
+// อ่านว่า "ยังวัดได้ปกติ" แม้ badge เล็กๆ ข้างบนจะเขียนว่าเซนเซอร์เสียก็ตาม (ค่าที่ค้างอยู่คือค่าเก่า
+// จากรอบก่อนหน้าที่ยังอ่านได้ ไม่ใช่ค่าสด)
+function setGaugeStale(stale) {
+  ['airTempGauge','airHumGauge'].forEach(id => {
+    document.getElementById(id)?.classList.toggle('stale', !!stale);
+  });
+}
+
 function setBadge(id, cls, text) { const el=document.getElementById(id); if(!el)return; el.className='sensor-badge '+cls; el.textContent=text; }
 function setText(id, text)       { const el=document.getElementById(id); if(!el)return; el.textContent=text; }
+
+// ── v2.9.3: แปลง /smartfarm/alerts/last_alert ที่ firmware เขียน → แบนเนอร์ + แจ้งเตือน + ประวัติ ──
+//
+// ⚠️ node นี้ถูก "เขียนทับ" ไม่ใช่ push ต่อท้าย และ **ไม่มี field timestamp** (ดู Firebase_Database_Structure.md)
+//    จึงแยกไม่ออกจากค่าที่อ่านได้เฉยๆ ว่าเป็นของใหม่จริงหรือของค้างจากเมื่อวาน
+//    → รอบแรกที่ listener ยิงตอนโหลดหน้า จึงแค่ "จำไว้" ไม่เด้งเตือน (ไม่งั้นเปิดหน้าเว็บทีไรก็เจอ
+//      alert เก่าเด้งทุกครั้ง) · หลังจากนั้นค่อยเตือนเมื่อค่าเปลี่ยนจริง
+//    เคสที่ firmware ย้ำซ้ำ (sensor_fail ย้ำทุก 10 นาที) จะเขียนค่าเดิมทับ = ไม่เด้งซ้ำ ตามที่ควรเป็น
+let lastFirmwareAlertKey = null;
+let firmwareAlertPrimed  = false;
+
+// ⚠️ checkAlerts() ซ่อนแบนเนอร์ทุกครั้งที่ไม่มี alert ฝั่ง client (ยิงทุกรอบ sensor ~30 วิ)
+//    ถ้าไม่กันไว้ แบนเนอร์ของ firmware จะโดนลบทิ้งภายในไม่กี่วินาทีหลังขึ้น = เหมือนไม่เคยเตือน
+//    จึง "จอง" แบนเนอร์ไว้ช่วงหนึ่งหลัง firmware แจ้งเตือน (เท่ากับ cooldown ของประวัติ 5 นาที)
+const FIRMWARE_BANNER_MS = 300000;
+let firmwareBannerUntil = 0;
+
+// map type ของ firmware → ไอคอน + type ที่ใช้เก็บประวัติ
+// ⚠️ high_temp/low_humidity ตั้งใจ map ไปชนกับ type ที่ checkAlerts() ฝั่ง client ใช้ ('temp_high'/
+//    'humidity_low') เพื่อให้ cooldown 5 นาทีใน saveAlertHistory() กันซ้ำได้จริง — ไม่งั้นเรื่องเดียวกัน
+//    จะถูกบันทึก 2 แถว (ฝั่ง client 1 + ฝั่ง firmware 1) เพราะชื่อ type ไม่ตรงกัน
+const FIRMWARE_ALERT_MAP = {
+  sensor_fail:     {icon:'🔧', type:'sensor_fail',   title:'เซนเซอร์อากาศขัดข้อง'},
+  high_temp:       {icon:'🌡️', type:'temp_high',     title:'อุณหภูมิสูงวิกฤต'},
+  low_humidity:    {icon:'💧', type:'humidity_low',  title:'ความชื้นต่ำวิกฤต'},
+  high_water_temp: {icon:'🌊', type:'water_high',    title:'อุณหภูมิน้ำสูง'},
+  pump_cutoff:     {icon:'⛔', type:'pump_cutoff',   title:'ตัดปั๊มอัตโนมัติ'},
+  fan_cutoff:      {icon:'⛔', type:'fan_cutoff',    title:'ตัดพัดลมอัตโนมัติ'},
+};
+
+function handleFirmwareAlert(a) {
+  if (!a || !a.type) return;
+  const key = a.type + '|' + (a.message || '') + '|' + (a.value != null ? a.value : '');
+  if (key === lastFirmwareAlertKey) return;      // ค่าเดิม (firmware เขียนซ้ำ / listener ยิงซ้ำ)
+  lastFirmwareAlertKey = key;
+
+  if (!firmwareAlertPrimed) { firmwareAlertPrimed = true; return; }   // รอบแรกตอนโหลดหน้า = แค่จำ
+
+  const meta = FIRMWARE_ALERT_MAP[a.type] || {icon:'⚠️', type:a.type, title:'แจ้งเตือนจากระบบ'};
+  const msg  = a.message || meta.title;
+  showAlertBanner(`${meta.icon} ${msg}`);
+  firmwareBannerUntil = Date.now() + FIRMWARE_BANNER_MS;   // จองแบนเนอร์ไว้ กัน checkAlerts มาลบทิ้ง
+  sendNotif('SmartFarm ⚠️ ' + meta.title, msg);
+  saveAlertHistory(meta.icon, msg, meta.type);
+}
 
 function checkAlerts(t, rh) {
   const tLim  = alertThresholds.temp_alert;
@@ -1906,7 +2004,8 @@ function checkAlerts(t, rh) {
   if (alerts.length) {
     showAlertBanner(alerts.map(a=>a.msg).join(' · '));
     alerts.forEach(a => { sendNotif('SmartFarm ⚠️ แจ้งเตือน', a.msg); saveAlertHistory(a.icon, a.msg, a.type); });
-  } else {
+  } else if (Date.now() >= firmwareBannerUntil) {
+    // ไม่มี alert ฝั่ง client แล้ว และไม่ได้อยู่ในช่วงที่ firmware จองแบนเนอร์ไว้ → ซ่อนได้
     document.getElementById('alertBanner').style.display = 'none';
   }
 }
