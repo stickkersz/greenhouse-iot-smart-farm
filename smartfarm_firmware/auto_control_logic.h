@@ -157,6 +157,11 @@ struct AutoControlInputs {
                        // — ไม่งั้น clamp อยู่ชั้น .ino ที่เทสต์ไม่ถึง แล้วเทสต์ต้องเขียน clamp ซ้ำเอง
                        //   (เขียนซ้ำ = จูน VENT_HYST แล้วเทสต์ยังผ่านทั้งที่ firmware เพี้ยน)
   bool  wetOn;         // latch ปัจจุบัน: กำลังระบายความชื้นอยู่ไหม (คุมพัดลมเท่านั้น)
+  // ── v2.9.3 anti-chatter — append ท้าย struct เจตนา (เหตุผลเดียวกับ vent ข้างบน): initializer เก่า
+  //    (12 ค่า) จะ zero-init ตัวนี้เป็น false = "ไม่ได้ถูก gate ล้าง" = พฤติกรรมเดิมสำหรับเทสต์เก่า ──
+  bool  pumpHeatGated; // latch ปัจจุบัน: pumpHeat ถูก humid gate ล้างไป และยัง "ค้างห้ามติดใหม่" อยู่
+                       // ปลดเมื่อ airTemp ตกใต้ fanOnTemp เท่านั้น = บังคับให้ต้อง "ข้ามเส้นขึ้นใหม่จริงๆ"
+                       // ถึงจะ re-arm ได้ ดูเหตุผลเต็มที่ latch ปั๊มไล่ร้อนใน computeAutoDecisions()
 };
 
 // deadband ของ wet latch · ปิดที่ ventOn - VENT_HYST กันพัดลมกระพริบที่เส้น
@@ -180,6 +185,7 @@ inline bool ventIsUsable(float ventThreshold, float pumpOffHum) {
 
 struct AutoControlDecisions {
   bool hotOn, dryOn, pumpHeatOn, wetOn;  // latch ใหม่ (firmware เก็บกลับไปใช้รอบหน้า)
+  bool pumpHeatGated;  // latch ใหม่ (v2.9.3) — firmware ต้องเก็บกลับด้วย ไม่งั้น gate ลืมทุกรอบ = บั๊กเดิม
   bool fanOn;          // สถานะพัดลมที่ต้องการ = ร้อน OR แห้ง OR ชื้นเกิน(vent)
   bool pumpOn;         // สถานะปั๊มที่ต้องการ = ปั๊มไล่ร้อน OR แห้ง (vent ไม่แตะปั๊ม)
 };
@@ -189,8 +195,19 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
 
   // เชื่อค่าเซนเซอร์ไม่ได้ → ปิดทุกช่อง ล้าง latch ทุกตัว ออกทันที
   // (0%RH ก็ถือว่าเชื่อไม่ได้ — โรงเรือนจริงเป็นไปไม่ได้ ถ้าเห็นแปลว่าเซนเซอร์/สายมีปัญหา)
-  if (!in.sensorOk || in.airHumidity <= 0) {
+  //
+  // ⚠️ v2.9.3 ต้องเช็ค NaN แยกต่างหาก ห้ามพึ่ง `<= 0` อย่างเดียว: IEEE754 บังคับให้การเปรียบเทียบ
+  //    กับ NaN คืน false "ทุกตัว" (NaN <= 0 เป็น false, NaN > 0 ก็ false) → NaN จะรอด guard นี้ไปได้
+  //    แล้วทำให้ทุก latch ค้างค่าเดิม (เพราะ if/else-if ข้างล่างก็ false หมด) = รีเลย์ค้างสถานะก่อนเซนเซอร์เพี้ยน
+  //    แทนที่จะเข้าสถานะปลอดภัย "ปิดทุกช่อง" ตามที่ฟังก์ชันนี้รับประกันไว้
+  //    ตอนนี้ .ino กรอง isnan() ก่อนอยู่แล้ว (readSensors) จึงยังไม่เคยเกิดจริง — แต่นี่คือ invariant
+  //    ของฟังก์ชัน pure ตัวนี้เอง ไม่ใช่ของผู้เรียก · เขียน x != x แทน isnan() เพื่อไม่ต้อง #include <cmath>
+  //    (ฟังก์ชันนี้ตั้งใจไม่พึ่ง header อะไรเลย จะได้ทดสอบด้วย g++ เปล่าๆ ได้)
+  const bool humidityIsNaN = (in.airHumidity != in.airHumidity);
+  const bool tempIsNaN     = (in.airTemp     != in.airTemp);
+  if (!in.sensorOk || humidityIsNaN || tempIsNaN || in.airHumidity <= 0) {
     d.hotOn = d.dryOn = d.pumpHeatOn = d.wetOn = false;
+    d.pumpHeatGated = false;   // ล้าง gate ด้วย — ฟื้นแล้วต้องคิดใหม่จากค่าสด ไม่ใช่ค้าง gate จากก่อนเซนเซอร์ตาย
     d.fanOn = d.pumpOn = false;
     return d;
   }
@@ -210,12 +227,31 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   // else: คงสถานะ
 
   // latch ปั๊มไล่ร้อน — เกณฑ์อุณหภูมิเดียวกับ latch ร้อน แต่ humid gate "ล้าง" ได้
-  // ล้างแล้วต้องรอ airTemp ข้าม fanOnTemp ใหม่ถึงติดอีก — นี่คือสิ่งที่กันปั๊มกระพริบที่เส้น pumpOffHum
-  bool pumpHeat = in.pumpHeatOn;
-  if      (saturated)                   pumpHeat = false;
-  else if (in.airTemp >= in.fanOnTemp)  pumpHeat = true;
-  else if (in.airTemp <= in.fanOffTemp) pumpHeat = false;
-  // else: คงสถานะ
+  // ล้างแล้วต้องรอ airTemp "ข้าม" fanOnTemp ขึ้นใหม่ถึงติดอีก — นี่คือสิ่งที่กันปั๊มกระพริบที่เส้น pumpOffHum
+  //
+  // ⚠️ v2.9.3 แก้บั๊ก: เดิมเขียน `else if (airTemp >= fanOnTemp) pumpHeat = true;` ซึ่งเป็นการเช็ค
+  //    "ระดับ" ไม่ใช่ "การข้ามเส้น" — พอ airTemp ค้างเหนือ fanOnTemp (เช่น 40°C ตอนบ่ายจริงๆ)
+  //    เงื่อนไขนี้เป็นจริงทุกรอบ → RH แกว่งรอบ pumpOffHum ทีไร gate ล้างแล้วติดกลับทันทีรอบถัดไป
+  //    = ปั๊มกระพริบทุก 30 วิ ซึ่งคือบั๊กเดียวกับที่ latch design นี้ตั้งใจกันมาตั้งแต่แรก
+  //    (เทสต์เก่าจับไม่ได้เพราะทุกเคสวาง temp ไว้ใน dead-zone 32-35 ซึ่งบังเอิญไม่เข้าเงื่อนไขนี้)
+  //
+  //    แก้ด้วย latch เพิ่ม 1 ตัว: โดน gate ล้าง → ตั้ง pumpHeatGated ค้างไว้ · ปลด gate เฉพาะตอน
+  //    airTemp ตกใต้ fanOnTemp (= ออกจากโซนร้อนจริง) · ระหว่างที่ยัง gate อยู่ ห้ามติดใหม่เด็ดขาด
+  //    → "ข้ามเส้นขึ้นใหม่" จึงแปลว่าข้ามจริงๆ ไม่ใช่แค่ยังอยู่เหนือเส้น
+  bool pumpHeat  = in.pumpHeatOn;
+  bool heatGated = in.pumpHeatGated;
+
+  if (saturated) {
+    pumpHeat  = false;
+    heatGated = true;    // ล้างแล้ว — ห้ามติดใหม่จนกว่าจะตกใต้ fanOnTemp ก่อน
+  }
+  if (in.airTemp < in.fanOnTemp) {
+    heatGated = false;   // ตกใต้เส้นแล้ว → ครั้งหน้าที่ข้ามขึ้นถือเป็น "ข้ามใหม่" จริง
+  }
+
+  if      (in.airTemp <= in.fanOffTemp)                  pumpHeat = false;
+  else if (!heatGated && in.airTemp >= in.fanOnTemp)     pumpHeat = true;
+  // else: คงสถานะ (อยู่ dead-zone หรือยังติด gate ค้างอยู่)
 
   // latch เปียก (vent) — ระบายความชื้น · clamp อยู่ตรงนี้ (ไม่ใช่ที่ .ino) เทสต์จึงกินโค้ดจริง
   // ventThreshold ที่ใช้ไม่ได้ (ต่ำเกิน / เว้นจาก pumpOffHum ไม่ถึง VENT_HYST) → ปิดฟีเจอร์
@@ -228,10 +264,11 @@ inline AutoControlDecisions computeAutoDecisions(const AutoControlInputs& in) {
   else if (in.airHumidity <= ventOff)    wet = false;
   // else: คงสถานะ
 
-  d.hotOn      = hot;
-  d.dryOn      = dry;
-  d.pumpHeatOn = pumpHeat;
-  d.wetOn      = wet;
+  d.hotOn          = hot;
+  d.dryOn          = dry;
+  d.pumpHeatOn     = pumpHeat;
+  d.pumpHeatGated  = heatGated;
+  d.wetOn          = wet;
 
   // พัดลม — ร้อน หรือ แห้ง หรือ ชื้นเกิน(ไล่ความชื้น) เปิดได้ทุกเหตุผล
   d.fanOn = hot || dry || wet;

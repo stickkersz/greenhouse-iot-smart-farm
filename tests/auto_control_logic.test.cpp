@@ -13,7 +13,7 @@ void check(bool cond, const char* name) {
 
 // default จริง: fanOnTemp=35 fanOffTemp=32 pumpOnHum=60 pumpOffHum=75
 // {sensorOk, airTemp, airHumidity, fanOnTemp, fanOffTemp, pumpOnHum, pumpOffHum,
-//  hotLatch, dryLatch, pumpHeatLatch, ventThreshold, wetLatch}
+//  hotLatch, dryLatch, pumpHeatLatch, ventThreshold, wetLatch, pumpHeatGatedLatch}
 //
 // ⚠️ ventThreshold = 0 เขียนไว้ "ชัดๆ" เจตนา — 0 = ปิดฟีเจอร์ vent = พฤติกรรมก่อน v2.7.0
 // เดิมละไว้ให้ zero-init เอง (initializer 10 ค่า) ซึ่งได้ผลเหมือนกันแต่มี 2 ปัญหา:
@@ -23,7 +23,7 @@ void check(bool cond, const char* name) {
 //        ทั้งที่ความยาว initializer ต่างกัน = คนละ config คนละเรื่อง
 // เขียนครบทุก field = อ่านออกทันทีว่า config ไหน ไม่ต้องรู้กฎ zero-init ของ C++
 static AutoControlInputs base() {
-  return {true, 30, 65, 35, 32, 60, 75, false, false, false, 0, false};   // 30°C ชื้น 65% (ไม่ร้อน ไม่แห้ง) latch ปิดหมด · vent ปิด
+  return {true, 30, 65, 35, 32, 60, 75, false, false, false, 0, false, false};   // 30°C ชื้น 65% (ไม่ร้อน ไม่แห้ง) latch ปิดหมด · vent ปิด · gate ไม่ค้าง
 }
 
 // ── Crossing harness ──────────────────────────────────
@@ -39,6 +39,7 @@ static SwitchCount runSequence(AutoControlInputs in, const float* temps, const f
     in.airHumidity = hums[i];
     AutoControlDecisions d = computeAutoDecisions(in);
     in.hotOn = d.hotOn; in.dryOn = d.dryOn; in.pumpHeatOn = d.pumpHeatOn; in.wetOn = d.wetOn;   // firmware เก็บ latch ข้ามรอบ
+    in.pumpHeatGated = d.pumpHeatGated;   // ⚠️ ต้องป้อนกลับเหมือน firmware จริง ไม่งั้น gate ลืมทุกรอบ = เทสต์ผ่านทั้งที่ของจริงพัง
     if (!first) {
       if (d.fanOn  != prevFan)  c.fan++;
       if (d.pumpOn != prevPump) c.pump++;
@@ -149,11 +150,32 @@ int main() {
     check(!d.fanOn && !d.pumpOn, "humidity=0 -> ปิดทั้ง 2 ช่อง (0%RH เชื่อไม่ได้)");
   }
   {
+    // v2.9.3: NaN ต้องเข้าสถานะปลอดภัยเหมือน 0%RH — guard เดิม `<= 0` จับ NaN ไม่ได้เลย
+    // เพราะ IEEE754 บังคับให้ทุกการเปรียบเทียบกับ NaN คืน false (NaN <= 0 ก็ false)
+    // ผลเดิม: latch ค้างค่าเก่าทั้งหมด = รีเลย์ค้างสถานะก่อนเซนเซอร์เพี้ยน แทนที่จะปิดให้ปลอดภัย
+    const float NaNv = 0.0f / 0.0f;
+    auto in = base(); in.airTemp = 40; in.airHumidity = NaNv;
+    in.hotOn = true; in.pumpHeatOn = true; in.dryOn = true;
+    auto d = computeAutoDecisions(in);
+    check(!d.fanOn && !d.pumpOn, "humidity=NaN -> ปิดทั้ง 2 ช่อง (ไม่ค้างสถานะเดิม)");
+    check(!d.hotOn && !d.dryOn && !d.pumpHeatOn, "humidity=NaN -> ล้าง latch ทุกตัว");
+  }
+  {
+    // NaN ฝั่งอุณหภูมิก็ต้องกันเหมือนกัน (ความชื้นปกติ แต่ temp เพี้ยน)
+    const float NaNv = 0.0f / 0.0f;
+    auto in = base(); in.airTemp = NaNv; in.airHumidity = 65;
+    in.hotOn = true; in.pumpHeatOn = true;
+    auto d = computeAutoDecisions(in);
+    check(!d.fanOn && !d.pumpOn, "airTemp=NaN -> ปิดทั้ง 2 ช่อง");
+    check(!d.hotOn && !d.pumpHeatOn, "airTemp=NaN -> ล้าง latch");
+  }
+  {
     // เซนเซอร์ฟื้น: ต้องเริ่มจาก latch เปล่า ไม่สานต่อของเก่า — 34°C อยู่ dead-zone จึงยังไม่ปลุกพัดลม
     auto in = base(); in.sensorOk = false; in.airTemp = 40; in.airHumidity = 45; in.hotOn = true;
     auto dead = computeAutoDecisions(in);
     in.sensorOk = true; in.airTemp = 34; in.airHumidity = 65;
     in.hotOn = dead.hotOn; in.dryOn = dead.dryOn; in.pumpHeatOn = dead.pumpHeatOn;
+    in.pumpHeatGated = dead.pumpHeatGated;
     auto back = computeAutoDecisions(in);
     check(!back.fanOn, "ฟื้นที่ 34°C (dead-zone) -> ยังไม่เปิด ต้องรอข้าม 35 จริง (latch ไม่สานต่อ)");
   }
@@ -174,9 +196,10 @@ int main() {
         for (float h = 10; h <= 100; h += 5.0f) {
           AutoControlInputs in = {true, t, h, 35, 32, 60, 75,
                                   (seed & 1) != 0, (seed & 2) != 0, (seed & 4) != 0,
-                                  0, false};   // vent ปิด (ventThreshold=0) — ทดสอบ path ก่อน v2.7.0
+                                  0, false, false};   // vent ปิด (ventThreshold=0) — ทดสอบ path ก่อน v2.7.0
           auto a = computeAutoDecisions(in);
           in.hotOn = a.hotOn; in.dryOn = a.dryOn; in.pumpHeatOn = a.pumpHeatOn;
+          in.pumpHeatGated = a.pumpHeatGated;
           auto b = computeAutoDecisions(in);   // รอบ 2 ด้วย latch ที่นิ่งแล้ว
           if (b.fanOn != a.fanOn || b.pumpOn != a.pumpOn) unstable = true;
         }
@@ -235,11 +258,46 @@ int main() {
       s.airTemp = t[i]; s.airHumidity = h[i];
       auto d = computeAutoDecisions(s);
       s.hotOn = d.hotOn; s.dryOn = d.dryOn; s.pumpHeatOn = d.pumpHeatOn;
+      s.pumpHeatGated = d.pumpHeatGated;
       pumpAfter[i] = d.pumpOn;
     }
     check(!pumpAfter[0], "ชื้น 76 -> ปั๊มตัด");
     check(!pumpAfter[1] && !pumpAfter[2], "RH ตกกลับมา 70 แต่ temp ยัง 33 -> ปั๊มยังไม่ติด (ต้องรอ temp ข้าม 35)");
     check(pumpAfter[3], "temp ขึ้น 36 -> ปั๊มติดใหม่ (re-arm ได้จริง ไม่ค้างดับถาวร)");
+  }
+
+  printf("== v2.9.3: อากาศร้อนค้างเหนือ temp_on แล้ว RH แกว่งรอบ 75 (บั๊กที่เทสต์เก่าจับไม่ได้) ==\n");
+  {
+    // ⚠️ เคสที่หลุดมาตลอด: เทสต์ chatter เดิม "ทุกอัน" วาง temp ไว้ใน dead-zone (33-35)
+    //    ซึ่งบังเอิญไม่เข้าเงื่อนไข `airTemp >= fanOnTemp` เลย gate เก่าจึงดูเหมือนทำงาน
+    //    แต่บ่ายจริงในโรงเรือน temp ค้าง 40°C เหนือเส้นตลอด → เงื่อนไขนั้นจริงทุกรอบ
+    //    → RH แกว่งรอบ 75 ทีไร ปั๊มติด-ดับทุก 30 วิ = สึกหรอ + noise รบกวนเซนเซอร์ (ประวัติจริงของโปรเจกต์)
+    auto in = base(); in.hotOn = true; in.pumpHeatOn = true;
+    const float t[] = {40, 40, 40, 40, 40, 40, 40, 40};
+    const float h[] = {74.9f, 75.1f, 74.8f, 75.2f, 74.7f, 75.3f, 74.6f, 75.1f};
+    auto c = runSequence(in, t, h, 8);
+    printf("       (ปั๊มสลับจริง %d ครั้ง / 8 รอบ — บั๊กเดิมได้ 7)\n", c.pump);
+    check(c.pump <= 1, "temp ค้าง 40 + RH แกว่งรอบ 75 -> ปั๊มสลับ ≤1 ครั้ง (ไม่กระพริบ)");
+    check(c.fan  == 0, "temp ค้าง 40 -> พัดลมเปิดค้าง ไม่สลับเลย");
+  }
+  {
+    // gate ค้างต้องไม่ทำให้ปั๊ม "ดับถาวร" — ตกใต้ 35 แล้วขึ้นใหม่ต้องติดได้
+    auto in = base(); in.hotOn = true; in.pumpHeatOn = true;
+    const float t[] = {40, 40, 34, 40};    // ร้อนค้าง -> ชื้นตัด -> ตกใต้ 35 (ปลด gate) -> ร้อนใหม่
+    const float h[] = {76, 70, 70, 70};
+    AutoControlInputs s = in;
+    bool pumpAfter[4];
+    for (int i = 0; i < 4; i++) {
+      s.airTemp = t[i]; s.airHumidity = h[i];
+      auto d = computeAutoDecisions(s);
+      s.hotOn = d.hotOn; s.dryOn = d.dryOn; s.pumpHeatOn = d.pumpHeatOn;
+      s.pumpHeatGated = d.pumpHeatGated;
+      pumpAfter[i] = d.pumpOn;
+    }
+    check(!pumpAfter[0], "ร้อน 40 + ชื้น 76 -> ปั๊มตัด (humid gate)");
+    check(!pumpAfter[1], "RH ตก 70 แต่ temp ยังค้าง 40 -> ปั๊มยังไม่ติด (gate ค้าง = จุดที่บั๊กเดิมพลาด)");
+    check(!pumpAfter[2], "temp ตกมา 34 (ใต้ temp_on) -> ยังไม่ติด แต่ปลด gate แล้ว");
+    check(pumpAfter[3],  "temp ขึ้น 40 ใหม่ -> ปั๊มติด (ข้ามเส้นจริงถึง re-arm ได้ ไม่ค้างดับถาวร)");
   }
 
   printf("== v2.7.0 vent: พัดลมไล่ความชื้นเมื่อ RH สูง (ปั๊มไม่แตะ) · ventOn=80 ventOff=75 ==\n");

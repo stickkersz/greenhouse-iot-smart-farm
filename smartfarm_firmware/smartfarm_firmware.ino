@@ -584,6 +584,8 @@ bool airHotOn   = false;                       // latch: อากาศร้�
 bool airDryOn   = false;                       // latch: อากาศแห้งอยู่ (<humidity_min จนกว่าจะ ≥humidity_max) — คุมทั้ง 2 ช่อง
 bool pumpHeatOn = false;                       // latch: ปั๊มไล่ร้อนอยู่ — เกณฑ์เดียวกับ airHotOn แต่ถูกล้างเมื่ออากาศอิ่มตัว (กันปั๊มกระพริบที่เส้น humidity_max)
 bool airWetOn   = false;                       // v2.7.0 latch: อากาศชื้นเกิน (≥humidity_vent จนกว่าจะ ≤vent-5%) — พัดลมไล่ความชื้น
+bool pumpHeatGated = false;                    // v2.9.3 latch: pumpHeat โดน humid gate ล้างและยังห้ามติดใหม่
+                                               // (ปลดเมื่ออุณหภูมิตกใต้ temp_on) — กันปั๊มกระพริบตอนอากาศร้อนค้าง
 
 // ── Forward Declarations ──────────────────────────────
 void readSensors();
@@ -1374,11 +1376,13 @@ void autoControl() {
     ventWarnedFor = NAN;   // ใช้ได้แล้ว หรือปิดฟีเจอร์เอง → พร้อมเตือนค่าถัดไป
   }
   AutoControlDecisions dec = computeAutoDecisions(
-    {sensorOk, avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn, thresh_hum_vent, airWetOn});
-  airHotOn   = dec.hotOn;    // เก็บ latch กลับไปใช้รอบหน้า
-  airDryOn   = dec.dryOn;
-  pumpHeatOn = dec.pumpHeatOn;
-  airWetOn   = dec.wetOn;
+    {sensorOk, avgAT, avgAH, ton, toff, hmin, hmax, airHotOn, airDryOn, pumpHeatOn, thresh_hum_vent, airWetOn,
+     pumpHeatGated});
+  airHotOn       = dec.hotOn;    // เก็บ latch กลับไปใช้รอบหน้า
+  airDryOn       = dec.dryOn;
+  pumpHeatOn     = dec.pumpHeatOn;
+  pumpHeatGated  = dec.pumpHeatGated;   // ⚠️ v2.9.3 ต้องเก็บกลับด้วย ไม่งั้น gate ลืมทุกรอบ = ปั๊มกระพริบเหมือนเดิม
+  airWetOn       = dec.wetOn;
 
   // เหตุผลที่พัดลมเปิด — ตาราง 8 ช่องตาม bitmask hot|dry|wet (index 0 = ไม่มีเหตุผลเลย)
   // ตารางแทน if/else ladder: ทุก combo เขียนไว้ชัด ไม่มีลำดับ else-if ให้สลับผิดโดยไม่รู้ตัว

@@ -43,8 +43,8 @@
           "manual_state": { ".validate": "newData.isBoolean()" },
           "schedule": {
             "enabled":  { ".validate": "newData.isBoolean()" },
-            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
-            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('off_time').exists() || newData.val() != newData.parent().child('off_time').val())" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('on_time').exists() || newData.val() != newData.parent().child('on_time').val())" },
             "$other": { ".validate": false }
           },
           "$other": { ".validate": false }
@@ -54,8 +54,8 @@
           "manual_state": { ".validate": "newData.isBoolean()" },
           "schedule": {
             "enabled":  { ".validate": "newData.isBoolean()" },
-            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
-            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('off_time').exists() || newData.val() != newData.parent().child('off_time').val())" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('on_time').exists() || newData.val() != newData.parent().child('on_time').val())" },
             "$other": { ".validate": false }
           },
           "$other": { ".validate": false }
@@ -65,8 +65,8 @@
           "manual_state": { ".validate": "newData.isBoolean()" },
           "schedule": {
             "enabled":  { ".validate": "newData.isBoolean()" },
-            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
-            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('off_time').exists() || newData.val() != newData.parent().child('off_time').val())" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('on_time').exists() || newData.val() != newData.parent().child('on_time').val())" },
             "$other": { ".validate": false }
           },
           "$other": { ".validate": false }
@@ -76,16 +76,16 @@
           "manual_state": { ".validate": "newData.isBoolean()" },
           "schedule": {
             "enabled":  { ".validate": "newData.isBoolean()" },
-            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
-            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/)" },
+            "on_time":  { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('off_time').exists() || newData.val() != newData.parent().child('off_time').val())" },
+            "off_time": { ".validate": "newData.isString() && newData.val().matches(/^([01][0-9]|2[0-3]):[0-5][0-9]$/) && (!newData.parent().child('on_time').exists() || newData.val() != newData.parent().child('on_time').val())" },
             "$other": { ".validate": false }
           },
           "$other": { ".validate": false }
         },
         "thresholds": {
-          "temp_on":        { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_off').val()" },
+          "temp_on":        { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_off').val() && (!newData.parent().child('temp_alert').exists() || newData.val() < newData.parent().child('temp_alert').val())" },
           "temp_off":       { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && (!newData.parent().child('temp_on').exists() || newData.val() < newData.parent().child('temp_on').val())" },
-          "humidity_min":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && (!newData.parent().child('humidity_max').exists() || newData.val() < newData.parent().child('humidity_max').val())" },
+          "humidity_min":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && (!newData.parent().child('humidity_max').exists() || newData.val() < newData.parent().child('humidity_max').val()) && (!newData.parent().child('humidity_alert').exists() || newData.val() > newData.parent().child('humidity_alert').val())" },
           "humidity_max":   { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && newData.val() > newData.parent().child('humidity_min').val() && (!newData.parent().child('humidity_vent').exists() || newData.parent().child('humidity_vent').val() == 0 || newData.val() + 5 <= newData.parent().child('humidity_vent').val())" },
           "humidity_vent":  { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 && (newData.val() == 0 || (newData.val() > 5 && newData.val() >= newData.parent().child('humidity_max').val() + 5))" },
           "temp_alert":     { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_on').val()" },

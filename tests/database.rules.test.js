@@ -18,6 +18,31 @@ const {
 const RULES_PATH = path.join(__dirname, "..", "database.rules.json");
 const EMULATOR_PORT = 9000; // ต้องตรงกับ firebase.json → emulators.database.port
 
+// ── อ่าน PRESETS สดจาก dashboard/index.html ──────────
+// เหตุผลเดียวกับ tests/vent_hyst_sync.check.js: ค่าที่ก๊อปมาแปะจะ drift เงียบๆ เมื่อมีคนแก้ต้นทาง
+// แล้วเทสต์จะเฝ้าค่าเก่าที่ไม่มีใครใช้ต่อไปโดยยังเขียวอยู่ · parse แบบหยาบๆ พอ (ไม่ต้อง JS parser เต็ม)
+// เพราะรูปแบบใน index.html เป็น object literal บรรทัดเดียวต่อ preset — ถ้าวันหลังเปลี่ยนรูปแบบ
+// regex จะหาไม่เจอแล้ว throw ทันที (ดังกว่าการเงียบแล้วเทสต์ค่าผิด)
+function readDashboardPresets() {
+  const src = fs.readFileSync(path.join(__dirname, "..", "dashboard", "index.html"), "utf8");
+  const block = src.match(/const\s+PRESETS\s*=\s*\{([\s\S]*?)\n\};/);
+  assert.ok(block, "หา const PRESETS ใน dashboard/index.html ไม่เจอ — ถ้าย้าย/เปลี่ยนรูปแบบ ต้องแก้เทสต์นี้");
+
+  const out = {};
+  for (const line of block[1].split("\n")) {
+    const m = line.match(/^\s*(\w+)\s*:\s*\{(.+)\}\s*,?\s*$/);
+    if (!m) continue;
+    const fields = {};
+    for (const kv of m[2].split(",")) {
+      const f = kv.match(/^\s*(\w+)\s*:\s*(-?[\d.]+)\s*$/);   // เอาเฉพาะ field ที่เป็นตัวเลข (ข้าม label)
+      if (f) fields[f[1]] = parseFloat(f[2]);
+    }
+    if (Object.keys(fields).length) out[m[1]] = fields;
+  }
+  assert.ok(Object.keys(out).length > 0, "parse PRESETS ไม่ได้เลย — รูปแบบใน index.html เปลี่ยนไปแล้ว");
+  return out;
+}
+
 let testEnv;
 
 before(async () => {
@@ -141,18 +166,30 @@ describe("control/thresholds — hysteresis + type validation", () => {
   });
 
   // ทั้ง 3 preset ในหน้า dashboard ต้องเขียนผ่าน rules ได้ — preset ที่ rules ปัดคือบั๊กที่ผู้ใช้เจอทันที
-  // ค่าต้องตรงกับ PRESETS ใน dashboard/index.html (summer / normal / rainy)
-  const DASHBOARD_PRESETS = {
-    summer: {temp_on:33, temp_off:30, humidity_min:70, humidity_max:85, humidity_vent:90, temp_alert:38, humidity_alert:50, water_temp_alert:34},
-    normal: {temp_on:35, temp_off:32, humidity_min:60, humidity_max:75, humidity_vent:80, temp_alert:40, humidity_alert:40, water_temp_alert:35},
-    rainy:  {temp_on:38, temp_off:35, humidity_min:50, humidity_max:65, humidity_vent:85, temp_alert:42, humidity_alert:35, water_temp_alert:36},
-  };
+  //
+  // ⚠️ v2.9.3: อ่านค่าจาก dashboard/index.html ตอนรันเทสต์ ไม่ก๊อปตัวเลขมาแปะ
+  //    เดิมเขียนซ้ำไว้ที่นี่ → แก้ preset ในหน้า dashboard แล้วลืมแก้ที่นี่ เทสต์ยัง "เขียว" ทั้งที่
+  //    ของจริงอาจโดน rules ปัดตกแล้ว = เทสต์เฝ้าค่าที่ไม่มีใครใช้ (ปัญหาเดียวกับที่ VENT_HYST เคยเจอ
+  //    จน tests/vent_hyst_sync.check.js ต้องอ่านไฟล์เอาค่าจริงมาเทียบ — ที่นี่ใช้วิธีเดียวกัน)
+  const DASHBOARD_PRESETS = readDashboardPresets();
   for (const [name, preset] of Object.entries(DASHBOARD_PRESETS)) {
-    test(`ACCEPTS dashboard preset '${name}' verbatim`, async () => {
+    test(`ACCEPTS dashboard preset '${name}' verbatim (อ่านสดจาก index.html)`, async () => {
       const db = emailUser().database();
       await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(preset));
     });
   }
+
+  test("sanity: อ่าน preset จาก dashboard ได้ครบ 3 ตัวและมี field ครบ", () => {
+    const names = Object.keys(DASHBOARD_PRESETS);
+    assert.deepEqual(names.sort(), ["normal", "rainy", "summer"],
+      "ถ้าเพิ่ม/ลบ preset ในหน้า dashboard ให้แก้เทสต์นี้ด้วย (กันอ่านพลาดแล้วเงียบ)");
+    for (const [n, p] of Object.entries(DASHBOARD_PRESETS)) {
+      for (const f of ["temp_on","temp_off","humidity_min","humidity_max",
+                       "humidity_vent","temp_alert","humidity_alert","water_temp_alert"]) {
+        assert.equal(typeof p[f], "number", `preset '${n}' ขาด field ${f} หรือไม่ใช่ตัวเลข`);
+      }
+    }
+  });
 
   // ช่องเดียวกับที่ vent/max เคยมี — partial update ทำให้ ton<=toff หรือ hmax<=hmin ได้
   // แล้ว autoControl() ติด guard `if (ton <= toff || hmax <= hmin) return;` ทุกรอบ = รีเลย์ค้างถาวร
@@ -172,6 +209,33 @@ describe("control/thresholds — hysteresis + type validation", () => {
     const db = emailUser().database();
     await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
     await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ temp_off: 30 }));
+  });
+
+  // ── v2.9.3: ช่องเดียวกันอีกคู่ที่ตกสำรวจ — เกณฑ์ "เริ่มทำงาน" ต้องไม่แซงเกณฑ์ "แจ้งเตือน" ──
+  // temp_alert เช็ค > temp_on อยู่แล้ว แต่ขาขึ้น temp_on ไม่เคยเช็คกลับ → ยก temp_on ทีหลังแซงได้
+  // ผลจริง: แตร/แจ้งเตือนดังก่อนพัดลมเริ่มทำงาน = เตือนว่า "วิกฤต" ทั้งที่ระบบยังไม่ได้เริ่มแก้ด้วยซ้ำ
+  test("REJECTS partial update raising temp_on above stored temp_alert", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // on 35 / alert 38
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ temp_on: 41 }));
+  });
+
+  test("REJECTS partial update lowering humidity_min below stored humidity_alert", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));   // min 60 / alert 40
+    await assertFails(db.ref("/smartfarm/control/thresholds").update({ humidity_min: 35 }));
+  });
+
+  test("ACCEPTS partial update keeping temp_on below temp_alert", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ temp_on: 37 }));
+  });
+
+  test("ACCEPTS partial update keeping humidity_min above humidity_alert", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").set(VALID));
+    await assertSucceeds(db.ref("/smartfarm/control/thresholds").update({ humidity_min: 55 }));
   });
 
   test("ACCEPTS water_temp_alert as a standalone number (no ordering constraint)", async () => {
@@ -281,6 +345,38 @@ describe("control/ch4_spare — channel mode/manual_state/schedule validation", 
   test("REJECTS unrecognized field under a channel ($other:false)", async () => {
     const db = emailUser().database();
     await assertFails(db.ref("/smartfarm/control/ch4_spare/typo_field").set(true));
+  });
+
+  // ── v2.9.3: on_time == off_time = "เปิดตลอด" ใน firmware ──
+  // checkSchedule() แตกเป็น 2 กิ่ง on<off (ในวัน) กับ on>off (ข้ามคืน) · พอ on==off กิ่งข้ามคืน
+  // กลายเป็น `now>=onT || now<offT` ซึ่งเป็นจริงเสมอ = ช่องนั้นเดินตลอด 24 ชม. ไม่ใช่ตามตารางที่ตั้ง
+  // dashboard กันไว้ฝั่ง JS แล้ว แต่ rules คือด่านจริง — เขียนตรงผ่าน REST/console ยังหลุดได้
+  test("REJECTS schedule with on_time === off_time (firmware reads it as always-ON)", async () => {
+    const db = emailUser().database();
+    await assertFails(
+      db.ref("/smartfarm/control/ch4_spare/schedule").set({
+        enabled: true, on_time: "07:00", off_time: "07:00",
+      })
+    );
+  });
+
+  test("REJECTS partial update making off_time equal stored on_time", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(
+      db.ref("/smartfarm/control/ch4_spare/schedule").set({
+        enabled: true, on_time: "07:00", off_time: "18:00",
+      })
+    );
+    await assertFails(db.ref("/smartfarm/control/ch4_spare/schedule").update({ off_time: "07:00" }));
+  });
+
+  test("ACCEPTS overnight schedule (on_time > off_time) — ยังต้องตั้งข้ามคืนได้", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(
+      db.ref("/smartfarm/control/ch4_spare/schedule").set({
+        enabled: true, on_time: "22:00", off_time: "06:00",
+      })
+    );
   });
 });
 
