@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.2** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.3** · ESP32 DevKit V1
 
 ---
 
@@ -102,7 +102,7 @@ Four hysteresis **latches** are computed from air sensor readings:
 |---|---|---|---|
 | **hot** | temp ≥ `temp_on` | temp ≤ `temp_off` | fan |
 | **dry** | humidity < `humidity_min` | humidity ≥ `humidity_max` | fan + pump |
-| **pumpHeat** | temp ≥ `temp_on` | temp ≤ `temp_off` **or** humidity ≥ `humidity_max` (humid gate) | pump only |
+| **pumpHeat** | temp **crosses up through** `temp_on` | temp ≤ `temp_off` **or** humidity ≥ `humidity_max` (humid gate) | pump only |
 | **wet** (vent) | humidity ≥ `humidity_vent` | humidity ≤ `humidity_vent − VENT_HYST` | fan only |
 
 **Outputs:**
@@ -200,7 +200,7 @@ Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinou
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.2 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.3 ===`.
 
 ---
 
@@ -278,10 +278,10 @@ Run all three green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.9.2`.
+3. Flash the board, watch serial for `v2.9.3`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.9.2`.
+   - Banner reads `v2.9.3`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -311,7 +311,15 @@ Run all three green before flashing or deploying.
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `docs/PROJECT_MEMORY.md`.
 
-**v2.9.2** (latest) — fixed the reboot loop that was masquerading as Wi-Fi trouble, plus review follow-ups:
+**v2.9.3** (latest) — fixed pump chatter on hot afternoons, plus a full-system review sweep:
+
+1. **`pumpHeat` re-armed on a level instead of an edge.** The latch's own comment promised that once the humid gate clears it, the temperature must cross `temp_on` again before the pump can re-arm — but the code read `else if (airTemp >= fanOnTemp) pumpHeat = true`, which is trivially true on every cycle once the air is genuinely hot and *stays* hot. So whenever humidity drifted back and forth across `humidity_max` on a hot afternoon, the pump switched on and off every 30 s sensor cycle: exactly the chatter this latch design exists to prevent, and the failure mode this project has already traced sensor latch-up to. Verified by compiling the old logic standalone — 40 °C held constant with RH oscillating around 75 gave **7 pump switches in 8 cycles**; the fix gives 1. Every previous chatter test kept temp inside the 32–35 dead-zone, where the buggy branch happens never to fire, which is why the suite stayed green. Fixed with a `pumpHeatGated` latch, released only once temp falls back below `temp_on`.
+2. **NaN sensor readings bypassed the safety guard.** `airHumidity <= 0` can never catch NaN, since every IEEE754 comparison against NaN is false — a NaN would have frozen every latch at its pre-glitch value instead of shutting everything off. Unreachable today (`readSensors()` filters `isnan` first), but the guard is this pure function's own documented invariant.
+3. **Rules never cross-checked control vs alert thresholds** — a single-field write could raise `temp_on` above `temp_alert` (or drop `humidity_min` below `humidity_alert`), so the buzzer would fire before the fan even engaged. Same partial-update gap v2.7.1 closed for `humidity_vent`/`humidity_max`.
+4. **Rules accepted `on_time == off_time`**, which `checkSchedule()` reads as always-ON. The dashboard blocked it client-side; rules are the actual boundary.
+5. **Dashboard never read `/smartfarm/alerts/last_alert`** — pump/fan cutoff, `sensor_fail`, and high water temp never reached the operator. Now wired to the banner/notification/history pipeline. Also: CH1's AUTO button is gone (firmware has no auto branch for CH1, so clicking it froze the channel), gauges grey out when the sensor goes stale instead of showing a stale number that looks live, and temperature inputs are range-checked client-side against the same bounds the rules enforce.
+
+**v2.9.2** — fixed the reboot loop that was masquerading as Wi-Fi trouble, plus review follow-ups:
 
 1. **Root cause: `syncNTP()` blocked past the watchdog.** Its wait loop called `getLocalTime(&t)` without the second argument, taking the library's blocking 5000 ms default — worst case 20 × (5000 + 500) = 110 s inside a single `loop()` pass, against `WDT_TIMEOUT_S` 60. TASK_WDT rebooted the board, which came back with an unset clock and did it again (`boot_count` 11 → 19 in ~1 day, `last_reset_reason` = `TASK_WDT`). Now uses the non-blocking `readLocalTime()`, bounding the wait at 10 s. Deliberately **does not** feed the watchdog inside that loop — the 10 s bound is the real guard, and the WDT stays armed as the last-resort detector for exactly this class of bug.
 2. **Hourly log batched** into one `updateNodeSilent` — it was still issuing 7-10 sequential SSL round trips at each hour edge, the same stall v2.9.1 fixed on the 30 s paths.

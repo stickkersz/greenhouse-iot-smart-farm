@@ -2,7 +2,7 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Nattakit Prasertsak (IT Intern) | มิถุนายน 2569
-  Version: 2.9.2
+  Version: 2.9.3
   ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
      (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
      1) บรรทัดนี้  2) Serial banner ใน setup()  3) LCD splash  4) j.set("firmware", ...) ใน pushStatus()
@@ -10,6 +10,29 @@
      6) README.md — badge หัวไฟล์ + ขั้นตอนตรวจหลัง flash ที่บอกให้ "ดู serial ว่าขึ้น vX.Y.Z"
         ⚠️ ข้อ 6 อันตรายเงียบที่สุด: ถ้าลืม README จะสั่งให้คนหน้างานมองหาเลขเวอร์ชันเก่า
         แล้วเขาจะสรุปว่า "แฟลชผิดรุ่น" ทั้งที่แฟลชถูกแล้ว
+  Changelog v2.9.3 (2026-08-04) — แก้ปั๊มกระพริบตอนอากาศร้อนค้าง + เก็บงานจาก code review รอบเต็มระบบ:
+    อาการ: บ่ายที่อุณหภูมิค้างเหนือ temp_on (เช่น 40°C) แล้ว RH แกว่งไปมารอบ humidity_max
+           → ปั๊มติด-ดับ "ทุกรอบ sensor (30 วิ)" ซึ่งคือ chatter แบบเดียวกับที่ latch design นี้
+           ตั้งใจกันมาตั้งแต่แรก และเป็นสาเหตุที่ยืนยันแล้วว่าทำให้เซนเซอร์อากาศ latch-up
+    1) ต้นเหตุ: latch pumpHeat เขียน `else if (airTemp >= fanOnTemp) pumpHeat = true;`
+       = เช็ค "ระดับ" ไม่ใช่ "การข้ามเส้น" · พออุณหภูมิค้างเหนือเส้น เงื่อนไขนี้จริงทุกรอบ
+       → humid gate ล้าง pumpHeat ทิ้งรอบนี้ แล้วรอบหน้าติดกลับทันที ทั้งที่คอมเมนต์เหนือโค้ดเขียนไว้เองว่า
+       "ล้างแล้วต้องรอ airTemp ข้าม fanOnTemp ใหม่ถึงติดอีก"
+       ⚠️ เทสต์เก่าจับไม่ได้เพราะเคส chatter ทุกอันวาง temp ไว้ใน dead-zone (32-35) ซึ่งไม่เข้าเงื่อนไขนี้เลย
+       แก้: เพิ่ม latch pumpHeatGated — โดน gate ล้างแล้วค้างห้ามติดใหม่ จนกว่า airTemp จะตกใต้ fanOnTemp
+       (พิสูจน์ด้วยการคอมไพล์ logic เก่าเทียบ: temp ค้าง 40 + RH แกว่งรอบ 75 = สลับ 7/8 รอบ · ของใหม่ = 1)
+       ⚠️ .ino ต้องเก็บ pumpHeatGated กลับเข้า struct ทุกรอบเหมือน latch ตัวอื่น ไม่งั้น gate ลืมทุกรอบ = บั๊กเดิม
+    2) guard "เซนเซอร์เชื่อไม่ได้" ใน computeAutoDecisions() ไม่เคยจับ NaN ได้ — IEEE754 บังคับให้ทุกการ
+       เปรียบเทียบกับ NaN คืน false (NaN <= 0 ก็ false) → NaN จะรอด guard แล้วทำให้ latch ค้างค่าเดิมทั้งหมด
+       ตอนนี้ readSensors() กรอง isnan() ก่อนอยู่แล้วจึงยังไม่เคยเกิดจริง แต่นี่คือ invariant ของฟังก์ชันเอง
+    3) database.rules.json: temp_on ไม่เคยถูกเช็คกับ temp_alert (และ humidity_min กับ humidity_alert)
+       → เขียนทีละ field ดัน "เกณฑ์เริ่มทำงาน" ให้สูงกว่า "เกณฑ์แจ้งเตือน" ได้ = แตรดังก่อนพัดลมเริ่มทำงาน
+    4) database.rules.json: schedule ที่ on_time == off_time ผ่าน rules ได้ ทั้งที่ firmware อ่านเป็น
+       "เปิดตลอด" (dashboard กันฝั่ง JS ไว้แล้ว แต่ rules คือด่านจริง)
+    5) dashboard: ไม่เคยอ่าน /smartfarm/alerts/last_alert เลย → pump_cutoff/fan_cutoff/sensor_fail/
+       high_water_temp ที่ firmware เขียนไว้ไม่เคยขึ้นจอ · ปุ่ม AUTO ของ CH1 มีทั้งที่ firmware ไม่มี auto
+       logic ให้ช่องนี้ (กดแล้วช่องค้างคุมไม่ได้) · เกจไม่หรี่ตอนเซนเซอร์ตาย · ช่องกรอกอุณหภูมิไม่เช็คช่วง
+
   Changelog v2.9.2 (2026-07-31) — แก้ reboot loop (TASK_WDT) + เก็บงานจาก code review:
     อาการหน้างาน: dashboard เห็นบอร์ด "หลุด" ถี่ๆ · ที่จริงไม่ใช่ WiFi หลุด (wifi_drop_count = 1)
     แต่เป็น "บอร์ด reboot" ซ้ำๆ — boot_count 11 → 19 ใน ~1 วัน, last_reset_reason = TASK_WDT
@@ -686,7 +709,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.2 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.3 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -755,7 +778,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.2");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.3");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -1613,7 +1636,7 @@ void pushStatus() {
   j.set("ch2_fan_out", ch2_fanOut);
   j.set("ch3_fan_in",  ch3_fanIn);
   j.set("ch4_spare",   ch4_spare);
-  j.set("firmware",    "2.9.2");
+  j.set("firmware",    "2.9.3");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   j.set("last_reset_reason", resetReasonStr(bootResetReason));

@@ -427,7 +427,7 @@ describe("v2.9.1 batched PATCH — รูปทรงที่ firmware ส่�
     ch2_fan_out: false,
     ch3_fan_in: true,
     ch4_spare: true,
-    firmware: "2.9.2",
+    firmware: "2.9.3",
     last_reset_reason: "POWERON (เสียบไฟใหม่/กดปุ่ม EN)",
     boot_count: 3,
     free_heap: 201528,
