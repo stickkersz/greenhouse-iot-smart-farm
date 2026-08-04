@@ -2,7 +2,7 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Nattakit Prasertsak (IT Intern) | มิถุนายน 2569
-  Version: 2.9.3
+  Version: 2.9.4
   ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
      (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
      1) บรรทัดนี้  2) Serial banner ใน setup()  3) LCD splash  4) j.set("firmware", ...) ใน pushStatus()
@@ -10,6 +10,43 @@
      6) README.md — badge หัวไฟล์ + ขั้นตอนตรวจหลัง flash ที่บอกให้ "ดู serial ว่าขึ้น vX.Y.Z"
         ⚠️ ข้อ 6 อันตรายเงียบที่สุด: ถ้าลืม README จะสั่งให้คนหน้างานมองหาเลขเวอร์ชันเก่า
         แล้วเขาจะสรุปว่า "แฟลชผิดรุ่น" ทั้งที่แฟลชถูกแล้ว
+  Changelog v2.9.4 (2026-08-05) — เก็บงาน code review รอบสุดท้าย (เส้น alert ทั้งเส้น) + ถอย GPIO ปั๊มกลับ:
+    0) ⚠️ ถอย PIN_RELAY_CH4 กลับเป็น GPIO25 (และ CH2 กลับเป็น GPIO27) — ยกเลิกการสลับของ 2026-08-03
+       เหตุผล: การสลับนั้น "ไม่เคยถูกแฟลชลงบอร์ด" (แก้ config.h ตอน 22:23 หลังแฟลช v2.9.2 ไปแล้วตั้งแต่เช้า)
+       ช่อง CH4 บนบอร์ดรีเลย์เสียจริง แต่พี่เลี้ยงแก้ที่ฝั่งฮาร์ดแวร์แทน และปั๊มกลับมาทำงานโดยที่บอร์ด
+       ยังรันเฟิร์มแวร์ที่ใช้ GPIO25 อยู่ · ยืนยันกับผู้ใช้ 2026-08-05 ว่าไม่ได้แฟลชซ้ำหลังวันนั้น
+       → ถ้าแฟลชโดยไม่ถอย ปั๊มจะหยุดทำงานทันที เพราะ firmware ไปสั่ง GPIO27 ที่ไม่ได้ต่อกับปั๊ม
+       ⚠️ การเดินสายจริง (GPIO ไหน → ขา IN ไหน, ปั๊มขันที่เทอร์มินัลช่องไหน) ยังไม่มีใครบันทึกไว้
+          ต้องไล่สายก่อนถ้าจะแก้เลข GPIO คู่นี้อีก · ดู docs/pinout.md
+    1) alerts/last_alert เขียนแยก 2-3 field = dashboard อ่านเจอ "สถานะครึ่งๆ" · listener เกาะ node แม่
+       เห็น type ใหม่ + message เก่า → banner/notification/ประวัติ ขึ้นหัวข้อใหม่ปนข้อความเก่า
+       แล้ว saveAlertHistory() dedupe ต่อ type ทิ้งตัวที่ถูกต้องที่ตามมาทีหลัง = ข้อความผิดถูกบันทึกถาวร
+       แก้: writeAlertNode() รวมเป็น FirebaseJson ก้อนเดียว + setJSONAsync = atomic ต่อ 1 event
+       (Async เพราะไลบรารีใส่ print=silent ให้เฉพาะ request แบบ async — ตัวธรรมดาจะส่ง payload ที่เพิ่ง
+        เขียนกลับมาทั้งก้อน ~230-450 ไบต์ ยัดเข้า BSSL rx buffer 512 ทั้งที่ไม่มีใครอ่านค่าที่คืนมา)
+       (แนวเดียวกับที่ v2.9.1/v2.9.2 ทำกับ pushStatus/pushToFirebase/pushHourlyLog — เส้น alert ตกสำรวจ)
+       ⚠️ ใช้ setJSON ไม่ใช่ updateNodeSilent ต่างจากเส้นอื่น — last_alert คือ "เหตุการณ์" ไม่ใช่กองสถานะ
+       PATCH ทิ้ง field ของ alert ตัวก่อนคาไว้ · ของจริงใน DB 2026-08-05: type=fan_cutoff (เส้นนี้ไม่เขียน
+       value เลย) แต่มี value=12 ค้างอยู่ = airSensorFailCount ของ sensor_fail คนละตัว แล้ว dashboard
+       เอาไปแสดงและใส่ dedupe key ด้วย
+    2) เพิ่ม field seq (uptime วินาที) ในทุก alert · dashboard เอาไปใส่ dedupe key
+       เดิม pump_cutoff/fan_cutoff เขียนข้อความ "คงที่" และไม่มี value → การตัดครั้งที่ 2, 3, ...
+       สร้าง payload เหมือนครั้งแรกทุก byte → โดน dedupe ของ dashboard กลืน = alert "ตรวจสอบระดับน้ำ"
+       ขึ้นแค่ครั้งเดียวต่อการโหลดหน้า ทั้งที่บ่ายร้อนตัดทุก ~20 นาที · ตัวที่แปลว่า "น้ำอาจหมด" คือตัวที่เงียบ
+    3) alert ที่หายเองได้ (high_temp / low_humidity / high_water_temp) ไม่มี rate limit — ยิงทุกรอบ
+       sensor (30 วิ) ตราบใดที่เงื่อนไขยังจริง · บ่าย 40°C 5 ชม. = buzzer บล็อก ~1 วิ × 600 ครั้ง
+       + เขียน Firebase ~1800 ครั้ง · เส้น sensor_fail ได้ gate นี้ไปแล้วตั้งแต่ v2.2.0 ด้วยเหตุผลเดียวกัน
+       แก้: alertGate() — ยิงตอน "เข้าสถานะ" แล้วย้ำทุก ALERT_REPEAT_MS (10 นาที)
+    4) เส้น cutoff เขียน Firebase โดยไม่ตั้ง lastPushTime → control poll (1.5 วิ) เข้าไปชน fbData
+       ที่เพิ่งเขียนเสร็จ = เคสที่ guard 2 วิของ v2.1.1 ตั้งใจกันพอดีแต่ครอบไม่ถึง · writeAlertNode ตั้งให้แล้ว
+    5) readSensors() รับ 0 %RH เป็นค่าปกติ (airHumidity < 0) แต่ computeAutoDecisions() ถือว่า <= 0
+       คือ "เซนเซอร์เชื่อไม่ได้" แล้วสั่งปิดพัดลม+ปั๊ม · guard 2 ตัวไม่ตรงกัน = ถ้า SHT35 คืน 0.0 แบบ CRC ผ่าน
+       รีเลย์ถูกปิดเงียบๆ ขณะที่ sensor_ok=true ไม่มี alert ไม่มี buzzer dashboard เขียวหมด · ปรับเป็น <= 0
+    6) guard "threshold ไม่ถูกต้อง" ใน autoControl() พิมพ์ทุก 30 วิ ไม่มีวันหยุด — latch เหมือน log ซ้ำตัวอื่น
+       ในไฟล์นี้ (waterBadLogged / schedNoTimeLogged / fbNotReadyLogged / ventWarnedFor)
+    7) dashboard: guard `if (!a || !a.type) return;` วางก่อน prime → ถ้า node ยังไม่มีตอนโหลดหน้า
+       (DB ใหม่/โดนลบ) alert จริงตัวแรกจะถูกกินเป็น "รอบ prime" = เงียบสนิท · prime ที่ callback null ด้วย
+
   Changelog v2.9.3 (2026-08-04) — แก้ปั๊มกระพริบตอนอากาศร้อนค้าง + เก็บงานจาก code review รอบเต็มระบบ:
     อาการ: บ่ายที่อุณหภูมิค้างเหนือ temp_on (เช่น 40°C) แล้ว RH แกว่งไปมารอบ humidity_max
            → ปั๊มติด-ดับ "ทุกรอบ sensor (30 วิ)" ซึ่งคือ chatter แบบเดียวกับที่ latch design นี้
@@ -344,11 +381,11 @@
     - ESP32 DevKit V1
     - SHT35 (I2C, address 0x44 หรือ 0x45 ตาม ADDR pin) — อุณหภูมิ + ความชื้นอากาศ (แชร์บัส I2C กับ LCD)
     - DS18B20 Waterproof (GPIO4)   — อุณหภูมิน้ำ
-    - Relay 4CH Active-LOW (การเดินสายจริง 2026-08-03 — CH2/CH4 สลับ GPIO กันจากเดิม 2026-06-26):
+    - Relay 4CH Active-LOW (การเดินสายจริง 2026-06-26 · ⚠️ ช่อง CH4 บนบอร์ดรีเลย์เสีย เดินสายเลี่ยงฝั่งฮาร์ดแวร์แล้ว):
         CH1 GPIO26 — สำรอง (manual/schedule only)
-        CH2 GPIO25 — ไม่ได้ใช้
+        CH2 GPIO27 — ไม่ได้ใช้
         CH3 GPIO14 — พัดลม 220V AC (ดูดเข้า) — คุมด้วยอุณหภูมิ
-        CH4 GPIO27 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety
+        CH4 GPIO25 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety
 
   Libraries (Arduino IDE → Manage Libraries):
     - Firebase ESP32 Client by Mobizt
@@ -385,10 +422,10 @@ WiFiMulti wifiMulti;
 #define BUZZER_ACTIVE_LOW true
 #endif
 
-// ── Role → Channel mapping (การเดินสายจริง 2026-08-03 — CH2/CH4 สลับ GPIO กันจากเดิม 2026-06-26) ──
+// ── Role → Channel mapping (การเดินสายจริง 2026-06-26) ──
 //   index ใน array control: 0=ch1  1=ch2  2=ch3  3=ch4
 //   CH3 (GPIO14) = พัดลม (ดูดเข้า) — คุมด้วยอุณหภูมิ
-//   CH4 (GPIO27) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety
+//   CH4 (GPIO25) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety
 //   CH1 (GPIO26) = สำรอง — manual/schedule เท่านั้น (ไม่มี auto)
 //   CH2 = ไม่ได้ใช้ (ซ่อนใน dashboard) — ค้าง OFF เสมอ
 #define IDX_FAN   2   // ch3_fan_in  → พัดลม
@@ -511,8 +548,12 @@ unsigned long lastNtpSync    = 0;
 #define SENSOR_STALE_AFTER    12                // อ่านพลาดติดกัน N ครั้ง (~30วิ/ครั้ง = 6 นาที) → ถือว่าเซนเซอร์เชื่อไม่ได้ → auto ปิดทุกช่อง
                                                 // เลือก 12 เพราะทนต่อ glitch ชั่วคราวได้ (noise/CRC พลาดเป็นครั้งคราว) แต่ค่าเก่าสุดไม่เกิน 6 นาที
                                                 // หมายเหตุ: quiet window (ปั๊มเพิ่งสวิตช์) ไม่นับเป็นพลาด — มันข้ามการอ่าน ไม่ได้อ่านแล้วพัง
-#define SENSOR_ALERT_REPEAT_MS (10UL*60*1000)   // เซนเซอร์เสียแล้วไม่หายเอง (ต่างจาก alert ร้อน/แห้งที่หายเองได้) — ย้ำเตือนทุก 10 นาที
-                                                // ไม่ใช่ทุกรอบ 30 วิ ไม่งั้น buzzer ดังทั้งคืนและเขียน Firebase ซ้ำข้อความเดิมเป็นพันครั้ง
+#define ALERT_REPEAT_MS (10UL*60*1000)          // alert ที่เงื่อนไขยังค้างอยู่ — ย้ำเตือนทุก 10 นาที ไม่ใช่ทุกรอบ 30 วิ
+                                                // ใช้ร่วมกันทั้งเส้น "เสียแล้วไม่หายเอง" (sensor_fail) และ "หายเองได้" (ร้อน/แห้ง/น้ำร้อน)
+                                                // ⚠️ "หายเองได้" ไม่ได้แปลว่าหายภายในรอบ 30 วิ — บ่ายร้อนค้างเป็นชั่วโมง
+                                                //    ไม่ gate = buzzer บล็อก ~1 วิ ทุก 30 วิ ตลอดบ่าย + เขียน Firebase ซ้ำข้อความเดิมเป็นพันครั้ง
+                                                // ⚠️ v2.9.4 รวมจาก 2 ค่าที่ค่าเท่ากันเป๊ะ (SENSOR_ALERT_REPEAT_MS/SELF_CLEAR_ALERT_REPEAT_MS)
+                                                //    แยกไว้แล้วปรับคาบทีหลังจะแก้ตัวเดียวโดยไม่รู้ตัว = alert ครึ่งหนึ่งค้างคาบเก่า
 // WiFi — ESP32 core auto-reconnect เองได้ แต่เฉพาะ SSID "ตัวเดิม" ที่เคยต่อ ถ้าตัวนั้นหายถาวร
 // (เราเตอร์เจ๊ง/เปลี่ยนชื่อ) มันจะไม่ลองตัวสำรองใน config.h ให้เลย ต้อง wifiMulti.run() เท่านั้น
 #define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: ลอง wifiMulti.run() (ไล่ทุก SSID) ทุก 30 วิ — นับจาก "เวลาจบ" ของ run() ก่อนหน้า
@@ -568,6 +609,20 @@ String controlLoadError = "";                  // เหตุผลที่โ
 bool shtMissingLogged  = false;                // latch: พิมพ์ "ไม่พบเซนเซอร์" ไปแล้ว (กัน log ท่วมทุก 30 วิ)
 bool airNotReadyLogged = false;                // latch: พิมพ์ "sensor ยังไม่พร้อม" ไปแล้ว
 bool airStaleLatched   = false;                // latch: เข้าสถานะเซนเซอร์เสียแล้ว — ใช้จับ "ขอบ" ตอนเข้า/ออก
+
+// สถานะของ alert gate 1 ตัว (ดู alertGate ท้ายไฟล์) — latch กับตัวจับเวลา "ต้องมาคู่กันเสมอ" จึงมัดไว้ใน struct
+// ⚠️ เดิมส่ง alertGate เป็น 2 อาร์กิวเมนต์แยก (bool&, unsigned long&) — ก๊อป call site ใหม่แล้วแก้ชื่อไม่ครบทั้งคู่
+//    จะได้ gate ที่แชร์ตัวจับเวลากับ alert ตัวอื่นเงียบๆ คอมไพล์ผ่าน อ่านผ่านตาก็ดูถูก
+// ⚠️ ต้องประกาศ "ก่อน" ฟังก์ชันที่รับมันเป็นพารามิเตอร์ — Arduino สร้าง prototype ให้อัตโนมัติที่หัวไฟล์
+//    ถ้า type ยังไม่รู้จักตอนนั้น prototype จะคอมไพล์ไม่ผ่าน ('AlertGate' has not been declared)
+struct AlertGate {
+  bool          latched = false;
+  unsigned long lastMs  = 0;
+};
+
+// prototype ล่วงหน้า — pumpSafetyCheck() เรียก writeAlertNode() ซึ่งนิยามอยู่ท้ายไฟล์
+// (มี default argument จึงเขียนไว้ที่ prototype ที่เดียว ห้ามซ้ำที่ตัวนิยาม)
+static void writeAlertNode(const char* type, const char* message, float value = NAN);
 unsigned long wifiOfflineSince = 0;            // millis() ตอน WiFi หลุด (0 = ออนไลน์อยู่) — ใช้นับครบ 30 นาทีก่อน restart
 // ── WiFi diagnostics (v2.9.0) ────────────────────────
 // เดิมไม่เคยเก็บ "เหตุผล" ที่ AP เตะเราออกเลย — log แค่ "หลุด" กับ "กลับมาแล้ว" ทำให้ไล่สาเหตุจริงไม่ได้
@@ -709,7 +764,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.3 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.4 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -778,7 +833,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.3");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.4");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -1269,9 +1324,14 @@ void readSensors() {
     airTemp     = sht35.readTemperature();
     airHumidity = sht35.readHumidity();
     // ถือว่าพังถ้า NaN (CRC ไม่ผ่าน/สื่อสารพลาด) หรือค่านอกช่วงสมเหตุผล
+    // ⚠️ v2.9.4: RH ต้อง "> 0" ไม่ใช่ ">= 0" — computeAutoDecisions() ถือว่า airHumidity <= 0
+    //    คือเซนเซอร์เชื่อไม่ได้แล้วสั่งปิดพัดลม+ปั๊มทั้งคู่ · ถ้า guard 2 ตัวไม่ตรงกัน SHT35 ที่คืน
+    //    0.0 %RH แบบ CRC ผ่าน จะรอดตรงนี้ (airSensorFailCount ไม่ขยับ → sensor_ok=true ไม่มี alert
+    //    ไม่มี buzzer หน้า dashboard เขียวหมด) แต่ไปโดนปิดรีเลย์เงียบๆ ที่ปลายทาง = ระบบตายแบบไม่มีใครรู้
+    //    0 %RH ในโรงเรือนเป็นไปไม่ได้อยู่แล้ว ตีเป็นค่าอ่านพลาดถูกกว่า
     bool airBad = isnan(airTemp) || isnan(airHumidity)
                || airTemp < AIR_TEMP_MIN || airTemp > AIR_TEMP_MAX
-               || airHumidity < 0 || airHumidity > 100;
+               || airHumidity <= 0 || airHumidity > 100;
     if (airBad) {
       Serial.println("[SHT35] อ่านค่าผิดปกติ (NaN/CRC พลาด หรือ นอกช่วง)");
       airTemp = 0; airHumidity = 0;
@@ -1370,10 +1430,21 @@ void autoControl() {
   float hmin = thresh_hum_min,  hmax = thresh_hum_max;
 
   // config ต้องมีช่องว่าง hysteresis ที่ถูกต้อง (พัดลม on>off, ปั๊ม max>min) ไม่งั้นรีเลย์กระพริบ → ข้ามรอบ
+  // ⚠️ static ในฟังก์ชัน ไม่ใช่ตัวแปร global — ใช้ที่นี่ที่เดียว เหมือน ventWarnedFor ข้างล่าง
+  //    (บล็อก global ยาวพอแล้ว คนอ่านตอนรับช่วงต่อจะไล่หา "สถานะที่แชร์กันข้ามฟังก์ชัน" เจอแต่ของปลอม)
+  static bool badThreshLogged = false;
   if (ton <= toff || hmax <= hmin) {
-    Serial.println("[AUTO] ข้าม — threshold ไม่ถูกต้อง (ต้อง temp_on>temp_off และ humidity_max>humidity_min)");
+    // ⚠️ v2.9.4: latch การพิมพ์ — เดิมพิมพ์ทุก 30 วิ ไม่มีวันหยุด · rules ปิดทางเข้าสถานะนี้ไปเกือบหมดแล้ว
+    //    แต่ config ที่ NVS คืนมาจากเฟิร์มแวร์รุ่นเก่ายังพามาถึงตรงนี้ได้
+    //    ⚠️ รีเลย์ค้างสถานะเดิมระหว่างนี้ และไม่มี alert — ตั้งใจไม่แตะรีเลย์ (ดีกว่าสั่งด้วย threshold พัง)
+    //    แต่ต้องเห็นบน serial อย่างน้อย 1 ครั้งต่อการเข้าสถานะ ไม่ใช่ท่วมจนกลบ log อื่น
+    if (!badThreshLogged) {
+      badThreshLogged = true;
+      Serial.println("[AUTO] ข้าม — threshold ไม่ถูกต้อง (ต้อง temp_on>temp_off และ humidity_max>humidity_min)");
+    }
     return;
   }
+  badThreshLogged = false;
   // ยังไม่มี sample อากาศที่อ่านได้เลย (บูตใหม่/เซนเซอร์ยังไม่พร้อม) → อย่าเพิ่งสั่งรีเลย์
   if (ctrlBufATCount == 0) return;
 
@@ -1599,13 +1670,14 @@ void pumpSafetyCheck() {
     // ถ้า "พัดลม" เป็นตัว trigger (ร้อน+ชื้น หรือ ฝนตก ปั๊มไม่ได้เดิน) = ปกติ ไม่ใช่เรื่องน้ำ → ไม่ปลุก buzzer
     // (กัน false water alarm ทุก ~20 นาทีตลอดบ่ายร้อน — พบโดย code review v2.8.0)
     if (fbReady()) {
+      // ⚠️ v2.9.4: เขียนก้อนเดียวผ่าน writeAlertNode() — เดิมยิง setString แยก type/message
+      //    ทำให้ dashboard อ่านเจอ type ใหม่คู่กับ message เก่า (ดูคอมเมนต์ที่ writeAlertNode)
+      //    ไม่ส่ง value โดยเจตนา — เส้นนี้ไม่มีตัวเลขให้รายงาน · seq เป็นตัวแยก event ให้แทน
       if (pumpMaxed) {
-        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "pump_cutoff");
-        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+        writeAlertNode("pump_cutoff",
           "ตัดปั๊มอัตโนมัติ — ปั๊มเดินต่อเนื่องเกิน 15 นาที (พักคู่พัดลม 5 นาที) ตรวจสอบระดับน้ำ");
       } else {
-        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    "fan_cutoff");
-        Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message",
+        writeAlertNode("fan_cutoff",
           "พัดลมพักอัตโนมัติ — เดินต่อเนื่องเกิน 15 นาที (พัก 5 นาที) เป็นปกติช่วงร้อน/ฝน");
       }
     }
@@ -1615,7 +1687,9 @@ void pumpSafetyCheck() {
 
 // ─────────────────────────────────────────────────────
 // push เฉพาะสถานะ relay + health — เบา เรียกแยกเพื่อยืนยันผลให้ dashboard ทันที
-// ⚠️ ตั้ง lastPushTime ที่นี่จุดเดียว — ทั้ง pushToFirebase() และ manual-change path (loop) เรียกผ่านฟังก์ชันนี้หมด
+// ⚠️ ตั้ง lastPushTime ที่นี่ — ทั้ง pushToFirebase() และ manual-change path (loop) เรียกผ่านฟังก์ชันนี้หมด
+//    (กติกาคือ "ทุกฟังก์ชันที่ยิง SSL ต้องตั้ง lastPushTime เอง" · ตอนนี้มี 3 จุด: ที่นี่,
+//     writeAlertNode() ของ v2.9.4 และ pushHourlyLog() — เพิ่มเส้น write ใหม่เมื่อไหร่ต้องตั้งด้วย)
 // เดิม lastPushTime ตั้งเฉพาะหลัง pushToFirebase() ทำให้ตอนกด Manual → pushStatus() ยิง SSL 13 ครั้ง
 // แต่ guard "เว้น 2 วิก่อน poll" ไม่รู้ตัว → control poll รอบถัดไป (1.5 วิ) เข้าไปชน SSL ที่เพิ่งเขียนเสร็จ
 // = เคสที่ guard ตั้งใจกันพอดี แต่ครอบไม่ถึง
@@ -1636,7 +1710,7 @@ void pushStatus() {
   j.set("ch2_fan_out", ch2_fanOut);
   j.set("ch3_fan_in",  ch3_fanIn);
   j.set("ch4_spare",   ch4_spare);
-  j.set("firmware",    "2.9.3");
+  j.set("firmware",    "2.9.4");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   j.set("last_reset_reason", resetReasonStr(bootResetReason));
@@ -1704,29 +1778,82 @@ void buzzerBeep(int times, int onMs, int offMs) {
 }
 
 // ─────────────────────────────────────────────────────
+// เขียน /smartfarm/alerts/last_alert เป็น "ก้อนเดียว" (v2.9.4)
+// ⚠️ เดิมยิง setString/setFloat แยก 2-3 ครั้ง = dashboard (listener เกาะ node แม่) เห็นสถานะ "ครึ่งๆ":
+//    เขียน type=pump_cutoff เสร็จก่อน แต่ message ยังเป็นของ alert ตัวเก่า → banner/notification/ประวัติ
+//    ขึ้นหัวข้อใหม่ปนข้อความเก่า · ตัวที่ถูกต้องมาช้าอีก 1 round trip แต่ saveAlertHistory() dedupe
+//    ต่อ type ทิ้งไปแล้ว = ข้อความผิดถูกบันทึกถาวร · setJSON ก้อนเดียว = atomic ต่อ 1 event
+// ⚠️ seq = uptime วินาที — dashboard ใช้แยก "alert ตัวใหม่" ออกจาก "ค่าเดิม" · จำเป็นเพราะ pump_cutoff
+//    เขียนข้อความคงที่ทุกครั้งและไม่มี value → ตัดครั้งที่ 2, 3, ... สร้าง payload เหมือนเดิมเป๊ะ
+//    แล้วโดน dedupe ของ dashboard กลืนหาย = alert "ตรวจสอบระดับน้ำ" ขึ้นแค่ครั้งเดียวต่อการโหลดหน้า
+//    ⚠️ seq เป็น "uptime ของบูตนี้" ไม่ใช่ลำดับสากล — รีบูตแล้วกลับไปเริ่มใกล้ 0 ใหม่
+//       ใช้เทียบว่า "คนละ event ไหม" ได้ · ห้ามใช้เรียงลำดับ alert ข้ามบูต
+// ⚠️ ตั้ง lastPushTime ด้วย — เส้นนี้ยิง SSL เหมือน pushStatus() ถ้าไม่ตั้ง control poll (1.5 วิ)
+//    จะเข้าไปชน fbData ที่เพิ่งเขียนเสร็จ ซึ่งคือเคสที่ guard 2 วิของ v2.1.1 ตั้งใจกันพอดี
+// value เป็น optional — ไม่ส่ง = NAN = ไม่เขียน key นี้ (เส้น cutoff ไม่มีตัวเลขให้รายงาน)
+static void writeAlertNode(const char* type, const char* message, float value) {   // default NAN อยู่ที่ prototype
+  FirebaseJson j;
+  j.set("type",    type);
+  j.set("message", message);
+  j.set("seq",     (int)(millis() / 1000));
+  if (!isnan(value)) j.set("value", value);
+  // ⚠️ setJSON (แทนที่ทั้งก้อน) ไม่ใช่ updateNodeSilent (PATCH/merge) — ต่างจากทุกเส้น push อื่นในไฟล์นี้
+  //    โดยเจตนา · last_alert คือ "เหตุการณ์ 1 ตัว" ไม่ใช่กองสถานะที่สะสมทีละ field
+  //    PATCH จะทิ้ง field ของ alert ตัวก่อนคาไว้: เส้น cutoff ไม่มี value → value ของ sensor_fail
+  //    ตัวเก่าติดมาด้วย (เจอของจริงในฐานข้อมูล 2026-08-05: type=fan_cutoff คู่กับ value=12
+  //    ซึ่งคือ airSensorFailCount ของ alert คนละตัวเมื่อไหร่ก็ไม่รู้) แล้ว dashboard เอาไปแสดง/ใส่ dedupe key
+  // ⚠️ ...Async เพราะไลบรารีใส่ `print=silent` ให้เฉพาะ request แบบ async (FB_RTDB.cpp:3256-3259)
+  //    ตัวธรรมดา setJSON จะได้ payload ที่เพิ่งเขียนกลับมาทั้งก้อน = ข้อความไทย ~230-450 ไบต์
+  //    ยัดเข้า BSSL rx buffer ที่ตั้งไว้แค่ 512 ทั้งที่ไม่มีใครอ่านค่าที่คืนมาเลย
+  //    เหตุผลเดียวกับที่เส้น push อื่นใช้ ...Silent (ดูคอมเมนต์ที่ pushStatus)
+  Firebase.setJSONAsync(fbData, "/smartfarm/alerts/last_alert", j);
+  lastPushTime = millis();
+}
+
 // ส่ง alert 1 ตัว — serial พิมพ์เสมอ, Firebase ส่งเฉพาะตอนเน็ตมี
 // แยกแบบนี้เพราะ buzzer/serial เป็น local ทำงานได้แม้เน็ตดับ ส่วน Firebase คือ "ส่งออก" เท่านั้น
 static void reportAlert(const char* type, float value, const String& message) {
   Serial.println("[ALERT] " + String(type) + " — " + message);
   if (!fbReady()) return;   // เน็ตดับ = ไม่มีที่ส่ง แต่ผู้เรียกยังตั้ง hasAlert → buzzer ดังอยู่ดี
-  Firebase.setString(fbData, "/smartfarm/alerts/last_alert/type",    type);
-  Firebase.setFloat (fbData, "/smartfarm/alerts/last_alert/value",   value);
-  Firebase.setString(fbData, "/smartfarm/alerts/last_alert/message", message);
+  writeAlertNode(type, message.c_str(), value);
+}
+
+// gate สำหรับ alert ที่ "หายเองได้" (ร้อน/แห้ง/น้ำร้อน) — ยิงตอนเข้าสถานะ แล้วย้ำทุก repeatMs
+// ⚠️ เดิมไม่มี gate: เงื่อนไขจริงค้างอยู่นานแค่ไหนก็ยิงทุกรอบ sensor (30 วิ) — บ่ายร้อน 5 ชม. = buzzer
+//    บล็อก ~1 วิ × 600 ครั้ง + เขียน Firebase ~1800 ครั้ง · เส้น sensor_fail ได้ gate นี้ไปตั้งแต่ v2.2.0
+//    ด้วยเหตุผลเดียวกันเป๊ะ (ดูคอมเมนต์ที่ ALERT_REPEAT_MS) แต่เส้นที่หายเองได้ตกสำรวจ
+//    "หายเองได้" ไม่ได้แปลว่าหายเร็ว — มันหายตอนพระอาทิตย์ตก ไม่ใช่ภายในรอบ 30 วิ
+// ⚠️ รับ repeatMs เป็นอาร์กิวเมนต์ ไม่ hardcode — เส้น sensor_fail ใช้คาบเดียวกันแต่คนละความหมาย
+//    (เสียแล้วไม่หายเอง vs หายเองได้) ปล่อยให้ call site เป็นคนบอกดีกว่าฝังไว้ในตัว gate
+static bool alertGate(bool active, AlertGate& g, unsigned long repeatMs) {
+  if (!active) { g.latched = false; return false; }
+  unsigned long now = millis();
+  if (!g.latched || now - g.lastMs >= repeatMs) {
+    g.latched = true;
+    g.lastMs  = now;
+    return true;
+  }
+  return false;
 }
 
 void checkAlerts() {
   bool hasAlert = false;   // ตั้ง true = ให้ buzzer ดังท้ายฟังก์ชัน (ที่เดียว ไม่ก๊อป)
 
+  // gate ของ alert ที่หายเองได้ (ดู alertGate) — static เพราะต้องข้ามรอบ
+  // ⚠️ ไม่ถูกรีเซ็ตในสาขา "เซนเซอร์ยังไม่พร้อม" โดยเจตนา: ค่าอากาศตอนนั้นเป็น 0 ปลอมๆ
+  //    ถ้าปล่อยให้รีเซ็ต latch จะถือว่า "ออกจากสถานะร้อนแล้ว" ทั้งที่แค่อ่านค่าไม่ได้
+  static AlertGate hotGate, dryGate, waterHotGate;
+
   // ── เซนเซอร์อากาศ ────────────────────────────────────
   // ⚠️ ต้องเช็คก่อน guard "ยังไม่พร้อม" ด้านล่าง — readSensors() ตั้ง airTemp/airHumidity = 0 ตอนอ่านพลาด
   // ซึ่งเข้าเงื่อนไข guard พอดี ถ้าเช็คทีหลังจะโดนกินทิ้ง = เซนเซอร์เสียแล้วเงียบสนิท
   if (airSensorFailCount >= SENSOR_STALE_AFTER) {
-    // เซนเซอร์เสียไม่หายเอง ต่างจาก alert ร้อน/แห้ง — ย้ำตอน "เข้าสถานะ" แล้วทุก SENSOR_ALERT_REPEAT_MS
+    // เซนเซอร์เสียไม่หายเอง ต่างจาก alert ร้อน/แห้ง — ย้ำตอน "เข้าสถานะ" แล้วทุก ALERT_REPEAT_MS
     // ไม่ใช่ทุกรอบ 30 วิ ไม่งั้น buzzer (blocking ~900ms) ดังทั้งคืน + เขียน Firebase ซ้ำเป็นพันครั้ง
     static unsigned long lastStaleAlertMs = 0;
     bool firstTime = !airStaleLatched;
     airStaleLatched = true;
-    if (firstTime || millis() - lastStaleAlertMs >= SENSOR_ALERT_REPEAT_MS) {
+    if (firstTime || millis() - lastStaleAlertMs >= ALERT_REPEAT_MS) {
       lastStaleAlertMs = millis();
       reportAlert("sensor_fail", airSensorFailCount,
         "เซนเซอร์อากาศอ่านไม่ได้ " + String(airSensorFailCount) + " ครั้งติด — ระบบอัตโนมัติหยุดทำงาน (ปิดพัดลม+ปั๊ม) กรุณาตรวจสอบ");
@@ -1740,12 +1867,12 @@ void checkAlerts() {
     if (airStaleLatched) { airStaleLatched = false; Serial.println("[SHT35] เซนเซอร์กลับมาอ่านได้แล้ว"); }
     airNotReadyLogged = false;
 
-    if (airTemp > thresh_temp_alert) {
+    if (alertGate(airTemp > thresh_temp_alert, hotGate, ALERT_REPEAT_MS)) {
       reportAlert("high_temp", airTemp,
         "อุณหภูมิสูงเกิน " + String(thresh_temp_alert, 0) + "°C! (" + String(airTemp, 1) + "°C)");
       hasAlert = true;
     }
-    if (airHumidity > 0 && airHumidity < thresh_hum_alert) {
+    if (alertGate(airHumidity > 0 && airHumidity < thresh_hum_alert, dryGate, ALERT_REPEAT_MS)) {
       reportAlert("low_humidity", airHumidity,
         "ความชื้นต่ำกว่า " + String(thresh_hum_alert, 0) + "%! (" + String(airHumidity, 1) + "%)");
       hasAlert = true;
@@ -1755,7 +1882,7 @@ void checkAlerts() {
   // ── น้ำ (DS18B20) ────────────────────────────────────
   // คนละเซนเซอร์กับ SHT35 — SHT35 พังไม่ได้แปลว่าค่าน้ำเชื่อไม่ได้ จึงต้องอยู่นอกบล็อกอากาศทั้งหมด
   // (เดิม early-return ในบล็อกเซนเซอร์เสียกลืน alert นี้ทิ้ง = น้ำร้อนเกินตอน SHT35 เสีย → ไม่มีเตือน)
-  if (waterSensorOk && waterTemp > thresh_water_temp_alert) {
+  if (alertGate(waterSensorOk && waterTemp > thresh_water_temp_alert, waterHotGate, ALERT_REPEAT_MS)) {
     reportAlert("high_water_temp", waterTemp,
       "อุณหภูมิน้ำสูงเกิน " + String(thresh_water_temp_alert, 0) + "°C! (" + String(waterTemp, 1) + "°C)");
     hasAlert = true;

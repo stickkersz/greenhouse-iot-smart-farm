@@ -128,9 +128,9 @@ Firebase Realtime Database
 | Key | Relay/GPIO | อุปกรณ์ | คุมด้วย |
 |-----|-----------|---------|---------|
 | `ch1_pump` | CH1 / GPIO26 | สำรอง | manual / schedule เท่านั้น (ไม่มี auto) |
-| `ch2_fan_out` | CH2 / GPIO25 | ไม่ได้ใช้ | ค้าง OFF (ซ่อนใน dashboard) — GPIO สลับกับ CH4 เมื่อ 2026-08-03 |
+| `ch2_fan_out` | CH2 / GPIO27 | ไม่ได้ใช้ | ค้าง OFF (ซ่อนใน dashboard) |
 | `ch3_fan_in` | CH3 / GPIO14 | **พัดลม 220V (ดูดเข้า)** | อุณหภูมิ + ความชื้น + vent (3 latch OR กัน — ดูตาราง thresholds ด้านล่าง) |
-| `ch4_spare` | CH4 / GPIO27 | **ปั๊มน้ำ 24V** | ความชื้น + evaporative cooling + pump safety — GPIO ย้ายจาก 25 มา 27 เมื่อ 2026-08-03 (ปั๊มมีปัญหา) |
+| `ch4_spare` | CH4 / GPIO25 | **ปั๊มน้ำ 24V** | ความชื้น + evaporative cooling + pump safety · ⚠️ ช่อง CH4 บนบอร์ดรีเลย์เสีย เดินสายเลี่ยงไว้ฝั่งฮาร์ดแวร์ |
 
 > ⚠️ ชื่อ key เป็นชื่อ "ตำแหน่งเดิม" ไม่ตรงกับหน้าที่จริง (`ch4_spare` = ปั๊ม, `ch1_pump` = สำรอง) —
 > คงชื่อไว้เพื่อไม่ให้ dashboard/rules/firmware หลุด sync · ดู `IDX_FAN`/`IDX_PUMP` ใน firmware
@@ -226,6 +226,7 @@ Firebase Realtime Database
       "last_alert": {
         "type": "high_temp",
         "value": 38.5,
+        "seq": 7939,
         "message": "อุณหภูมิสูงเกิน 38°C! (38.5°C)"
       }
     }
@@ -239,11 +240,21 @@ Firebase Realtime Database
 | `low_humidity` | `air_humidity < humidity_alert` | |
 | `high_water_temp` | `water_temp > water_temp_alert` | เฉพาะตอน `water_ok` |
 | `sensor_fail` | เซนเซอร์อากาศพลาด ≥12 ครั้ง | auto หยุด — ย้ำทุก 10 นาที ไม่ใช่ทุก 30 วิ |
-| `pump_cutoff` | ปั๊มเดินเกิน **15 นาที** (ตัว trigger) | ตัดปั๊ม + พัดลมพักคู่กัน 5 นาที — ไม่ตั้ง `value` (เขียนตรงผ่าน `setString`, ไม่ผ่าน `reportAlert()`) |
+| `pump_cutoff` | ปั๊มเดินเกิน **15 นาที** (ตัว trigger) | ตัดปั๊ม + พัดลมพักคู่กัน 5 นาที — ไม่ตั้ง `value` (ไม่มีตัวเลขให้รายงาน) — **[v2.9.4]** เขียนผ่าน `writeAlertNode()` เหมือนทุก alert ไม่ผ่าน `reportAlert()` เพราะไม่มี `value` |
 | `fan_cutoff` | **[v2.8.0]** พัดลมเดินเกิน 15 นาที (ตัว trigger แทน ไม่ใช่ปั๊ม) | ตัดพัดลม + ปั๊มพักคู่กัน 5 นาที — ไม่ตั้ง `value` เหมือนกัน (`pumpMaxed=false` กันแตร water alarm หลอก) |
 
 > buzzer ดัง local เสมอเมื่อมี alert (ถ้า `buzzer_enabled`) — ไม่พึ่งเน็ต · Firebase เขียนเฉพาะตอนออนไลน์
-> ยังไม่มี Line Notify (ไม่ได้ทำ) · ไม่มี field `sent_line` / `timestamp` ใน `last_alert`
+> ยังไม่มี Line Notify (ไม่ได้ทำ) · ไม่มี field `sent_line` ใน `last_alert`
+>
+> **[v2.9.4] `seq`** = uptime (วินาที) ตอน firmware เขียน alert ตัวนั้น · dashboard ใส่ไว้ใน dedupe key
+> เพื่อแยก "alert ตัวใหม่" ออกจาก "ค่าเดิมที่ listener ยิงซ้ำ" — จำเป็นเพราะ `pump_cutoff`/`fan_cutoff`
+> เขียนข้อความคงที่และไม่มี `value` การตัดครั้งที่ 2 จึงมี payload เหมือนครั้งแรกทุก byte
+> ⚠️ `seq` เป็น uptime **ของบูตนั้น** ไม่ใช่ลำดับสากล — รีบูตแล้ววนกลับไปใกล้ 0
+> ใช้เทียบว่า "คนละ event ไหม" ได้ · **ห้ามใช้เรียงลำดับ alert ข้ามบูต** และไม่ใช่ timestamp จริง
+>
+> **[v2.9.4]** ทั้ง node เขียนด้วย `setJSONAsync` ครั้งเดียว (แทนที่ทั้งก้อน) ไม่ใช่ `setString` ทีละ field
+> — `last_alert` คือ "เหตุการณ์ 1 ตัว" ไม่ใช่กองสถานะ · PATCH/merge จะทิ้ง field ของ alert ตัวก่อนคาไว้
+> (ของจริง 2026-08-05: `type=fan_cutoff` คู่กับ `value=12` ที่เป็น `airSensorFailCount` ของคนละ alert)
 
 ---
 

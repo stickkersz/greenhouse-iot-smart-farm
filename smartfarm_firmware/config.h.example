@@ -19,9 +19,9 @@ static const WifiCred wifiNetworks[] = {
 #define PIN_BUZZER       33
 
 #define PIN_RELAY_CH1    26   // สำรอง (manual/schedule)
-#define PIN_RELAY_CH2    25   // ไม่ได้ใช้
+#define PIN_RELAY_CH2    27   // ไม่ได้ใช้
 #define PIN_RELAY_CH3    14   // พัดลม 220V AC (ดูดเข้า)
-#define PIN_RELAY_CH4    27   // ปั๊มน้ำ 24V DC (สลับจาก GPIO25 มา GPIO27 เมื่อ 2026-08-03)
+#define PIN_RELAY_CH4    25   // ปั๊มน้ำ 24V DC (ห้ามใช้ GPIO12 — strapping pin ทำให้ boot fail)
 
 // โมดูล Relay active-LOW: LOW=เปิด, HIGH=ปิด (ถ้าโมดูลกลับด้าน เปลี่ยนเป็น false)
 #define RELAY_ACTIVE_LOW  true

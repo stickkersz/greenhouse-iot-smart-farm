@@ -15,9 +15,9 @@
 | Buzzer Module (Active) | GPIO33 (GND–I/O–VCC), active-LOW |
 | LCD I2C 16x2 | SDA=GPIO21, SCL=GPIO22, Address auto-detect 0x27/0x3F ตอนบูต, **ต้องการ 5V** |
 | Relay CH1 | GPIO26 = สำรอง (manual only) |
-| Relay CH2 | GPIO25 = ไม่ใช้ (ซ่อนใน dashboard) — สลับมาจาก GPIO27 (2026-08-03) |
+| Relay CH2 | GPIO27 = ไม่ใช้ (ซ่อนใน dashboard) |
 | Relay CH3 | GPIO14 = พัดลม 220V AC (auto ตามอุณหภูมิ + ความชื้น + vent) |
-| Relay CH4 | GPIO27 = ปั๊มน้ำ 24V DC (auto ตามความชื้น) — ย้ายมาจาก GPIO25 (2026-08-03, ปั๊มมีปัญหา) |
+| Relay CH4 | GPIO25 = ปั๊มน้ำ 24V DC (auto ตามความชื้น) · ⚠️ 2026-08-03 เคยแก้เฟิร์มแวร์เป็น GPIO27 (สลับกับ CH2) เพราะช่อง CH4 บนบอร์ดรีเลย์เสีย แต่ไม่เคยแฟลชลงบอร์ด · พี่เลี้ยงแก้ที่ฝั่งฮาร์ดแวร์แทนและปั๊มกลับมาทำงานโดยบอร์ดยังใช้ GPIO25 อยู่ · ยืนยัน 2026-08-05 ว่าไม่ได้แฟลชซ้ำ จึงถอยกลับเป็น GPIO25 ให้ตรงสายจริง |
 | Status LED | GPIO2 (onboard), active-HIGH |
 
 **ระบบจ่ายไฟ:**
