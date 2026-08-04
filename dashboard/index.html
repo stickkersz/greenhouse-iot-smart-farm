@@ -637,7 +637,7 @@
         <div class="relay-card" id="relayCard_ch4">
           <div class="relay-top">
             <div class="relay-icon" id="relayIcon_ch4">💧</div>
-            <div class="relay-info"><div class="relay-name">ปั๊มน้ำ</div><div class="relay-ch">CH4 · GPIO27 · แห้ง/ร้อน</div></div>
+            <div class="relay-info"><div class="relay-name">ปั๊มน้ำ</div><div class="relay-ch">CH4 · GPIO25 · แห้ง/ร้อน</div></div>
             <label class="toggle"><input type="checkbox" id="toggle_ch4" disabled onchange="setRelay('ch4_spare',this.checked)"><span class="slider"></span></label>
             <div class="relay-badge s-off" id="relayBadge_ch4">OFF</div>
           </div>
@@ -799,7 +799,7 @@
           </div>
           <div class="ch-assign-item">
             <span class="ch-num spare">CH2</span>
-            <div><div class="ch-desc">— ไม่ได้ใช้</div><div class="ch-ctrl">GPIO25 · ว่าง</div></div>
+            <div><div class="ch-desc">— ไม่ได้ใช้</div><div class="ch-ctrl">GPIO27 · ว่าง</div></div>
           </div>
         </div>
 
@@ -873,7 +873,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v2.9.3 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.9.4 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1980,8 +1980,16 @@ const FIRMWARE_ALERT_MAP = {
 };
 
 function handleFirmwareAlert(a) {
-  if (!a || !a.type) return;
-  const key = a.type + '|' + (a.message || '') + '|' + (a.value != null ? a.value : '');
+  // ⚠️ prime ก่อน guard — ถ้า node ยังไม่มี (DB ใหม่ / โดนลบ) callback รอบโหลดหน้าจะได้ null
+  //    แล้ว return ทิ้งโดยยังไม่ prime → alert จริงตัวแรกที่ตามมาถูกกินเป็น "รอบ prime" แทน
+  //    = ไม่มี banner ไม่มี notification ไม่มีประวัติ สำหรับ alert แรกสุดของบอร์ด
+  if (!a || !a.type) { firmwareAlertPrimed = true; return; }
+  // ⚠️ seq (uptime วินาที ตอน firmware เขียน) ต้องอยู่ใน key — ไม่งั้น alert ที่ payload ซ้ำเป๊ะถูกกลืน
+  //    pump_cutoff/fan_cutoff เขียนข้อความคงที่และไม่มี value → ตัดครั้งที่ 2 เป็นต้นไปเหมือนครั้งแรกทุก byte
+  //    = "ตรวจสอบระดับน้ำ" (ตัวที่แปลว่าน้ำอาจหมด) ขึ้นครั้งเดียวต่อการโหลดหน้า ทั้งที่บ่ายร้อนตัดทุก ~20 นาที
+  //    firmware รุ่นก่อน v2.9.4 ไม่ส่ง seq → ตกกลับไปใช้ key เดิม (ซ้ำได้) แต่ไม่พัง
+  const key = a.type + '|' + (a.message || '') + '|' + (a.value != null ? a.value : '')
+            + '|' + (a.seq != null ? a.seq : '');
   if (key === lastFirmwareAlertKey) return;      // ค่าเดิม (firmware เขียนซ้ำ / listener ยิงซ้ำ)
   lastFirmwareAlertKey = key;
 

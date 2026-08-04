@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.3** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.4** · ESP32 DevKit V1
 
 ---
 
@@ -77,9 +77,9 @@ Three independently deployable layers:
 | Channel | GPIO | Load | Controlled by |
 |---|---|---|---|
 | **CH1** | 26 | สำรอง (spare) | manual / schedule only — no auto |
-| **CH2** | 25 | ไม่ได้ใช้ (unused) | hidden in dashboard, forced OFF |
+| **CH2** | 27 | ไม่ได้ใช้ (unused) | hidden in dashboard, forced OFF |
 | **CH3** | 14 | พัดลม 220 V AC (ดูดเข้า) | **temperature + humidity** (auto) |
-| **CH4** | 27 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) |
+| **CH4** | 25 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) |
 
 ### Other pins
 
@@ -88,7 +88,11 @@ Three independently deployable layers:
 | Buzzer | 33 | 3-pin module, active-LOW |
 | Status LED | 2 | onboard |
 
-> CH4 pump moved from GPIO12 → GPIO25 (GPIO12 is a strapping pin that caused boot failure) → **GPIO27** (2026-08-03, pump had an unrelated problem — swapped GPIO with the then-idle CH2). Never go back to GPIO12. Swapping CH2/CH4's GPIOs again is safe since neither is a strapping pin; firmware always drives them through the `PIN_RELAY_CH*` symbols, never a hardcoded number.
+> CH4 pump moved from GPIO12 → **GPIO25** (GPIO12 is a strapping pin that caused boot failure). Never go back to GPIO12.
+>
+> ⚠️ **Relay board channel 4 is physically dead.** On 2026-08-03 the firmware was changed to drive the pump from GPIO27 (swapping with the then-idle CH2) to route around it — but **that build was never flashed**. The problem was solved on the hardware side instead, and the pump works today with the board still running GPIO25. Confirmed 2026-08-05: no reflash happened after that date, so the firmware was reverted to GPIO25 to match the wiring that is actually in place.
+>
+> **Before changing either pin, trace the physical wiring first** — which ESP32 GPIO lands on which `IN` pin of the relay board, and which screw terminal the pump is in. That routing is not documented anywhere and is the one fact this mapping depends on. Firmware always drives relays through the `PIN_RELAY_CH*` symbols, never a hardcoded number, so the firmware side is a one-line change once you know the truth.
 
 ---
 
@@ -200,7 +204,7 @@ Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinou
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.3 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.4 ===`.
 
 ---
 
@@ -278,10 +282,10 @@ Run all three green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.9.3`.
+3. Flash the board, watch serial for `v2.9.4`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.9.3`.
+   - Banner reads `v2.9.4`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -294,7 +298,7 @@ Run all three green before flashing or deploying.
 |---|---|---|
 | `config.h: No such file` at compile | didn't create config.h | `cp config.h.example config.h` and fill in |
 | "Sketch too big" / text section exceeds | wrong partition | ensure `huge_app` (it's in `sketch.yaml`; IDE users set Partition Scheme) |
-| Board reboots at boot | pump on a strapping pin | CH4 must be GPIO27, never GPIO12 |
+| Board reboots at boot | pump on a strapping pin | CH4 must be GPIO25, never GPIO12 |
 | Relays inverted (ON = OFF) | module polarity | flip `RELAY_ACTIVE_LOW` in config.h |
 | Buzzer always sounds | active-HIGH module | set `BUZZER_ACTIVE_LOW false` |
 | `[AUTO] ⚠️ ปิด vent` in serial | `humidity_vent < humidity_max + 5` | raise vent or lower humidity_max |
@@ -311,7 +315,17 @@ Run all three green before flashing or deploying.
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `docs/PROJECT_MEMORY.md`.
 
-**v2.9.3** (latest) — fixed pump chatter on hot afternoons, plus a full-system review sweep:
+**v2.9.4** (latest) — final review sweep, all of it on the alert path:
+
+1. **The alert node was written field by field, so the dashboard read torn alerts.** `pumpSafetyCheck()` wrote `type` then `message` as two calls; `reportAlert()` wrote three. The dashboard listens on the parent node, so it fired on the intermediate state — a pump cutoff at 14:05 rendered the new title against the *previous* alert's text, and `saveAlertHistory()`'s 5-minute per-type dedup then suppressed the corrected event, making the wrong text the permanent history record. Now one `FirebaseJson` + `setJSONAsync`, atomic per event (the async variant because the library only adds `print=silent` to async requests — the plain call echoes the ~230-450 byte payload back into a 512-byte BSSL receive buffer that nobody reads). `setJSON` and not the `updateNodeSilent` merge used everywhere else in the firmware, deliberately: `last_alert` is one event, not accumulated state, and a PATCH strands the previous alert's fields. Live proof, read out of the database on 2026-08-05: `{"type":"fan_cutoff", "message":"พัดลมพัก…", "value":12}` — the cutoff path never writes `value` at all, so 12 is a stale `airSensorFailCount` from some earlier `sensor_fail`, and the dashboard was both displaying it and keying its dedup on it.
+2. **Repeated cutoff alerts were silently dropped.** The dashboard dedups on `type|message|value`, and the cutoff path writes a constant message with no `value` — so the 2nd, 3rd… cutoff produced a byte-identical key. On a hot afternoon the pump cuts out every ~20 minutes, but "ตรวจสอบระดับน้ำ" appeared exactly once per page load: the one alert meaning *the tank may be empty* was the one that stopped repeating. Firmware now stamps every alert with `seq` (uptime seconds) and the dashboard includes it in the key.
+3. **Self-clearing alerts had no rate limit.** `high_temp`, `low_humidity`, and `high_water_temp` re-fired every 30 s sensor cycle for as long as the condition held — a 5-hour 40 °C afternoon is ~600 blocking buzzer beeps and ~1800 Firebase writes. `sensor_fail` got this gate back in v2.2.0 for exactly this reason; the self-clearing ones were left out on the theory that they clear themselves, which they do — at sunset, not within a cycle. Now fires on entry, then every 10 minutes.
+4. **Cutoff writes bypassed the SSL collision guard** — they issued Firebase writes without touching `lastPushTime`, so a control poll could land on `fbData` 1.5 s later, the exact case v2.1.1's 2-second guard exists to prevent.
+5. **Two guards disagreed about 0 %RH.** `readSensors()` accepted it as valid; `computeAutoDecisions()` treats `airHumidity <= 0` as "sensor untrustworthy" and shuts both channels off. A CRC-valid 0.0 %RH would therefore have killed the fan and pump silently, with `sensor_ok = true`, no alert, no buzzer, and a fully green dashboard. Ranges now agree.
+6. **The invalid-threshold guard logged forever.** Every other repeating log in the firmware is latched; this one printed every 30 s indefinitely. Latched to match.
+7. **The dashboard's priming guard could swallow the first real alert** — it returned before priming when the node didn't exist, so on a fresh database the board's first genuine alert was consumed as the prime. Primes on the null callback too.
+
+**v2.9.3** — fixed pump chatter on hot afternoons, plus a full-system review sweep:
 
 1. **`pumpHeat` re-armed on a level instead of an edge.** The latch's own comment promised that once the humid gate clears it, the temperature must cross `temp_on` again before the pump can re-arm — but the code read `else if (airTemp >= fanOnTemp) pumpHeat = true`, which is trivially true on every cycle once the air is genuinely hot and *stays* hot. So whenever humidity drifted back and forth across `humidity_max` on a hot afternoon, the pump switched on and off every 30 s sensor cycle: exactly the chatter this latch design exists to prevent, and the failure mode this project has already traced sensor latch-up to. Verified by compiling the old logic standalone — 40 °C held constant with RH oscillating around 75 gave **7 pump switches in 8 cycles**; the fix gives 1. Every previous chatter test kept temp inside the 32–35 dead-zone, where the buggy branch happens never to fire, which is why the suite stayed green. Fixed with a `pumpHeatGated` latch, released only once temp falls back below `temp_on`.
 2. **NaN sensor readings bypassed the safety guard.** `airHumidity <= 0` can never catch NaN, since every IEEE754 comparison against NaN is false — a NaN would have frozen every latch at its pre-glitch value instead of shutting everything off. Unreachable today (`readSensors()` filters `isnan` first), but the guard is this pure function's own documented invariant.
