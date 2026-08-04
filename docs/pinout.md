@@ -45,7 +45,7 @@
 
 | GPIO | เหตุผล |
 |---|---|
-| GPIO12 | Strapping Pin — ต่อ Relay แล้ว boot fail (เคยเจอปัญหานี้กับปั๊มน้ำ ก่อนย้ายไป GPIO25) |
+| GPIO12 | Strapping Pin — ต่อ Relay แล้ว boot fail (เคยเจอปัญหานี้กับปั๊มน้ำ ก่อนย้ายไป GPIO25 แล้วสลับไป GPIO27 อีกรอบ) |
 
 ---
 

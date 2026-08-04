@@ -321,11 +321,11 @@
     - ESP32 DevKit V1
     - SHT35 (I2C, address 0x44 หรือ 0x45 ตาม ADDR pin) — อุณหภูมิ + ความชื้นอากาศ (แชร์บัส I2C กับ LCD)
     - DS18B20 Waterproof (GPIO4)   — อุณหภูมิน้ำ
-    - Relay 4CH Active-LOW (การเดินสายจริง 2026-06-26):
+    - Relay 4CH Active-LOW (การเดินสายจริง 2026-08-03 — CH2/CH4 สลับ GPIO กันจากเดิม 2026-06-26):
         CH1 GPIO26 — สำรอง (manual/schedule only)
-        CH2 GPIO27 — ไม่ได้ใช้
+        CH2 GPIO25 — ไม่ได้ใช้
         CH3 GPIO14 — พัดลม 220V AC (ดูดเข้า) — คุมด้วยอุณหภูมิ
-        CH4 GPIO25 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety
+        CH4 GPIO27 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety
 
   Libraries (Arduino IDE → Manage Libraries):
     - Firebase ESP32 Client by Mobizt
@@ -362,10 +362,10 @@ WiFiMulti wifiMulti;
 #define BUZZER_ACTIVE_LOW true
 #endif
 
-// ── Role → Channel mapping (การเดินสายจริง 2026-06-26) ──
+// ── Role → Channel mapping (การเดินสายจริง 2026-08-03 — CH2/CH4 สลับ GPIO กันจากเดิม 2026-06-26) ──
 //   index ใน array control: 0=ch1  1=ch2  2=ch3  3=ch4
 //   CH3 (GPIO14) = พัดลม (ดูดเข้า) — คุมด้วยอุณหภูมิ
-//   CH4 (GPIO25) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety
+//   CH4 (GPIO27) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety
 //   CH1 (GPIO26) = สำรอง — manual/schedule เท่านั้น (ไม่มี auto)
 //   CH2 = ไม่ได้ใช้ (ซ่อนใน dashboard) — ค้าง OFF เสมอ
 #define IDX_FAN   2   // ch3_fan_in  → พัดลม

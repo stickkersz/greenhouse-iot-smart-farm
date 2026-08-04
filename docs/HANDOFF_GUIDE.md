@@ -70,7 +70,7 @@
 2. **ห้าม commit ไฟล์ `smartfarm_firmware/config.h`** — มี WiFi password และ Firebase key อยู่ข้างใน
    ไฟล์นี้ถูก gitignore ไว้แล้ว อย่าไปแก้ `.gitignore` เพื่อบังคับ commit มันเด็ดขาด
 3. **ห้ามใช้ Relay ที่ GPIO12** — เป็น strapping pin ทำให้บอร์ด boot ไม่ขึ้น (เคยเจอมาแล้ว ย้ายไป
-   GPIO25 แทน)
+   GPIO25 ตอนนั้น — ปัจจุบันปั๊ม CH4 อยู่ GPIO27 แล้ว หลังสลับกับ CH2 อีกรอบ 2026-08-03 ดู `pinout.md`)
 4. **แก้ค่า `VENT_HYST` ต้องแก้ 3 จุดพร้อมกัน** (`auto_control_logic.h`, dashboard, `database.rules.json`)
    — มี `npm run test:sync` เช็คให้อัตโนมัติ ถ้าเทสนี้แดงคือมีจุดใดจุดหนึ่งลืมแก้
 5. **หลัง flash หรือ deploy เสร็จ ต้องทดสอบบนบอร์ดจริงเสมอ** — เทสในเครื่อง (`npm test`) ผ่านไม่ได้
