@@ -7,12 +7,15 @@
 #
 # รัน:  arduino-cli compile                 (อยู่ในโฟลเดอร์นี้ — ใช้ default_profile อัตโนมัติ)
 #       arduino-cli compile smartfarm_firmware   (จาก root ของโปรเจกต์)
-#       arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
 #       arduino-cli board list              (หา port ตอนเสียบบอร์ด)
+#       arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware   (macOS)
+#       arduino-cli upload -p COM3 smartfarm_firmware                     (Windows)
+#    ⚠️ ชื่อ port ต่างกันตามระบบ — macOS = /dev/cu.usbserial-* หรือ /dev/cu.SLAB_USBtoUART
+#       Windows = COMx (ดูเลขที่ Device Manager → Ports) · ดู docs/UPLOAD_GUIDE.md ฉบับเต็ม
 #
 # ⚠️ PartitionScheme=huge_app จำเป็น ไม่ใช่ของเล่น:
 #    firmware กินพื้นที่ 1388880 bytes = 105% ของ partition "default" (1310720) → build ไม่ผ่าน
-#    huge_app ให้ 3145728 bytes → ใช้ไป 44% · ถ้าเจอ "Sketch too big" ให้เช็คบรรทัดนี้ก่อนโทษโค้ด
+#    huge_app ให้ 3145728 bytes → ใช้ไป ~41% (v2.9.7) · ถ้าเจอ "Sketch too big" ให้เช็คบรรทัดนี้ก่อนโทษโค้ด
 #    (ใน Arduino IDE ตั้งที่ Tools → Partition Scheme → "Huge APP (3MB No OTA/1MB SPIFFS)")
 #
 # หมายเหตุ: profile จะใช้ library ตามรายการนี้เท่านั้น ไม่ดึงจาก ~/Documents/Arduino/libraries
