@@ -2,7 +2,7 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Nattakit Prasertsak (IT Intern) | มิถุนายน 2569
-  Version: 2.9.6
+  Version: 2.9.7
   ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
      (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
      1) บรรทัดนี้  2) Serial banner ใน setup()  3) LCD splash  4) j.set("firmware", ...) ใน pushStatus()
@@ -10,6 +10,25 @@
      6) README.md — badge หัวไฟล์ + ขั้นตอนตรวจหลัง flash ที่บอกให้ "ดู serial ว่าขึ้น vX.Y.Z"
         ⚠️ ข้อ 6 อันตรายเงียบที่สุด: ถ้าลืม README จะสั่งให้คนหน้างานมองหาเลขเวอร์ชันเก่า
         แล้วเขาจะสรุปว่า "แฟลชผิดรุ่น" ทั้งที่แฟลชถูกแล้ว
+  Changelog v2.9.7 (2026-08-31) — WiFi เครือข่ายเดียว ถอด WiFiMulti ออก (ตามคำสั่งหน้างาน + เพื่อความเสถียร):
+    0) config.h เปลี่ยนจาก wifiNetworks[] เป็น WIFI_SSID/WIFI_PASS ตัวเดียว · SSID ใหม่ = ASUS_2.4G_LAB2
+       ⚠️ ต้องเป็น 2.4GHz เท่านั้น — ESP32 ไม่รองรับ 5GHz (ชื่อ AP มี "2.4G" อยู่แล้ว ตรงเงื่อนไข)
+    1) ทำไมการถอด WiFiMulti ทำให้ "เสถียรขึ้น" ไม่ใช่แค่ "โค้ดสั้นลง":
+       · wifiMulti.run() ทำ scanNetworks() ทุกครั้ง (บล็อก 3-5 วิ) — การ scan คือการให้วิทยุกวาดทุกช่อง
+         แปลว่าระหว่างนั้น "ออกจากช่องของ AP ตัวเอง" = พลาด beacon ได้ → เสี่ยงหลุดเพิ่มจากตัวที่ควรจะซ่อม
+       · run() เรียก WiFi.disconnect() ก่อน begin() เสมอ = ฆ่า attempt ที่ core auto-reconnect กำลังทำอยู่
+         (v2.9.0 แก้ด้วย grace 45 วิ แต่พ้น grace แล้วก็ยังชนกันอยู่ดีทุก 30 วิ)
+       · มี AP เดียวแล้วไม่ต้อง "เลือก" → ไม่ต้อง scan → ปล่อยให้ core auto-reconnect ทำงานล้วนๆ
+         ซึ่งเร็วที่สุดเพราะจำ BSSID+ช่องเดิมไว้ ต่อกลับตรงๆ ไม่ต้องกวาดหา
+    2) loop() ไม่มี phase ที่บล็อกยาวอีกต่อไป — เดิม wifiMulti.run(20000) บล็อกได้ ~25 วิ ทุก 30 วิ
+       ตอนออฟไลน์ · ตอนนี้เหลือ WiFi.begin() ที่คืนทันที = ลดแรงกดดันต่อ watchdog ต่อจาก v2.9.6 อีกชั้น
+       (ผลข้างเคียงที่ดี: sensor cycle/control poll ไม่ถูกเลื่อนยาวๆ ตอนเน็ตมีปัญหาอีกแล้ว)
+    3) escalation เดิมยังอยู่ครบ: ล้ม 3 ครั้งติด → ปิด/เปิดวิทยุ (mode OFF→STA) · ไม่ติดครบ 30 นาที →
+       ESP.restart() ครั้งเดียว · grace 45 วิแรกยังห้ามแตะวิทยุเหมือนเดิม
+       ⚠️ หลัง mode OFF→STA ต้องตั้ง setSleep(false) "และ" setAutoReconnect(true) ซ้ำทั้งคู่ —
+          mode ใหม่รีเซ็ตทั้งสองค่ากลับเป็น default · เดิมตั้งกลับแค่ setSleep ตัวเดียว
+    4) flash 44% → 41%, RAM 16% → 15% (โค้ด scan/multi-AP หายไป)
+
   Changelog v2.9.6 (2026-08-31) — ⚠️ เจอต้นเหตุจริงของ TASK_WDT reboot ที่ค้างมาตั้งแต่ v2.2.0:
     0) ต้นเหตุ: TLS handshake ของไลบรารี Firebase มีเพดาน 60 วินาที "เท่ากับ WDT_TIMEOUT_S เป๊ะ"
        BSSL_TCP_Client.h:444 → `unsigned long _handshake_timeout = 60000;` (hardcode ในไลบรารี)
@@ -460,8 +479,8 @@
 */
 
 #include <WiFi.h>
-#include <WiFiMulti.h>
-WiFiMulti wifiMulti;
+// v2.9.7: ถอด WiFiMulti ออก — ใช้เครือข่ายเดียว (WIFI_SSID/WIFI_PASS ใน config.h)
+// เหตุผลด้านความเสถียร ดู changelog v2.9.7 ข้อ 1-2
 #include <FirebaseESP32.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -639,19 +658,13 @@ unsigned long lastNtpSync    = 0;
                                                 //    ไม่ gate = buzzer บล็อก ~1 วิ ทุก 30 วิ ตลอดบ่าย + เขียน Firebase ซ้ำข้อความเดิมเป็นพันครั้ง
                                                 // ⚠️ v2.9.4 รวมจาก 2 ค่าที่ค่าเท่ากันเป๊ะ (SENSOR_ALERT_REPEAT_MS/SELF_CLEAR_ALERT_REPEAT_MS)
                                                 //    แยกไว้แล้วปรับคาบทีหลังจะแก้ตัวเดียวโดยไม่รู้ตัว = alert ครึ่งหนึ่งค้างคาบเก่า
-// WiFi — ESP32 core auto-reconnect เองได้ แต่เฉพาะ SSID "ตัวเดิม" ที่เคยต่อ ถ้าตัวนั้นหายถาวร
-// (เราเตอร์เจ๊ง/เปลี่ยนชื่อ) มันจะไม่ลองตัวสำรองใน config.h ให้เลย ต้อง wifiMulti.run() เท่านั้น
-#define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: ลอง wifiMulti.run() (ไล่ทุก SSID) ทุก 30 วิ — นับจาก "เวลาจบ" ของ run() ก่อนหน้า
-#define WIFI_CONNECT_TIMEOUT_MS 15000           // timeout ที่ส่งเข้า wifiMulti.run() ตอนบูต — ให้ "มัน" รอ อย่าไปวนเรียกซ้ำ
-                                                // run() ข้างในทำ scanNetworks()+disconnect()+begin()+รอ ครบชุดอยู่แล้ว
-                                                // เรียกซ้ำๆ = แต่ละรอบ disconnect() ฆ่า attempt ของรอบก่อนทิ้ง → ต่อติดแบบสุ่ม
-// v2.9.0 — 3 ค่าใหม่ แก้อาการ "หลุดแล้วต่อไม่กลับ ทั้งที่มือถือ/PC ต่อเน็ตเดียวกันได้" (ดู changelog ด้านบน)
-#define WIFI_RECONNECT_TIMEOUT_MS 20000         // timeout ที่ส่งเข้า run() ตอน "reconnect" ใน loop()
-                                                // ⚠️ เดิม loop() เรียก wifiMulti.run() "ไม่ใส่อาร์กิวเมนต์" = ได้ default 5000 ของไลบรารี
-                                                // ขณะที่ตอนบูตให้ 15000 → ทางกลับมาใจร้อนกว่าทางบูต 3 เท่า
-                                                // AP ของบริษัทที่คนใช้เยอะ assoc+DHCP เกิน 5 วิ เป็นเรื่องปกติ → run() หมดเวลา
-                                                // → markAsFailed() ตีตรา AP นั้นว่า "พัง" (ดู WIFI_GRACE_MS/APlistClean ด้านล่าง)
-#define WIFI_GRACE_MS           (45UL*1000)      // หลุดแล้ว "ห้าม" wifiMulti แตะวิทยุใน 45 วิแรก — ปล่อยให้ core auto-reconnect
+// WiFi — v2.9.7: เครือข่ายเดียว (WIFI_SSID/WIFI_PASS ใน config.h) · ถอด WiFiMulti ออกแล้ว
+// ESP32 core auto-reconnect ดูแลการต่อกลับเองทั้งหมด และมันเร็วที่สุดเพราะจำ BSSID/ช่องไว้ ไม่ต้อง scan
+#define WIFI_RETRY_EVERY_MS     (30UL*1000)     // ตอนหลุด: สะกิด WiFi.begin() ซ้ำทุก 30 วิ (ไม่บล็อก)
+#define WIFI_CONNECT_TIMEOUT_MS 15000           // เพดานเวลารอ "ตอนบูต" เท่านั้น — ใน loop() ไม่มีการรอแบบบล็อกแล้ว
+                                                // ⚠️ ห้ามวน begin() ซ้ำๆ ระหว่างรอ — begin() ใหม่จะฆ่า attempt เดิม
+                                                //    ที่กำลังจะติดพอดี = ต่อติดแบบสุ่ม (บั๊กเดิมก่อน v2.9.0)
+#define WIFI_GRACE_MS           (45UL*1000)      // หลุดแล้ว "ห้าม" แตะวิทยุใน 45 วิแรก — ปล่อยให้ core auto-reconnect
                                                 // (setAutoReconnect default = true) ไล่ SSID เดิมเองก่อน มันเร็วกว่ามาก (ไม่ต้อง scan)
                                                 // ⚠️ นี่คือบั๊กเดียวกับที่เคยแก้เรื่อง Firebase.reconnectWiFi(false) แต่มองข้าม
                                                 // "ตัวที่ 3": core ของ ESP32 เองก็เป็นผู้จัดการวิทยุอีกคน · run() สั่ง disconnect()
@@ -854,7 +867,7 @@ bool tryFirebaseAuth() {
   if (!Firebase.signUp(&fbConfig, &fbAuth, "", "")) return false;
   if (!firebaseAuthed) {   // ครั้งแรกที่ auth ผ่าน → begin() ครั้งเดียว (flag ไม่เคยกลับเป็น false)
     Firebase.begin(&fbConfig, &fbAuth);
-    // ⚠️ false โดยเจตนา — ตั้งแต่ v2.1.0 loop() จัดการ WiFi เองด้วย wifiMulti.run() (ไล่ทุก SSID)
+    // ⚠️ false โดยเจตนา — loop() + core auto-reconnect จัดการ WiFi กันเองอยู่แล้ว (v2.9.7 ใช้ AP เดียว)
     // ถ้าเปิด true ไว้ Firebase lib จะไล่ reconnect SSID เดิมของมันเองสวนกัน = 2 ตัวแย่งวิทยุตัวเดียว
     // อาการ: ต่อติดๆ หลุดๆ แบบสุ่ม อธิบายไม่ได้
     Firebase.reconnectWiFi(false);
@@ -878,7 +891,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.6 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.7 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -950,16 +963,15 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.6");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.7");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
 
-  // WiFi (WiFiMulti — ลองทุกเครือข่ายใน config.h อัตโนมัติ)
-  // ⚠️ wifiMulti.run() ไม่ใช่ poll ราคาถูก — ข้างในมันทำ scanNetworks() (~2-4 วิ) → WiFi.disconnect()
-  //    → WiFi.begin() → รอจนครบ timeout ของมันเอง ครบชุดในการเรียกครั้งเดียว
-  //    เดิมวน run() 40 ครั้ง + delay(500): แต่ละรอบ disconnect() ไปฆ่า attempt ของรอบก่อนที่กำลังจะติดพอดี
-  //    = churn ได้ถึง ~6 นาที และผลลัพธ์สุ่ม ("บางทีติดบางทีไม่ติด") → เรียกครั้งเดียว ให้ "มัน" รอเอง
+  // WiFi (v2.9.7 — เครือข่ายเดียวจาก config.h · ไม่มี WiFiMulti/ไม่มีการ scan อีกแล้ว)
+  // ⚠️ ห้ามวน WiFi.begin() ซ้ำๆ ระหว่างรอ — begin() ใหม่ยกเลิก attempt เดิมที่กำลังจะติดพอดี
+  //    เดิมวน run() 40 ครั้ง + delay(500) แล้ว churn ได้ถึง ~6 นาที ผลลัพธ์สุ่ม ("บางทีติดบางทีไม่ติด")
+  //    ที่ถูกคือ begin() "ครั้งเดียว" แล้วรอผลแบบมีเพดาน (ดูลูปรอด้านล่าง)
   WiFi.mode(WIFI_STA);
   // ⚠️ v2.9.0 — ปิด modem sleep (default ของ ESP32 STA คือ WIFI_PS_MIN_MODEM = เปิดอยู่)
   // modem sleep = วิทยุงีบระหว่าง beacon เพื่อประหยัดไฟ → พลาด beacon ของ AP ได้ → AP/สถานะเรามองว่าหลุด
@@ -969,12 +981,17 @@ void setup() {
   WiFi.setSleep(false);
   // เก็บ reason code ตอนหลุด — ต้อง register ก่อน connect ครั้งแรก ไม่งั้นพลาด event ช่วงบูต
   WiFi.onEvent(onWiFiEvent);
-  for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
-  // ⚠️ ไม่พิมพ์อะไร "ก่อน" ต่อ — เดิม Serial.print ไม่มี newline ค้างไว้ระหว่าง run() บล็อก 15 วิ
+  // v2.9.7: ให้ core ของ ESP32 เป็นคนดูแลการต่อกลับเอง (เครือข่ายเดียว ไม่ต้องเลือก AP)
+  // core จำ config ล่าสุดไว้แล้วไล่ต่อเองโดย "ไม่ scan" = เร็วกว่าและไม่กวนวิทยุ
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  // รอแบบมีเพดาน — ไม่ใช่ลูป begin() ซ้ำ (การ begin ซ้ำจะฆ่า attempt เดิมที่กำลังจะติดพอดี)
+  unsigned long tBegin = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - tBegin < WIFI_CONNECT_TIMEOUT_MS) delay(250);
+  // ⚠️ ไม่พิมพ์อะไร "ก่อน" ต่อ — เดิม Serial.print ไม่มี newline ค้างไว้ระหว่างรอต่อ WiFi
   //    ถ้าบอร์ด reset กลางคัน (เช่น brownout ตอนวิทยุ TX) บรรทัดค้างนี้จะต่อกันเป็นพืดใน serial monitor
   //    ("Connecting WiFi... " ซ้ำนับพันครั้งบนบรรทัดเดียว — เจอจริงหน้างาน 2026-07-31)
   //    พิมพ์ "หลัง" รู้ผลครั้งเดียว จบด้วย newline เสมอ = เงียบและ paste ออกมาอ่านรู้เรื่อง
-  wifiMulti.run(WIFI_CONNECT_TIMEOUT_MS);
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi OK — SSID: " + WiFi.SSID() + " IP: " + WiFi.localIP().toString());
   } else {
@@ -983,15 +1000,9 @@ void setup() {
     // setup() ที่ reboot ตอนต่อไม่ติด = ขัดกับ loop() เอง และทำให้ restart ครั้งเดียวจากสาเหตุอะไรก็ตาม
     // + เราเตอร์ยังไม่ฟื้น → reboot loop ไม่รู้จบ ทุกรอบ relay ดับ + accumulator หาย
     // = ต้นเหตุอาการ "ระบบไม่ต่อเนื่อง" ที่รายงานมา 2026-07-16 · loop() จะไล่ต่อให้เองทุก 30 วิ
-    Serial.println("WiFi FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ทุก 30 วิ");
-    // ⚠️ v2.9.2: ต้องล้าง fail flag ตรงนี้ด้วย ไม่ใช่เฉพาะในเส้น retry ของ loop()
-    //    run() ที่ล้มเพิ่ง markAsFailed() ตีตรา AP ไว้ → ถ้าปล่อยค้าง รอบ retry แรกของ loop() (t≈45 วิ)
-    //    จะได้ bestIndex = -1 คือ scan แบบบล็อก 3-5 วิแล้ว "ไม่เรียก begin() เลย" = รอบเปล่า
-    //    → การพยายามต่อจริงครั้งแรกถูกเลื่อนไปถึง ~75-80 วิหลังบูต ทั้งที่เราเตอร์อาจฟื้นตั้งแต่วินาทีที่ 50
-    //    (เคสนี้เกิดประจำตอนไฟกลับมาทั้งตึก — ESP32 บูตเร็วกว่าเราเตอร์ ดูคอมเมนต์ WIFI_GRACE_MS)
-    //    เป็นบั๊กเดียวกับที่ :852 แก้ไปแล้ว แต่เส้น setup() ตกสำรวจ
-    wifiMulti.APlistClean();
-    for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
+    Serial.println("WiFi FAILED — วิ่งต่อแบบ offline (ไม่ reboot) · auto control ทำงานปกติ · loop() ลองใหม่ให้เอง");
+    // v2.9.7: ไม่ต้องล้าง fail flag ของ AP อีกแล้ว (นั่นเป็นเรื่องของ WiFiMulti ซึ่งถอดออกไปแล้ว)
+    // core ถือ config ไว้และ auto-reconnect เองต่อเนื่อง — ไม่มีสถานะ "AP ถูกตีตรา" ให้ค้างอีก
   }
 
   // NTP (UTC+7 ประเทศไทย) — ต้องการสำหรับ path ของ hourly log
@@ -1091,7 +1102,7 @@ void loop() {
       Serial.printf("[WiFi] หลุด (ครั้งที่ %lu ตั้งแต่บูต) เหตุผล %s\n",
                     (unsigned long)wifiDropCount,
                     wifiDropReasonStr(lastWifiDropReason).c_str());
-      Serial.println("[WiFi] ปล่อยให้ core ลอง SSID เดิมเอง 45 วิแรก แล้วค่อยไล่ทุก SSID ทุก 30 วิ · auto control ทำงานต่อ");
+      Serial.println("[WiFi] ปล่อยให้ core ต่อกลับเอง 45 วิแรก แล้วค่อยสะกิด begin() ซ้ำทุก 30 วิ · auto control ทำงานต่อ");
       wifiDropReasonLogged = lastWifiDropReason;
     } else if (lastWifiDropReason != wifiDropReasonLogged) {
       // เหตุผลเปลี่ยนระหว่างที่ยังหลุดอยู่ (เช่น 200 BEACON_TIMEOUT → 201 NO_AP_FOUND = AP หายไปเลย)
@@ -1101,50 +1112,34 @@ void loop() {
                     wifiDropReasonStr(lastWifiDropReason).c_str());
     }
     // ── grace window: 45 วิแรกห้ามแตะวิทยุ ────────────
-    // core auto-reconnect (default true) กำลังไล่ SSID เดิมอยู่ — เร็วกว่า wifiMulti มาก เพราะไม่ต้อง scan
-    // ถ้า run() เข้าไปแทรก มันจะ WiFi.disconnect() ฆ่า attempt ของ core ทิ้งกลางทาง = 2 ตัวแย่งวิทยุตัวเดียว
-    // (บั๊กแบบเดียวกับที่เคยแก้ด้วย Firebase.reconnectWiFi(false) — ครั้งนั้นมองข้ามว่า core เองก็เป็นอีกตัว)
+    // core auto-reconnect กำลังไล่ต่อ AP เดิมอยู่ และมันเร็วที่สุดแล้ว เพราะจำ BSSID/ช่องไว้ ไม่ต้อง scan
+    // ถ้าเราไปสั่ง begin()/disconnect() แทรก = ฆ่า attempt ของ core ทิ้งกลางทาง (2 ตัวแย่งวิทยุตัวเดียว)
     if (now - wifiOfflineSince >= WIFI_GRACE_MS && now - lastWifiRetry >= WIFI_RETRY_EVERY_MS) {
-      // พ้น grace แล้ว core เอาไม่อยู่ → wifiMulti รับช่วง (ไล่ทุก SSID ใน config.h)
-      // ⚠️ ต้องใส่ timeout เอง — ไม่ใส่ = ได้ default 5000 ของไลบรารี ซึ่งสั้นเกินสำหรับ AP ที่คนใช้เยอะ
-      uint8_t r = wifiMulti.run(WIFI_RECONNECT_TIMEOUT_MS);
-      if (r == WL_CONNECTED) {
-        wifiRunFailStreak = 0;
-      } else {
-        wifiRunFailStreak++;
-        // ── ล้าง fail flag ของทุก AP ─────────────────
-        // run() ที่ต่อไม่ติดจะ markAsFailed() ตีตรา AP นั้นไว้ แล้วรอบต่อไปมันจะ "ข้าม" AP นั้นเป็นตัวเลือก
-        // ผลคือรอบต่อไป bestIndex = -1 → scan เสร็จแล้วไม่ยิง begin() เลยแม้แต่ครั้งเดียว = รอบเปล่า
-        // (ไลบรารีจะ resetFails() ให้เองก็จริง แต่มันทำ "หลัง" ลูปเลือก AP = ช่วยได้แค่รอบถัดไป)
-        // = ยิงจริงแค่รอบเว้นรอบ ทั้งที่แต่ละรอบเปล่ายังเสียเวลา scan แบบบล็อก 3-5 วิเท่าเดิม
-        // resetFails() เป็น private เรียกตรงไม่ได้ → ใช้ APlistClean() แล้ว addAP ใหม่ ได้ผลเท่ากันด้วย public API
-        wifiMulti.APlistClean();
-        for (auto& n : wifiNetworks) wifiMulti.addAP(n.ssid, n.pass);
-        // ล้มติดกันหลายครั้ง = สงสัย WiFi stack ค้างระดับที่ disconnect()/begin() แก้ไม่ตก → ปิด/เปิดวิทยุ
+      // ── v2.9.7: พ้น grace แล้ว core ยังเอาไม่อยู่ → สะกิด begin() ใหม่ "แบบไม่บล็อก" ───────────
+      // เดิมเป็น wifiMulti.run(20000) ซึ่งบล็อก loop ได้ถึง ~25 วิ (scan 3-5 + connect 20) ทุก 30 วิ
+      // ตอนออฟไลน์ · เครือข่ายเดียวไม่ต้องเลือก AP → ไม่ต้อง scan → begin() คืนทันที แล้วให้ core ทำต่อ
+      // ผลพลอยได้: loop() ไม่มี phase ที่บล็อกยาวอีกต่อไป = ลดแรงกดดันต่อ watchdog ไปอีกชั้น
+      // ⚠️ วัดผลรอบก่อนหน้าด้วย "ยังไม่ต่อติด ณ ตอนนี้" แทน return code ของ run() ที่หายไปพร้อม WiFiMulti
+      wifiRunFailStreak++;
+      if (wifiRunFailStreak >= WIFI_HARD_RESET_AFTER) {
+        // ล้มติดกันหลายครั้ง = สงสัย WiFi stack ค้างระดับที่ begin() แก้ไม่ตก → ปิด/เปิดวิทยุ
         // ยังไม่ reboot (relay ดับ + hourly หาย) — reboot ยังเป็นไม้ตายสุดท้ายที่ 30 นาที เหมือนเดิม
-        if (wifiRunFailStreak >= WIFI_HARD_RESET_AFTER) {
-          wifiRunFailStreak = 0;
-          Serial.println("[WiFi] ต่อไม่ติดติดกัน 3 ครั้ง — ปิด/เปิดวิทยุ (mode OFF→STA) เผื่อ stack ค้าง");
-          // ⚠️ v2.9.2: กัน disconnect ที่ "เราสั่งเอง" ไปทับ lastWifiDropReason เป็น 8 (ASSOC_LEAVE)
-          //    ซึ่ง legend แปลว่า "AP เตะเราเอง — แก้ที่เราเตอร์" = ชี้คนหน้างานไปผิดอุปกรณ์
-          wifiSelfDisconnect = true;
-          WiFi.disconnect(true, false);   // wifioff=true, eraseap=false (ห้ามลบ config ที่เก็บไว้)
-          WiFi.mode(WIFI_OFF);
-          delay(500);
-          WiFi.mode(WIFI_STA);
-          WiFi.setSleep(false);           // mode ใหม่ = ค่า power save กลับเป็น default ต้องปิดซ้ำ
-          wifiSelfDisconnect = false;     // พ้นช่วงที่เราถือวิทยุแล้ว — event หลังจากนี้คือของจริง
-        }
+        wifiRunFailStreak = 0;
+        Serial.println("[WiFi] ต่อไม่ติดติดกัน 3 ครั้ง — ปิด/เปิดวิทยุ (mode OFF→STA) เผื่อ stack ค้าง");
+        // ⚠️ v2.9.2: กัน disconnect ที่ "เราสั่งเอง" ไปทับ lastWifiDropReason เป็น 8 (ASSOC_LEAVE)
+        //    ซึ่ง legend แปลว่า "AP เตะเราเอง — แก้ที่เราเตอร์" = ชี้คนหน้างานไปผิดอุปกรณ์
+        wifiSelfDisconnect = true;
+        WiFi.disconnect(true, false);   // wifioff=true, eraseap=false (ห้ามลบ config ที่เก็บไว้)
+        WiFi.mode(WIFI_OFF);
+        delay(500);
+        WiFi.mode(WIFI_STA);
+        WiFi.setSleep(false);           // mode ใหม่ = ค่า power save กลับเป็น default ต้องปิดซ้ำ
+        WiFi.setAutoReconnect(true);    // เช่นกัน — mode ใหม่ต้องตั้งซ้ำ ไม่งั้น core เลิกต่อกลับให้เอง
+        wifiSelfDisconnect = false;     // พ้นช่วงที่เราถือวิทยุแล้ว — event หลังจากนี้คือของจริง
       }
-      // ⚠️ นับ interval จาก "เวลาที่ run() จบ" ไม่ใช่ตอนเริ่ม — run() บล็อกได้ถึง ~25 วิ (scan 3-5 + connect 20)
-      // ถ้าใช้ now (ก่อนเรียก) รอบถัดไปจะมาเร็วกว่า 30 วิที่ตั้งใจ = ยิงรัวเกินจนวิทยุไม่ได้พัก
+      WiFi.begin(WIFI_SSID, WIFI_PASS);   // ไม่บล็อก — core ไปต่อเอง ผลจะเห็นในรอบถัดๆ ไปของ loop()
       lastWifiRetry = millis();
-      // ⚠️ v2.9.2: now ถูกอ่านไว้ตอนต้น loop() แต่ run() เพิ่งบล็อกไป ~25 วิ (บวก 500ms ถ้าเข้าเส้น hard reset)
-      //    ทุกตัวจับเวลาที่อยู่ล่างจากตรงนี้ "assign now" ทับตัวเอง (lastSensorTime/lastControlPoll/lastSchedTime/
-      //    lastNtpSync) → ถูกย้อนหลังไป ~25 วิ = รอบถัดไปมาเร็วกว่าที่ตั้งใจมาก (sensor cycle 30 วิ เหลือ ~5 วิ)
-      //    อ่านนาฬิกาใหม่ตรงนี้จุดเดียว แก้ได้ทั้งการ "เทียบ" และการ "assign" ของทุกตัวด้านล่าง
-      now = millis();
-      wdtPhaseDone();   // จบ phase "WiFi reconnect" (run() บล็อกได้ ~25 วิ + 500ms เส้น hard reset)
+      wdtPhaseDone();   // จบ phase "WiFi reconnect" (ตอนนี้เร็วมาก เว้นแต่เข้าเส้น hard reset ที่มี delay 500ms)
     }
     // restart ได้ครั้งเดียวเท่านั้น (rtcWifiRestartDone จำข้าม reboot ผ่าน RTC memory)
     // เหตุผล: reboot แก้ได้แค่ "WiFi stack ค้าง" — แก้ "เราเตอร์เจ๊ง/ไฟดับทั้งตึก" ไม่ได้เลย
@@ -1934,7 +1929,7 @@ void pushStatus() {
   // v2.9.5: บอก dashboard ว่าพัดลม/ปั๊ม "จริงๆ" กำลังวิ่งอยู่ที่ช่องไหน (ยืนยันจากเฟิร์มแวร์ ไม่ใช่แค่เสียงเรียกจาก dashboard)
   j.set("fan_channel",  fanCh  == IDX_FAN  ? "ch3" : "ch1");
   j.set("pump_channel", pumpCh == IDX_PUMP ? "ch4" : "ch2");
-  j.set("firmware",    "2.9.6");
+  j.set("firmware",    "2.9.7");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   j.set("last_reset_reason", resetReasonStr(bootResetReason));

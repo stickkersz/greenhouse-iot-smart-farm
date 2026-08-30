@@ -1,13 +1,11 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// ===== WiFi (WiFiMulti — ต่ออัตโนมัติเครือข่ายที่เจอ) =====
+// ===== WiFi (v2.9.7 — เครือข่ายเดียว ไม่ใช้ WiFiMulti แล้ว) =====
 // copy ไฟล์นี้เป็น config.h แล้วใส่ค่าจริงของคุณ
-struct WifiCred { const char* ssid; const char* pass; };
-static const WifiCred wifiNetworks[] = {
-  { "YOUR_WIFI_SSID",     "YOUR_WIFI_PASSWORD"  },
-  { "YOUR_WIFI_SSID_2",   "YOUR_WIFI_PASSWORD_2" },
-};
+// ⚠️ ต้องเป็นย่าน 2.4GHz เท่านั้น — ESP32 ไม่รองรับ 5GHz
+#define WIFI_SSID  "YOUR_WIFI_SSID"
+#define WIFI_PASS  "YOUR_WIFI_PASSWORD"
 
 // ===== Firebase =====
 #define FIREBASE_HOST    "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app"

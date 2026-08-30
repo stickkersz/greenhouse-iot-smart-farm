@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.6** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.7** · ESP32 DevKit V1
 
 ---
 
@@ -206,7 +206,7 @@ Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinou
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.6 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.7 ===`.
 
 ---
 
@@ -228,7 +228,7 @@ The dashboard is a single self-contained `dashboard/index.html` (loads Firebase 
 
 Everything device-specific lives in **`smartfarm_firmware/config.h`** (gitignored). Sections:
 
-- **Wi-Fi** — `wifiNetworks[]`, auto-connects to whichever is in range (WiFiMulti).
+- **Wi-Fi** — `WIFI_SSID` / `WIFI_PASS`, a single 2.4 GHz network (the ESP32 has no 5 GHz radio). Reconnection is handled by the ESP32 core's own auto-reconnect; see v2.9.7 below for why this replaced WiFiMulti.
 - **Firebase** — `FIREBASE_HOST`, `FIREBASE_API_KEY`.
 - **Pins** — see [Hardware](#hardware). `RELAY_ACTIVE_LOW` / `BUZZER_ACTIVE_LOW` flip polarity if your modules are wired the other way.
 - **Thresholds** — boot defaults; overridden live from Firebase `control/thresholds` and persisted to NVS.
@@ -284,10 +284,10 @@ Run all three green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.9.6`.
+3. Flash the board, watch serial for `v2.9.7`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.9.6`.
+   - Banner reads `v2.9.7`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -317,7 +317,19 @@ Run all three green before flashing or deploying.
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `docs/PROJECT_MEMORY.md`.
 
-**v2.9.6** (latest) — the TASK_WDT reboots finally have a root cause, and it was two numbers that happened to be equal:
+**v2.9.7** (latest) — one Wi-Fi network, WiFiMulti removed:
+
+The board now connects to a single 2.4 GHz AP (`WIFI_SSID` / `WIFI_PASS` in `config.h`) instead of picking from a list. This is a stability change, not just a simplification — WiFiMulti was actively working against the connection it was supposed to repair:
+
+- **`wifiMulti.run()` scans on every call.** A scan sweeps every channel, which means the radio leaves its own AP's channel for 3–5 s and can miss beacons — risking the very disconnect it was invoked to fix.
+- **`run()` calls `WiFi.disconnect()` before `begin()`**, killing whatever reconnect attempt the ESP32 core already had in flight. v2.9.0 papered over this with a 45 s grace window, but past that window the two kept colliding every 30 s.
+- With **one AP there is nothing to choose**, so no scan is needed at all. The core's auto-reconnect is left to do the whole job, and it is the fastest option available because it remembers the BSSID and channel and reconnects directly.
+
+A useful side effect: `loop()` no longer has any long-blocking phase. The old `wifiMulti.run(20000)` could block ~25 s every 30 s while offline; `WiFi.begin()` returns immediately and the core continues in the background. That further relieves the watchdog pressure v2.9.6 addressed, and stops the sensor cycle and control poll from being dragged out whenever the network misbehaves. Flash 44% → 41%, RAM 16% → 15%.
+
+All escalation is unchanged: 45 s grace before touching the radio, a retry nudge every 30 s, radio off/on after 3 consecutive failures, and the one-shot `ESP.restart()` at 30 minutes offline. One bug fixed in that path while here — after the `WIFI_OFF → WIFI_STA` cycle the code restored `setSleep(false)` but not `setAutoReconnect(true)`, and switching modes resets both, so the core quietly stopped reconnecting on its own exactly when the board was already in trouble.
+
+**v2.9.6** — the TASK_WDT reboots finally have a root cause, and it was two numbers that happened to be equal:
 
 The Firebase library's TLS handshake timeout is hardcoded at **60 s** (`BSSL_TCP_Client.h:444`, `_handshake_timeout = 60000`). `WDT_TIMEOUT_S` is also **60**. `loop()` feeds the watchdog once at the top of each pass, so a single stalled handshake exhausts the entire watchdog budget by itself — everything else in that pass is already overtime. That is the whole bug: not heap fragmentation, not brownout, not several tasks contending. It matches every symptom on record — `last_reset_reason = TASK_WDT`, clustering at poor RSSI (−74/−76), and being maddeningly intermittent, since it needs a handshake to actually stall. v2.9.2 fixed a *different* path to the same watchdog (`syncNTP`), which is why the reboots continued after it.
 
