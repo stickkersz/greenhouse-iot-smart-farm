@@ -280,17 +280,26 @@ Run all three green before flashing or deploying.
 
 ## Deployment checklist
 
-**Order:** firmware first (or simultaneously). No order breaks the current live config, but only flashing changes what a running board does.
+> ### ⚠️ Order matters whenever a release adds a field to `sensors/` or `status/`
+>
+> **Deploy the rules before flashing.** Both nodes end with `"$other": { ".validate": false }`, and the firmware sends each one as a **single batched PATCH** (`updateNodeSilent`, since v2.9.1). If the board writes a field the deployed rules don't declare yet, Firebase rejects **the entire write**, not just the unknown field — so the board goes on running the greenhouse correctly while the dashboard shows it permanently offline. That failure looks exactly like a dead board, which is a bad thing to be debugging in a greenhouse at night.
+>
+> **v2.9.7 is such a release** (it adds `status/fan_channel` and `status/pump_channel`), so use the order below as written.
+>
+> Releases that touch only firmware logic can be flashed in any order; when in doubt, rules-first is always safe.
 
-1. `npm test` → both suites green.
-2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.9.7`.
-4. `firebase deploy --only database` then `--only hosting`.
-5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
+1. `npm test` → all three suites green.
+2. `arduino-cli compile smartfarm_firmware` → clean (~41% flash on huge_app).
+3. **`firebase deploy --only database`** — rules first, see the warning above.
+4. Flash the board, watch serial for `v2.9.7`.
+5. `firebase deploy --only hosting`.
+6. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
    - Banner reads `v2.9.7`.
+   - `WiFi OK — SSID: ...` on the serial banner, and the dashboard leaves "offline" within ~30 s. If the dashboard stays offline while serial says the Wi-Fi is up, you flashed before deploying the rules — deploy them and the next push recovers on its own.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
+   - Check `boot_count` and `last_reset_reason` after a few hours — `TASK_WDT` should stop appearing (v2.9.6 fix).
 
 ---
 
@@ -305,6 +314,8 @@ Run all three green before flashing or deploying.
 | Buzzer always sounds | active-HIGH module | set `BUZZER_ACTIVE_LOW false` |
 | `[AUTO] ⚠️ ปิด vent` in serial | `humidity_vent < humidity_max + 5` | raise vent or lower humidity_max |
 | Dashboard "save" does nothing | rules rejected the write | a toast now reports it; check values against constraints |
+| Dashboard says offline, but serial shows `WiFi OK` and relays work | flashed a new firmware before deploying rules that declare its new `status/` fields — `$other:false` rejects the whole batched PATCH | `firebase deploy --only database`; the next 30 s push recovers on its own, no reflash needed |
+| Board keeps rebooting, `last_reset_reason` = `TASK_WDT` | a network call blocking past `WDT_TIMEOUT_S` | fixed in v2.9.6 (TLS handshake was capped at exactly 60 s, same as the watchdog) — confirm you're on ≥ v2.9.6 |
 | Sensor badge shows stale | SHT35 read failing | check I2C wiring; firmware self-heals via periodic re-init |
 | `test:rules` fails to start | emulator needs Java | install a JDK; ensure firebase-tools installed |
 
