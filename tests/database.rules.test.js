@@ -391,6 +391,103 @@ describe("control/buzzer_enabled", () => {
   });
 });
 
+// v2.9.5: role remap — dashboard สั่งย้ายพัดลม/ปั๊มไปช่องสำรอง (CH1/CH2) ตอน CH3/CH4 พังจริง
+describe("control/fan_channel + control/pump_channel — role remap enum", () => {
+  test("fan_channel CAN be 'ch3' (default/primary)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/fan_channel").set("ch3"));
+  });
+  test("fan_channel CAN be 'ch1' (spare)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/fan_channel").set("ch1"));
+  });
+  test("fan_channel REJECTS anything outside the enum (e.g. 'ch4' — pump's channel, not fan's)", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/fan_channel").set("ch4"));
+  });
+  test("pump_channel CAN be 'ch4' (default/primary)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/pump_channel").set("ch4"));
+  });
+  test("pump_channel CAN be 'ch2' (spare)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(db.ref("/smartfarm/control/pump_channel").set("ch2"));
+  });
+  test("pump_channel REJECTS anything outside the enum (e.g. 'ch1' — fan's channel, not pump's)", async () => {
+    const db = emailUser().database();
+    await assertFails(db.ref("/smartfarm/control/pump_channel").set("ch1"));
+  });
+});
+
+// v2.9.6 role switch — ใครมีสิทธิ์เขียน mode ตอนสลับช่อง
+// ⚠️ ชุดนี้มีไว้ "กันไม่ให้ใครย้ายงานเขียน mode กลับไปฝั่ง firmware อีก" · เคยเขียนไปแล้วรอบหนึ่งและพัง:
+//    ESP32 auth แบบ anonymous แต่ control ต้องการ email → permission_denied ทุก write แบบเงียบๆ
+//    ทางแก้ที่ถูกคือให้ dashboard (email) เขียนพร้อม role ในก้อน atomic เดียว ไม่ใช่ผ่อนปรน rules
+describe("v2.9.6 role switch — control writes stay email-only (ESP32 must NOT be able to)", () => {
+  test("REJECTS anonymous (ESP32) PATCH of {mode, manual_state} — the shape firmware once tried to send", async () => {
+    const db = anonUser().database();
+    await assertFails(
+      db.ref("/smartfarm/control/ch3_fan_in").update({ mode: "manual", manual_state: false })
+    );
+  });
+  test("REJECTS anonymous (ESP32) write to a schedule leaf", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/control/ch1_pump/schedule/enabled").set(false));
+  });
+
+  // รูปทรงจริงที่ setChannelRole() ส่ง — multi-path update ก้อนเดียว (atomic)
+  test("email user CAN apply the whole fan switch atomically (role + both channels' modes + schedules)", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(
+      db.ref("/smartfarm/control").update({
+        fan_channel: "ch1",
+        "ch1_pump/mode": "auto",
+        "ch1_pump/schedule/enabled": false,
+        "ch3_fan_in/mode": "manual",
+        "ch3_fan_in/manual_state": false,
+        "ch3_fan_in/schedule/enabled": false,
+      })
+    );
+  });
+  test("email user CAN apply the whole pump switch atomically", async () => {
+    const db = emailUser().database();
+    await assertSucceeds(
+      db.ref("/smartfarm/control").update({
+        pump_channel: "ch2",
+        "ch2_fan_out/mode": "auto",
+        "ch2_fan_out/schedule/enabled": false,
+        "ch4_spare/mode": "manual",
+        "ch4_spare/manual_state": false,
+        "ch4_spare/schedule/enabled": false,
+      })
+    );
+  });
+  test("the atomic switch is still type-checked — a bad role value rejects the whole batch", async () => {
+    const db = emailUser().database();
+    await assertFails(
+      db.ref("/smartfarm/control").update({
+        fan_channel: "ch4",            // ไม่ใช่ช่องของพัดลม
+        "ch1_pump/mode": "auto",
+      })
+    );
+  });
+});
+
+describe("status/fan_channel + status/pump_channel — firmware's confirmed active channel", () => {
+  test("anonymous auth CAN write fan_channel/pump_channel (matches ESP32 pushStatus)", async () => {
+    const db = anonUser().database();
+    await assertSucceeds(db.ref("/smartfarm/status").update({ fan_channel: "ch1", pump_channel: "ch4" }));
+  });
+  test("REJECTS a fan_channel value outside the enum", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status/fan_channel").set("ch2"));
+  });
+  test("REJECTS a pump_channel value outside the enum", async () => {
+    const db = anonUser().database();
+    await assertFails(db.ref("/smartfarm/status/pump_channel").set("ch3"));
+  });
+});
+
 describe("sensors/status — ESP32 (anonymous) write path stays intact", () => {
   test("anonymous auth CAN write sensor readings (matches real ESP32 auth)", async () => {
     const db = anonUser().database();

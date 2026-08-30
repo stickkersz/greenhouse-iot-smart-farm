@@ -2,7 +2,7 @@
   smartfarm_firmware.ino
   Greenhouse IoT Smart Farm — บริษัท ปุ๋ยไวกิ้ง จำกัด
   จัดทำโดย: Nattakit Prasertsak (IT Intern) | มิถุนายน 2569
-  Version: 2.9.4
+  Version: 2.9.6
   ⚠️ เวอร์ชันอยู่ 6 ที่ ต้องขยับพร้อมกันทุกครั้ง ไม่งั้น "บอร์ดที่แฟลชอยู่คือรุ่นไหน" จะได้คำตอบไม่ตรงกัน
      (เคยดริฟท์จริงตอน v2.9.1 → v2.9.2: dashboard ขึ้น 2.9.2 แต่ Serial กับ LCD ยังขึ้น 2.9.0)
      1) บรรทัดนี้  2) Serial banner ใน setup()  3) LCD splash  4) j.set("firmware", ...) ใน pushStatus()
@@ -10,6 +10,70 @@
      6) README.md — badge หัวไฟล์ + ขั้นตอนตรวจหลัง flash ที่บอกให้ "ดู serial ว่าขึ้น vX.Y.Z"
         ⚠️ ข้อ 6 อันตรายเงียบที่สุด: ถ้าลืม README จะสั่งให้คนหน้างานมองหาเลขเวอร์ชันเก่า
         แล้วเขาจะสรุปว่า "แฟลชผิดรุ่น" ทั้งที่แฟลชถูกแล้ว
+  Changelog v2.9.6 (2026-08-31) — ⚠️ เจอต้นเหตุจริงของ TASK_WDT reboot ที่ค้างมาตั้งแต่ v2.2.0:
+    0) ต้นเหตุ: TLS handshake ของไลบรารี Firebase มีเพดาน 60 วินาที "เท่ากับ WDT_TIMEOUT_S เป๊ะ"
+       BSSL_TCP_Client.h:444 → `unsigned long _handshake_timeout = 60000;` (hardcode ในไลบรารี)
+       loop() ป้อน watchdog ครั้งเดียวตอนต้นรอบ → handshake ที่ค้าง (สัญญาณอ่อน/AP โหลดหนัก) กิน
+       budget ของ watchdog "หมดด้วยตัวมันเองคนเดียว" งานที่เหลือทั้งรอบคือส่วนเกิน = TASK_WDT reboot
+       → ไม่ใช่ heap fragmentation, ไม่ใช่ brownout, ไม่ใช่หลายงานชิงกัน · เป็นตัวเลข 2 ตัวที่บังเอิญเท่ากัน
+       ตรงกับหลักฐานหน้างานทุกข้อ: reset reason = TASK_WDT · เกิดตอน RSSI แย่ (-74/-76) · สุ่มมาก
+       (ต้องรอให้ handshake ค้างจริง) · v2.9.2 แก้ syncNTP ไปแล้วแต่ยังเกิด เพราะคนละเส้นทางกัน
+    1) ⚠️ config.timeout.sslHandshake ของไลบรารี "ตั้งไม่ได้" — ประกาศไว้ใน FB_Const.h:1307 แต่ไม่มีที่ไหน
+       อ่านมันเลยทั้งไลบรารี (grep แล้วเจอแค่บรรทัดประกาศ) = dead field · ต้องตั้งผ่าน
+       fbData.tcpClient.client()->setHandshakeTimeout() ตรงๆ (public ทั้งเส้น · รับหน่วย "วินาที")
+       _tcp_client ถูก new ใน constructor / delete ใน destructor เท่านั้น = ตัวเดิมตลอดอายุโปรแกรม ตั้งครั้งเดียวพอ
+    2) บีบเพดานงานเน็ตทุกชนิดให้ต่ำกว่า watchdog: handshake 60→15 วิ · socketConnection 10→5 วิ ·
+       serverResponse 10→8 วิ (2 ตัวหลังไลบรารีอ่านจาก config จริง ตั้งผ่าน fbConfig ได้ปกติ)
+       worst case ต่อ 1 Firebase call = 5+15+8 = 28 วิ < 60 ✓
+    3) ป้อน watchdog ที่ "ขอบระหว่าง phase" ของ loop() (wdtPhaseDone) — เพราะ 1 รอบ loop ยิงงานเน็ต
+       ที่อยู่ในเกณฑ์ของตัวเองได้หลายก้อน แต่ "ผลรวม" ทะลุ 60 ได้ = reboot ทั้งที่ไม่มีอะไรค้างจริง
+       ⚠️ ต่างจากที่ v2.9.2 ห้ามไว้: ห้าม = ป้อนระหว่างรอของที่ยังไม่จบ · ที่ทำ = ป้อนหลังงานจบแล้ว
+          (มีความคืบหน้าจริง) · phase ไหนค้างเกิน 60 วิ watchdog ยังเตะเหมือนเดิม ไม้ตายสุดท้ายอยู่ครบ
+    4) ตรวจงานบล็อกที่เหลือทั้งไฟล์แล้ว มีเพดานครบทุกตัว: syncNTP 10 วิ (v2.9.2) · wifiMulti.run 20 วิ +
+       scan ~5 · buzzerBeep ~0.55 วิ · delay() ที่เหลืออยู่ใน setup() หรือก่อน ESP.restart() เท่านั้น
+
+  Changelog v2.9.5 (2026-08-30) — ช่องรีเลย์สำรอง: ย้ายพัดลม/ปั๊มไป CH1/CH2 ได้จาก dashboard ถ้า CH3/CH4 พังจริง:
+    0) เพิ่ม fanCh/pumpCh (default IDX_FAN/IDX_PUMP = CH3/CH4) — ทุกจุดที่เคยเขียน CH3/CH4 ตรงๆ
+       (autoControl, pumpSafetyCheck, checkSchedule lock-check, updateLCD) เปลี่ยนไปอ่าน/เขียนผ่าน
+       chStatePtr(fanCh/pumpCh) + chPin(fanCh/pumpCh) แทน — โค้ดชุดเดียวใช้ได้กับทั้งช่องหลักและช่องสำรอง
+       ⚠️ chStatePtr()/chPin() ต้องนิยาม "หลัง" struct AlertGate เท่านั้น — ไว้ก่อนแล้ว Arduino auto-generate
+       prototype จะแทรกก่อน struct ทำให้ alertGate(AlertGate&, ...) คอมไพล์ไม่ผ่านเงียบๆ (เจอจริงตอนใส่ฟีเจอร์นี้)
+    1) loadControlFromFirebase() รับ control/fan_channel (ch3|ch1) และ control/pump_channel (ch4|ch2) —
+       สลับผ่าน applyChannelSwitch(): ปิดรีเลย์ช่องเก่าทันที + บังคับช่องใหม่เป็น auto + รีเซ็ต
+       onSince/lockUntil ของบทบาทนั้น (ผูกกับ "บทบาท" ไม่ใช่ช่องกายภาพ ช่องใหม่เริ่มนับ runtime ใหม่)
+    2) fanCh/pumpCh persist ผ่าน NVS (sf_ctrl: "fanCh"/"pumpCh") พร้อม sanity clamp ตอน restore —
+       ค่าเพี้ยนจาก NVS เสีย/layout เก่า fallback กลับ IDX_FAN/IDX_PUMP แทนปล่อยเป็น index นอกช่วง 0-3
+    3) pushStatus() ยืนยัน fan_channel/pump_channel ที่ใช้งานจริงกลับไป status/ — dashboard เห็นของจริง
+       จากเฟิร์มแวร์ ไม่ใช่แค่ echo ค่าที่ dashboard เพิ่งเขียนไป (เผื่อ NVS/Firebase ไม่ตรงกันชั่วคราว)
+    4) ขอบเขต: เฉพาะบทบาท "พัดลม"/"ปั๊ม" ย้ายได้ — ช่องที่ไม่ได้เล่นบทบาทตอนนั้นกลับไปเป็น manual/schedule
+       เฉยๆ เหมือน CH1 เดิมก่อนฟีเจอร์นี้ (ไม่มี auto ให้ช่องที่ไม่ได้ active — กันบั๊กรีเลย์ค้างที่ v2.9.3
+       เคยแก้ให้ CH1 กลับมาเกิดซ้ำกับช่องไหนก็ได้ที่เพิ่งถูกปลดบทบาท)
+    4b) ⚠️ (code review รอบ ultra) การสลับต้อง "เขียน mode กลับขึ้น Firebase" ไม่ใช่ตั้งแต่ตัวแปรในเครื่อง —
+       loop ที่อ่าน control (:1370) เอา mode จาก Firebase มาทับ ch_isAuto ทุก poll (1.5 วิ) ส่วน
+       applyChannelSwitch() ทำงานแค่รอบที่สลับรอบเดียว · ตอนแรกเขียนไว้แบบตั้งตัวแปรเฉยๆ ซึ่งพังทั้ง 2 ฝั่ง:
+         · ช่องใหม่หลุด auto ใน 1.5 วิ (Firebase ยังเป็น "manual") = fail over ไปแล้วแต่ไม่มีอะไรวิ่ง auto เลย
+         · ช่องเก่าค้าง auto (Firebase ยังเป็น "auto") แต่ autoControl() ขับเฉพาะ fanCh/pumpCh และ
+           applyManualControl() ต้องการ !ch_isAuto = รีเลย์ค้าง คุมไม่ได้ทั้ง auto ทั้ง manual
+           (บั๊กคลาสเดียวกับที่ v2.9.3 แก้ให้ CH1 พอดี — รอบนี้เกือบสร้างขึ้นมาใหม่ที่ทั้ง 4 ช่อง)
+       ⚠️ ทางแก้แรกที่ลองคือให้ firmware ยิง mode กลับขึ้น /smartfarm/control เอง — "ใช้ไม่ได้เลย" และ
+          เกือบหลุดไปโดยไม่มีใครจับได้: ESP32 auth แบบ anonymous แต่ rules ของ control ต้องการ
+          auth.token.email → permission_denied ทุก write · คอมไพล์ผ่าน ไม่มี error ตอนรัน เห็นก็ต่อเมื่อ
+          ไปทดสอบด้วย rules emulator ด้วย "รูปทรงที่ firmware ส่งจริง" (เพิ่มเทสต์ล็อกไว้แล้ว)
+          และห้ามแก้ rules ให้ anonymous เขียน control ได้: anonymous sign-up เปิดให้ใครก็ตามที่มี API key
+          (ซึ่งฝังอยู่ในหน้า dashboard) = คนนอกสลับโหมดรีเลย์โรงเรือนได้ · โมเดลสิทธิ์เดิมถูกแล้ว
+       แก้จริง (แบ่งหน้าที่ตามสิทธิ์ที่แต่ละฝั่งมี):
+         · dashboard (email auth · เป็นคนกดสลับอยู่แล้ว) เขียน role + mode ของทั้ง 2 ช่อง + ปิด schedule
+           ใน multi-path update "ก้อนเดียว" ซึ่ง RTDB รับประกัน atomic → firmware ไม่มีทางเห็น role ใหม่
+           โดยที่ mode ยังเก่า = ปิดช่องว่างที่ทำให้ poll รอบถัดไปทับค่าผิด (ดู setChannelRole)
+           key ที่มี '/' = deep update ทีละ leaf → ปิด schedule/enabled โดย on_time/off_time ไม่หาย
+         · firmware กันอีกชั้นแบบไม่พึ่งเน็ต: enforceRoleModeInvariant() บังคับว่าช่องที่ไม่ได้เป็น
+           fanCh/pumpCh ห้ามเป็น auto (เรียกทั้งตอนบูตหลัง loadControlState และหลังอ่าน control ทุกรอบ)
+           → ต่อให้ dashboard เขียนพลาด/DB ค้างค่าเก่า/บูตออฟไลน์ ช่องที่ถูกปลดก็ยังสั่ง manual ได้เสมอ
+    5) dashboard: การ์ด CH2 (เดิมซ่อนเพราะไม่ได้ต่อ) กลับมาแสดงเป็น "ปั๊มสำรอง" · CH1 เปลี่ยนชื่อเป็น
+       "พัดลมสำรอง" และได้ปุ่ม AUTO กลับมา (v2.9.3 เคยถอดออกเพราะไม่มี auto logic รองรับ — ตอนนี้มีแล้ว
+       แต่ปุ่มกดได้เฉพาะตอนช่องนั้นเป็น fanCh/pumpCh ที่ active จริง — ดู updateChannelRoleUI()/setAutoAvailable())
+       ปุ่ม "โหมดควบคุมรวม" (Global AUTO/MANUAL) ตามช่อง active ด้วย ไม่ใช่ CH3/CH4 ตายตัวอีกต่อไป
+
   Changelog v2.9.4 (2026-08-05) — เก็บงาน code review รอบสุดท้าย (เส้น alert ทั้งเส้น) + ถอย GPIO ปั๊มกลับ:
     0) ⚠️ ถอย PIN_RELAY_CH4 กลับเป็น GPIO25 (และ CH2 กลับเป็น GPIO27) — ยกเลิกการสลับของ 2026-08-03
        เหตุผล: การสลับนั้น "ไม่เคยถูกแฟลชลงบอร์ด" (แก้ config.h ตอน 22:23 หลังแฟลช v2.9.2 ไปแล้วตั้งแต่เช้า)
@@ -382,10 +446,10 @@
     - SHT35 (I2C, address 0x44 หรือ 0x45 ตาม ADDR pin) — อุณหภูมิ + ความชื้นอากาศ (แชร์บัส I2C กับ LCD)
     - DS18B20 Waterproof (GPIO4)   — อุณหภูมิน้ำ
     - Relay 4CH Active-LOW (การเดินสายจริง 2026-06-26 · ⚠️ ช่อง CH4 บนบอร์ดรีเลย์เสีย เดินสายเลี่ยงฝั่งฮาร์ดแวร์แล้ว):
-        CH1 GPIO26 — สำรอง (manual/schedule only)
-        CH2 GPIO27 — ไม่ได้ใช้
-        CH3 GPIO14 — พัดลม 220V AC (ดูดเข้า) — คุมด้วยอุณหภูมิ
-        CH4 GPIO25 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety
+        CH1 GPIO26 — พัดลมสำรอง (v2.9.5) — auto เฉพาะตอนเป็น fanCh ที่เลือกใช้งานจริง ไม่งั้น manual/schedule
+        CH2 GPIO27 — ปั๊มสำรอง (v2.9.5)  — auto เฉพาะตอนเป็น pumpCh ที่เลือกใช้งานจริง ไม่งั้น manual/schedule
+        CH3 GPIO14 — พัดลม 220V AC (ดูดเข้า) — คุมด้วยอุณหภูมิ (ช่องหลัก — ดู fanCh)
+        CH4 GPIO25 — ปั๊มน้ำ 24V DC          — คุมด้วยความชื้น + pump safety (ช่องหลัก — ดู pumpCh)
 
   Libraries (Arduino IDE → Manage Libraries):
     - Firebase ESP32 Client by Mobizt
@@ -424,12 +488,13 @@ WiFiMulti wifiMulti;
 
 // ── Role → Channel mapping (การเดินสายจริง 2026-06-26) ──
 //   index ใน array control: 0=ch1  1=ch2  2=ch3  3=ch4
-//   CH3 (GPIO14) = พัดลม (ดูดเข้า) — คุมด้วยอุณหภูมิ
-//   CH4 (GPIO25) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety
-//   CH1 (GPIO26) = สำรอง — manual/schedule เท่านั้น (ไม่มี auto)
-//   CH2 = ไม่ได้ใช้ (ซ่อนใน dashboard) — ค้าง OFF เสมอ
-#define IDX_FAN   2   // ch3_fan_in  → พัดลม
-#define IDX_PUMP  3   // ch4_spare   → ปั๊มน้ำ
+//   CH3 (GPIO14) = พัดลม (ดูดเข้า) — คุมด้วยอุณหภูมิ — ช่องหลัก (default), IDX_FAN
+//   CH4 (GPIO25) = ปั๊มน้ำ        — คุมด้วยความชื้น + pump safety — ช่องหลัก (default), IDX_PUMP
+//   CH1 (GPIO26) = พัดลมสำรอง — v2.9.5: dashboard สั่งย้าย fanCh มาที่นี่ได้ถ้า CH3 พัง (ดู fanCh/pumpCh ด้านล่าง)
+//   CH2 (GPIO27) = ปั๊มสำรอง  — v2.9.5: dashboard สั่งย้าย pumpCh มาที่นี่ได้ถ้า CH4 พัง
+//   ช่องที่ไม่ได้เป็น fanCh/pumpCh ตอนนั้น = manual/schedule เท่านั้น ไม่มี auto (ดู autoControl())
+#define IDX_FAN   2   // ch3_fan_in  → พัดลม (ช่องหลัก)
+#define IDX_PUMP  3   // ch4_spare   → ปั๊มน้ำ (ช่องหลัก)
 
 // ── LCD I2C (16x2) — สร้าง object หลัง auto-detect address ใน setup() ─────
 // (โมดูลส่วนใหญ่เป็น 0x27 แต่บางล็อตเป็น 0x3F — hardcode ผิด address = จอไม่ขึ้นอะไรเลยแม้ backlight ติด)
@@ -453,10 +518,22 @@ float airHumidity = 0.0;
 float waterTemp   = 0.0;
 
 // ── Relay State (actual hardware state) ───────────────
-bool ch1_pump   = false;   // CH1 = สำรอง (manual)
-bool ch2_fanOut = false;   // CH2 ไม่ได้ใช้
+bool ch1_pump   = false;   // CH1 = สำรอง (manual) — หรือพัดลม/ปั๊มสำรอง ถ้าถูกเลือกเป็น fanCh/pumpCh
+bool ch2_fanOut = false;   // CH2 ไม่ได้ใช้ — หรือปั๊มสำรอง ถ้าถูกเลือกเป็น pumpCh
 bool ch3_fanIn  = false;   // CH3 = พัดลม (ดูดเข้า)
 bool ch4_spare  = false;   // CH4 = ปั๊มน้ำ
+
+// ── Channel Role Remap (v2.9.5) — เผื่อ CH3/CH4 พังจริง ย้ายบทบาทพัดลม/ปั๊มไปช่องสำรองได้ ──
+//   fanCh:  IDX_FAN(2, CH3, default) หรือ 0(CH1)   — พัดลมตอนนี้ใช้ช่องไหน
+//   pumpCh: IDX_PUMP(3, CH4, default) หรือ 1(CH2)  — ปั๊มตอนนี้ใช้ช่องไหน
+//   สั่งจาก dashboard (control/fan_channel, control/pump_channel) — ดู loadControlFromFirebase()
+//   ช่องที่ "ไม่ได้เล่นบทบาท" กลับไปเป็น manual/schedule เฉยๆ เหมือน CH1 เดิม (ไม่มี auto คุม)
+uint8_t fanCh  = IDX_FAN;
+uint8_t pumpCh = IDX_PUMP;
+// chStatePtr()/chPin() ตัวจริงอยู่ท้ายไฟล์ ถัดจาก struct AlertGate โดยตั้งใจ — ⚠️ ห้ามย้ายฟังก์ชันมาไว้ตรงนี้
+//   Arduino auto-generate prototype ทุกฟังก์ชันเป็นก้อนเดียว แทรกไว้ "ก่อนฟังก์ชันแรกที่เจอในไฟล์" — ถ้าฟังก์ชัน
+//   นี้กลายเป็นฟังก์ชันแรก (มาก่อน struct AlertGate ที่บรรทัด ~640) จุดแทรกจะขยับมาก่อนตัว struct ด้วย
+//   แล้ว alertGate(bool, AlertGate&, ...) ท้ายไฟล์จะคอมไพล์ไม่ผ่าน ('AlertGate' has not been declared) — เจอจริงตอนใส่ v2.9.5
 
 // ── Control State จาก Firebase (volatile = RTOS-safe) ─
 // ch index: 0=ch1(unused) 1=ch2(unused) 2=ch3_fan 3=ch4_pump
@@ -521,6 +598,14 @@ unsigned long lastNtpSync    = 0;
 
 // ── Safety / Worst-case Protection (v1.3.0) ───────────
 #define WDT_TIMEOUT_S        60                // watchdog: reboot ถ้า loop ค้างเกิน 60 วิ
+// ── v2.9.6: เพดานเวลาของงาน "เน็ต" ทุกชนิด ต้องน้อยกว่า WDT_TIMEOUT_S เสมอ ─────────
+// กติกา: ทุก network call ต้องมีเพดานของตัวเอง และ 1 phase ใน loop() ต้องจบก่อน watchdog
+//   worst case ต่อ 1 Firebase call = SOCKET(5) + HANDSHAKE(15) + RESPONSE(8) = 28 วิ < 60 ✓
+//   phase ที่ยิงหลาย call (sensor push = 2 call) = 56 วิ < 60 ✓ (ดู esp_task_wdt_reset ระหว่าง phase ใน loop)
+// ⚠️ ห้ามยืดค่าพวกนี้จนผลรวมต่อ phase แตะ 60 — นั่นคือบั๊กเดิมที่ทำให้บอร์ด reboot เอง
+#define SSL_HANDSHAKE_TIMEOUT_S  15            // วินาที (ไลบรารีคูณ 1000 เอง) — default ของ BSSL คือ 60 = ชนกับ WDT พอดี
+#define FB_SOCKET_TIMEOUT_MS     5000          // เชื่อม TCP (default lib 10 วิ)
+#define FB_RESPONSE_TIMEOUT_MS   8000          // รอ response จากเซิร์ฟเวอร์ (default lib 10 วิ)
 #define PUMP_MAX_RUNTIME_MS  (15UL*60*1000)    // ปั๊มเดินต่อเนื่องได้สูงสุด 15 นาที (auto/schedule) — ยืดจาก 10 นาที ให้ความชื้นสะสมได้นานขึ้น 2026-07-20 (เดิม 10 นาที / ก่อนหน้า 5)
 #define PUMP_COOLDOWN_MS     (5UL*60*1000)     // หลังตัด พักปั๊ม 5 นาที
 // v2.8.0: พัดลมกลับมาพักคู่ปั๊ม (ยกเลิก decouple v2.6.0 ตามคำสั่งหน้างาน) — max run + cooldown เท่ากัน
@@ -600,6 +685,12 @@ unsigned long fanOnSince      = 0;             // v2.8.0: เวลาเริ�
 unsigned long fanLockUntil    = 0;             // v2.8.0: ล็อกห้ามเปิดพัดลมจนถึงเวลานี้ (พักคู่ปั๊ม — กลับมาจาก v2.6.0)
 Preferences   ctrlPrefs;                       // NVS (flash) เก็บ control config ให้รอด reboot + ไฟดับ (v2.4.0)
 bool          controlDirty   = false;          // มี config เปลี่ยนจาก dashboard รอบนี้ → เซฟลง NVS (กันเขียนทุก poll = NVS wear)
+// v2.9.6: เพิ่งสลับ fanCh/pumpCh รอบนี้ → ต้อง pushStatus() ทันที ไม่ใช่รอรอบ 30 วิ
+// ⚠️ dashboard อ่าน "ช่องที่ active จริง" จาก status/fan_channel · ปุ่ม "MANUAL ทั้งหมด" ก็ใช้ค่านั้นเลือกว่า
+//    จะเขียนไปช่องไหน (globalModeChannels) · ถ้า status ยังไม่อัปเดต ปุ่มจะไปสั่งช่องเก่าที่ไม่ได้คุมอะไรแล้ว
+//    แล้วช่องที่คุมจริงยังค้าง auto = กดปุ่มแล้วไม่เกิดอะไรขึ้นแบบเงียบๆ (บั๊กคลาสเดียวกับที่ v2.9.5 ตั้งใจแก้)
+//    เส้นเดิม (`if (changed) pushStatus()`) พึ่ง applyManualControl() ว่ามี relay เปลี่ยน ซึ่งการสลับช่องไม่การันตี
+bool          roleSwitched   = false;
 unsigned long lastPumpSwitchTime = 0;          // เวลาที่ปั๊ม (CH4) สวิตช์ล่าสุด (0 = ยังไม่เคยสวิตช์) — ใช้เว้น quiet window ก่อนอ่าน sensor อากาศ
 int  airSensorFailCount = 0;                   // นับ sensor อากาศอ่านพลาดติดกัน — ใช้ trigger re-init เป็นระยะ + โชว์ status/sensor_ok
 bool waterSensorOk  = true;                    // DS18B20 อ่านได้ไหม
@@ -619,6 +710,18 @@ struct AlertGate {
   bool          latched = false;
   unsigned long lastMs  = 0;
 };
+
+// v2.9.5: คืน pointer/pin ไปช่องรีเลย์จริงตาม index — ให้ autoControl/pumpSafetyCheck/updateLCD ใช้ชุดเดียวกัน
+// ทั้งช่องหลักและช่องสำรอง (ยืมแพทเทิร์นเดิมจาก checkSchedule() ที่ทำแบบนี้อยู่แล้ว)
+// ⚠️ ต้องอยู่ "หลัง" struct AlertGate เสมอ — ดูคำอธิบายที่จุดประกาศ fanCh/pumpCh ด้านบน
+bool* chStatePtr(uint8_t idx) {
+  static bool* const p[4] = {&ch1_pump, &ch2_fanOut, &ch3_fanIn, &ch4_spare};
+  return p[idx];
+}
+int chPin(uint8_t idx) {
+  static const int p[4] = {PIN_RELAY_CH1, PIN_RELAY_CH2, PIN_RELAY_CH3, PIN_RELAY_CH4};
+  return p[idx];
+}
 
 // prototype ล่วงหน้า — pumpSafetyCheck() เรียก writeAlertNode() ซึ่งนิยามอยู่ท้ายไฟล์
 // (มี default argument จึงเขียนไว้ที่ prototype ที่เดียว ห้ามซ้ำที่ตัวนิยาม)
@@ -756,6 +859,17 @@ bool tryFirebaseAuth() {
     // อาการ: ต่อติดๆ หลุดๆ แบบสุ่ม อธิบายไม่ได้
     Firebase.reconnectWiFi(false);
     fbData.setBSSLBufferSize(512, 512);
+    // ⚠️ v2.9.6 — ต้นเหตุจริงของ TASK_WDT ที่ไล่มาตั้งแต่ v2.2.0 (ดู changelog หัวไฟล์ ข้อ 0)
+    //   BSSL_TCP_Client::_handshake_timeout default = 60000 ms "เท่ากับ WDT_TIMEOUT_S เป๊ะ"
+    //   → TLS handshake ที่ค้าง (สัญญาณอ่อน/AP โหลดหนัก) กิน budget ของ watchdog หมดด้วยตัวมันเอง
+    //     ทุกอย่างที่เหลือใน loop รอบนั้นคือส่วนเกิน = TASK_WDT reboot แน่นอน ไม่ใช่การชิงกันของหลายงาน
+    //   ⚠️ config.timeout.sslHandshake ของไลบรารีตั้งไม่ได้ — ประกาศไว้ใน FB_Const.h แต่ "ไม่มีที่ไหนอ่านมันเลย"
+    //     (grep ทั้ง lib เจอแค่บรรทัดประกาศ) จึงต้องตั้งผ่าน tcpClient.client() ตรงๆ
+    //   _tcp_client ถูก new ใน constructor ของ Firebase_TCP_Client และ delete แค่ตอน destructor
+    //   = ตัวเดิมตลอดอายุโปรแกรม ตั้งครั้งเดียวพอ ไม่ต้องตั้งซ้ำทุกรอบ · null-guard ไว้เผื่อ lib เปลี่ยน
+    //   ⚠️ setHandshakeTimeout() รับหน่วย "วินาที" (มันคูณ 1000 ให้เอง) — ส่ง ms เข้าไป = 15000 วินาที
+    if (fbData.tcpClient.client())
+      fbData.tcpClient.client()->setHandshakeTimeout(SSL_HANDSHAKE_TIMEOUT_S);
     firebaseAuthed = true;
   }
   return true;
@@ -764,7 +878,7 @@ bool tryFirebaseAuth() {
 // ─────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.4 ===");
+  Serial.println("\n=== Greenhouse IoT Smart Farm v2.9.6 ===");
 
   // ── Boot diagnostics ───────────────────────────────
   // พิมพ์ก่อนอย่างอื่นทั้งหมด — ถ้าบอร์ดค้างตอนบูต อย่างน้อยได้รู้ว่ารอบก่อนตายเพราะอะไร
@@ -803,6 +917,9 @@ void setup() {
   // ค่าล่าสุดที่คนตั้งไว้ ไม่ใช่ compile default · แล้วขับ relay ตาม manual state ที่ restore ทันที
   // (applyManualControl ปกติอยู่หลัง fbReady gate = ออฟไลน์ไม่เคยทำงาน → ต้องเรียกตรงนี้ให้สถานะ manual ติดตั้งแต่บูต)
   loadControlState();
+  // v2.9.6: NVS อาจเก็บ ch_isAuto=true ของช่องที่ไม่ได้เป็น fanCh/pumpCh มาจากรุ่นก่อน/ตอนสลับช่างครั้งก่อน
+  // ต้องล้างก่อน applyManualControl() ไม่งั้นบูตออฟไลน์มาแล้วช่องนั้นสั่ง manual ไม่ได้ตั้งแต่แรก
+  enforceRoleModeInvariant();
   applyManualControl();
 
   // Buzzer — boot-safe: ตั้งเป็น "เงียบ" ก่อน แล้วทดสอบดังสั้นๆ 1 ครั้ง แล้วกลับไปเงียบ
@@ -833,7 +950,7 @@ void setup() {
     lcd = new LiquidCrystal_I2C(lcdAddr, 16, 2);
     lcd->init();
     lcd->backlight();
-    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.4");
+    lcd->setCursor(0, 0); lcd->print("SmartFarm v2.9.6");
     lcd->setCursor(0, 1); lcd->print("Starting...");
     Serial.printf("LCD Ready (address 0x%02X)\n", lcdAddr);
   }
@@ -889,6 +1006,11 @@ void setup() {
   // (เกิดประจำตอนไฟกลับมาทั้งตึก: ESP32 บูตเร็วกว่าเราเตอร์) · ตอนนี้ loop() retry ทุก 60 วิ + log แทน
   fbConfig.database_url = FIREBASE_HOST;
   fbConfig.api_key      = FIREBASE_API_KEY;
+  // v2.9.6: บีบเพดานงานเน็ตให้ต่ำกว่า watchdog (ดูบล็อก SSL_HANDSHAKE_TIMEOUT_S)
+  // ต่างจาก sslHandshake ตรงที่ 2 ตัวนี้ไลบรารีอ่านจริง (FB_Const.h → mbfs/ตัวส่ง) จึงตั้งผ่าน config ได้ตรงๆ
+  // ตั้ง "ก่อน" Firebase.begin() ใน tryFirebaseAuth() — begin() หยิบ config ไปใช้ตั้งแต่ตอนนั้น
+  fbConfig.timeout.socketConnection = FB_SOCKET_TIMEOUT_MS;
+  fbConfig.timeout.serverResponse   = FB_RESPONSE_TIMEOUT_MS;
   if (WiFi.status() == WL_CONNECTED) {
     for (int a = 1; a <= 4 && !firebaseAuthed; a++) {
       if (tryFirebaseAuth()) {
@@ -941,6 +1063,16 @@ void setup() {
 }
 
 // ─────────────────────────────────────────────────────
+// v2.9.6: ป้อน watchdog ที่ "ขอบระหว่าง phase" ของ loop() — เรียกหลังงานก้อนหนึ่งทำเสร็จแล้วเท่านั้น
+// ⚠️ นี่ไม่ใช่การป้อน watchdog มั่วซั่วแบบที่ v2.9.2 ห้ามไว้ · ความต่างอยู่ที่ "ป้อนตอนไหน":
+//   ห้าม  = ป้อน "ระหว่าง" รอของที่ยังไม่จบ (เช่น ในลูป NTP เดิม) → watchdog ตาบอดกับการค้างจริง
+//   ทำได้ = ป้อน "หลัง" งานก้อนหนึ่งจบแล้ว = มีความคืบหน้าจริง ซึ่งคือสิ่งที่ watchdog ต้องการวัดพอดี
+// เหตุผลที่ต้องมี: WDT วัด "loop 1 รอบ" ทั้งก้อน แต่ 1 รอบยิงงานเน็ตที่มีเพดานของตัวเองได้หลายก้อน
+//   (reconnect 25 + push 2 call + hourly + control poll) · แต่ละก้อนอยู่ในเกณฑ์หมด แต่ "ผลรวม" ทะลุ 60
+//   = บอร์ด reboot ทั้งที่ไม่มีอะไรค้างจริงสักอย่าง · ป้อนที่ขอบ phase ทำให้ WDT วัดเป็น "ต่อ phase"
+//   ถ้า phase ไหนค้างเกิน 60 วิจริง watchdog ยังเตะเหมือนเดิม — ไม้ตายสุดท้ายยังอยู่ครบ
+static inline void wdtPhaseDone() { esp_task_wdt_reset(); }
+
 void loop() {
   unsigned long now = millis();
 
@@ -1012,6 +1144,7 @@ void loop() {
       //    lastNtpSync) → ถูกย้อนหลังไป ~25 วิ = รอบถัดไปมาเร็วกว่าที่ตั้งใจมาก (sensor cycle 30 วิ เหลือ ~5 วิ)
       //    อ่านนาฬิกาใหม่ตรงนี้จุดเดียว แก้ได้ทั้งการ "เทียบ" และการ "assign" ของทุกตัวด้านล่าง
       now = millis();
+      wdtPhaseDone();   // จบ phase "WiFi reconnect" (run() บล็อกได้ ~25 วิ + 500ms เส้น hard reset)
     }
     // restart ได้ครั้งเดียวเท่านั้น (rtcWifiRestartDone จำข้าม reboot ผ่าน RTC memory)
     // เหตุผล: reboot แก้ได้แค่ "WiFi stack ค้าง" — แก้ "เราเตอร์เจ๊ง/ไฟดับทั้งตึก" ไม่ได้เลย
@@ -1077,8 +1210,11 @@ void loop() {
     }
   }
 
+  wdtPhaseDone();   // จบ phase "sensor + push" (ยิง SSL ได้ถึง 2 call)
+
   // ความปลอดภัยปั๊ม — เช็คทุก loop (ตัดถ้าเดินเกิน 15 นาทีในโหมดอัตโนมัติ)
   pumpSafetyCheck();
+  wdtPhaseDone();   // จบ phase "safety" (เขียน alert 1 call + buzzer แบบบล็อก ~550ms)
 
   // poll คำสั่งควบคุมทุก CONTROL_POLL_MS (1.5 วิ) — รอ 2 วิหลัง push กัน SSL ชน
   static unsigned long lastControlPoll = 0;
@@ -1086,7 +1222,10 @@ void loop() {
     lastControlPoll = now;
     loadControlFromFirebase();
     bool changed = applyManualControl();
-    if (changed) pushStatus();   // มี relay เปลี่ยน → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
+    // relay เปลี่ยน หรือ เพิ่งสลับช่อง → ยืนยันกลับ dashboard ทันที (ไม่ต้องรอรอบ 30 วิ)
+    if (changed || roleSwitched) pushStatus();
+    roleSwitched = false;
+    wdtPhaseDone();   // จบ phase "control poll" (getJSON + เขียนกลับตอนสลับช่อง)
   }
 
   // Hourly log — flush เมื่อ "ชั่วโมงตามนาฬิกาจริง" เปลี่ยน (ไม่ใช่ทุก 60 นาที millis เดิม)
@@ -1103,6 +1242,7 @@ void loop() {
         // ข้ามขอบชั่วโมง → flush ของ "ชั่วโมงเก่า" ไปถังของชั่วโมงเก่า (ไม่ใช่ถังปัจจุบัน) แล้วเลื่อนไปชั่วโมงใหม่
         // pushHourlyLog() reset accumulator ให้เสมอทุกทางออก (รวมเคสไม่มีข้อมูล/เน็ตดับ) กันค้างข้ามชั่วโมง
         pushHourlyLog(String(rtcLogPath));
+        wdtPhaseDone();   // จบ phase "hourly log" (1 call แต่ payload ใหญ่สุดในระบบ)
         strncpy(rtcLogPath, curPath.c_str(), sizeof(rtcLogPath) - 1);
         rtcLogPath[sizeof(rtcLogPath) - 1] = '\0';
       }
@@ -1170,6 +1310,8 @@ void saveControlState() {
   ctrlPrefs.putFloat("hAlert", thresh_hum_alert);
   ctrlPrefs.putFloat("wAlert", thresh_water_temp_alert);
   ctrlPrefs.putBool ("buzzer", buzzerEnabled);
+  ctrlPrefs.putUChar("fanCh",  fanCh);    // v2.9.5: role remap รอด reboot/ไฟดับเหมือนค่าอื่น
+  ctrlPrefs.putUChar("pumpCh", pumpCh);
   ctrlPrefs.putBool ("valid",  true);
   ctrlPrefs.end();
   Serial.println("[NVS] เซฟ control config ลง flash แล้ว — จะ restore อัตโนมัติถ้าบอร์ด reboot/ไฟดับ");
@@ -1211,9 +1353,14 @@ void loadControlState() {
   thresh_hum_alert        = ctrlPrefs.getFloat("hAlert", thresh_hum_alert);
   thresh_water_temp_alert = ctrlPrefs.getFloat("wAlert", thresh_water_temp_alert);
   buzzerEnabled           = ctrlPrefs.getBool ("buzzer", buzzerEnabled);
+  fanCh  = ctrlPrefs.getUChar("fanCh",  fanCh);
+  pumpCh = ctrlPrefs.getUChar("pumpCh", pumpCh);
+  // ค่าเพี้ยนจาก NVS เสีย/layout เก่า ต้อง fallback เป็นช่องหลัก ไม่งั้น index ที่ไม่ใช่ 0-3 = undefined behavior
+  if (fanCh  != 0 && fanCh  != IDX_FAN)  fanCh  = IDX_FAN;
+  if (pumpCh != 1 && pumpCh != IDX_PUMP) pumpCh = IDX_PUMP;
   ctrlPrefs.end();
-  Serial.printf("[NVS] restore control config สำเร็จ — พัดลม=%s ปั๊ม=%s · temp_on=%.1f temp_off=%.1f\n",
-                ch_isAuto[IDX_FAN] ? "AUTO" : "MANUAL", ch_isAuto[IDX_PUMP] ? "AUTO" : "MANUAL",
+  Serial.printf("[NVS] restore control config สำเร็จ — พัดลม=%s (CH%d) ปั๊ม=%s (CH%d) · temp_on=%.1f temp_off=%.1f\n",
+                ch_isAuto[fanCh] ? "AUTO" : "MANUAL", fanCh+1, ch_isAuto[pumpCh] ? "AUTO" : "MANUAL", pumpCh+1,
                 thresh_temp_on, thresh_temp_off);
 }
 
@@ -1224,6 +1371,68 @@ void loadControlState() {
 static bool applyFloatThresh(FirebaseJson& json, FirebaseJsonData& d, const char* key, volatile float& var) {
   if (json.get(d, key) && fabsf((float)var - d.floatValue) > 0.01f) { var = d.floatValue; return true; }
   return false;
+}
+
+// v2.9.5: เขียน mode ของ 1 ช่องกลับขึ้น Firebase ตอนสลับบทบาท
+// ⚠️ ต้อง "เขียนจริง" ไม่ใช่แค่ตั้ง ch_isAuto/ch_schedEnabled ในเครื่อง — loop ที่ :1324 อ่าน mode จาก
+//    Firebase มาทับตัวแปรพวกนี้ "ทุก poll (1.5 วิ)" ส่วน applyChannelSwitch() ทำงานแค่รอบที่สลับรอบเดียว
+//    (รอบถัดไป newCh == roleCh แล้ว return false) → ถ้าไม่เขียนกลับ 1.5 วิให้หลังสลับจะพังทั้งสองฝั่ง:
+//      · ช่องใหม่: Firebase ยังเป็น "manual" → ch_isAuto[newCh] กลับเป็น false → autoControl() ข้ามทั้งก้อน
+//        = พัดลม/ปั๊มหยุดทำงานอัตโนมัติเงียบๆ ทั้งที่เพิ่ง fail over มา (อาการตรงข้ามกับที่ฟีเจอร์นี้ต้องการ)
+//      · ช่องเก่า: Firebase ยังเป็น "auto" → ch_isAuto[oldCh] ค้าง true แต่ไม่มีใครขับมันแล้ว (autoControl
+//        ขับเฉพาะ fanCh/pumpCh) และ applyManualControl() ต้องการ !ch_isAuto ถึงจะยอมสั่ง = รีเลย์ค้าง
+//        คุมไม่ได้ทั้ง auto ทั้ง manual — บั๊กคลาสเดียวกับที่ v2.9.3 แก้ให้ CH1 พอดี
+// PATCH เฉพาะ mode/manual_state (ลูกโดยตรงของ channel) — ไม่แตะ schedule ในก้อนนี้ เพราะ RTDB PATCH
+// จะ "แทนที่" ทั้ง node schedule ทำให้ on_time/off_time ที่พนักงานตั้งไว้หายไปด้วย (ดู setBool แยกด้านล่าง)
+static const char* const CH_KEYS[4] = {"ch1_pump", "ch2_fan_out", "ch3_fan_in", "ch4_spare"};
+
+// v2.9.5: สลับบทบาทพัดลม/ปั๊มไปช่องอื่น (เช่น CH3 พัง → สั่ง dashboard ให้พัดลมย้ายไป CH1)
+// ปิดช่องเก่าทันที (กันค้าง ON โดยไม่มีอะไรคุมอีกต่อไป) + รีเซ็ต timer/lock ของบทบาทนั้น
+// (ผูกกับ "บทบาท" ไม่ใช่ช่องกายภาพ — ช่องใหม่ต้องเริ่มนับ runtime ใหม่จากศูนย์)
+//
+// ⚠️ v2.9.6 — ตรงนี้ "ห้ามเขียน Firebase" · เคยเขียนโค้ดให้ยิง mode กลับขึ้น /smartfarm/control แล้วพบว่า
+//    ใช้ไม่ได้เลย: ESP32 auth แบบ anonymous แต่ rules ของ control คือ `auth.token.email != null`
+//    (ดู database.rules.json) → ทุก write โดน permission_denied · เทสต์ยืนยันแล้วใน database.rules.test.js
+//    และ "ห้ามแก้ rules ให้ anonymous เขียน control ได้" — anonymous sign-up เปิดให้ใครก็ได้ที่มี API key
+//    (ซึ่งอยู่ในหน้า dashboard) = ใครก็ตามบนอินเทอร์เน็ตจะสลับโหมดรีเลย์โรงเรือนได้ · โมเดลสิทธิ์เดิมถูกแล้ว
+//
+// แล้วใครเขียน mode? → dashboard (email auth) เขียนให้ "พร้อมกับ fan_channel ในก้อน multi-path update
+// ก้อนเดียว" ซึ่ง RTDB รับประกันความ atomic → firmware ไม่มีทางเห็น fan_channel ใหม่โดยไม่เห็น mode ใหม่
+// (ดู setChannelRole() ใน dashboard/index.html) = ไม่มีช่องว่างให้ poll รอบถัดไปทับค่าผิด
+//
+// ฝั่ง firmware กันอีกชั้นด้วย "กฎที่บังคับในเครื่อง ไม่ต้องพึ่งเน็ต": ช่องที่ไม่ได้เป็น fanCh/pumpCh
+// ห้ามเป็น auto เด็ดขาด (ดู enforceRoleModeInvariant) → ต่อให้ dashboard เขียนพลาด/ค่าเก่าค้างใน DB
+// ช่องที่ถูกปลดก็ยังกลับมาสั่ง manual ได้เสมอ ไม่ค้างในสถานะที่ไม่มีใครขับ
+static bool applyChannelSwitch(uint8_t& roleCh, uint8_t newCh, unsigned long& onSince, unsigned long& lockUntil, const char* roleName) {
+  if (newCh == roleCh) return false;
+  uint8_t oldCh = roleCh;
+  *chStatePtr(oldCh) = false; setRelay(chPin(oldCh), false);
+  roleCh = newCh;
+  ch_manual[oldCh]       = false;   // ช่องเก่าปิดค้างไว้ ไม่ให้ manual_state เก่าเด้งกลับมาเปิด
+  ch_schedEnabled[newCh] = false;   // schedule มี precedence เหนือ auto — ไม่ปิด = ช่องที่เพิ่ง fail over มาไม่วิ่ง auto
+  onSince   = 0;
+  lockUntil = 0;
+  Serial.printf("[Control] %s ย้ายจาก CH%d → CH%d (CH%d กลับเป็น MANUAL ปิดค้าง)\n",
+                roleName, oldCh + 1, newCh + 1, oldCh + 1);
+  roleSwitched = true;   // ให้ loop ยืนยัน status/fan_channel กลับ dashboard ทันที (ดูที่ประกาศ roleSwitched)
+  return true;
+}
+
+// v2.9.6: กฎที่บังคับ "ในเครื่อง" ไม่พึ่งเน็ต — ช่องที่ไม่ได้เล่นบทบาทพัดลม/ปั๊ม ห้ามอยู่โหมด auto
+// เหตุผล: autoControl() ขับเฉพาะ chStatePtr(fanCh/pumpCh) · ช่องอื่นไม่มีโค้ดฝั่งไหนขับเลย
+//   ถ้าปล่อยให้ ch_isAuto ของมันเป็น true (ค่าเก่าค้างใน Firebase / default ของ CH3-CH4 / dashboard เขียนพลาด)
+//   applyManualControl() ก็จะไม่ยอมแตะมันด้วย เพราะต้องการ !ch_isAuto → รีเลย์ค้าง คุมไม่ได้ทั้ง auto ทั้ง manual
+//   = บั๊ก "รีเลย์ค้าง" คลาสเดียวกับที่ v2.9.3 แก้ให้ CH1 · เรียกหลังอ่าน mode จาก Firebase ทุกครั้ง
+// ⚠️ ไม่แตะช่องที่ "เป็น" fanCh/pumpCh — ช่องนั้นพนักงานต้องสั่ง MANUAL ได้ตามปกติ (ฟีเจอร์หลักของระบบ)
+static void enforceRoleModeInvariant() {
+  for (uint8_t i = 0; i < 4; i++) {
+    if (i == fanCh || i == pumpCh) continue;
+    if (ch_isAuto[i]) {
+      ch_isAuto[i] = false;
+      Serial.printf("[Control] %s ไม่ได้เป็นช่องที่ใช้งานอยู่ — บังคับเป็น MANUAL (auto ไม่มีความหมายกับช่องนี้)\n",
+                    CH_KEYS[i]);
+    }
+  }
 }
 
 // โหลด control state ด้วย 1 call (getJSON) แทน 11 calls แยกกัน — ลด SSL reconnect
@@ -1251,15 +1460,14 @@ void loadControlFromFirebase() {
     Serial.println("[Control] โหลดจาก Firebase กลับมาได้แล้ว");
   }
 
-  const char* chKeys[] = {"ch1_pump","ch2_fan_out","ch3_fan_in","ch4_spare"};
   for (int i = 0; i < 4; i++) {
-    String b = String(chKeys[i]) + "/";
+    String b = String(CH_KEYS[i]) + "/";
     if (json.get(d, b + "mode")) {
       bool wasAuto = ch_isAuto[i];
       ch_isAuto[i] = (d.stringValue == "auto");
       // mode เปลี่ยน = เหตุการณ์จริงที่ควรเห็นใน log (ช่วยอธิบายว่าทำไม [AUTO] หยุด/เริ่ม)
       if (ch_isAuto[i] != wasAuto) {
-        Serial.printf("[Control] %s → %s\n", chKeys[i], ch_isAuto[i] ? "AUTO" : "MANUAL");
+        Serial.printf("[Control] %s → %s\n", CH_KEYS[i], ch_isAuto[i] ? "AUTO" : "MANUAL");
         controlDirty = true;   // v2.4.0: mode เปลี่ยน → เซฟลง NVS ให้รอด reboot
       }
     }
@@ -1277,6 +1485,17 @@ void loadControlFromFirebase() {
       strncpy(ch_schedOff[i], d.stringValue.c_str(), 5); ch_schedOff[i][5]='\0'; controlDirty = true;
     }
   }
+  // v2.9.5: role remap — dashboard สั่งย้ายพัดลม/ปั๊มไปช่องสำรอง (CH1/CH2) ตอน CH3/CH4 พัง
+  if (json.get(d, "fan_channel")) {
+    uint8_t want = (d.stringValue == "ch1") ? 0 : IDX_FAN;
+    if (applyChannelSwitch(fanCh, want, fanOnSince, fanLockUntil, "พัดลม")) controlDirty = true;
+  }
+  if (json.get(d, "pump_channel")) {
+    uint8_t want = (d.stringValue == "ch2") ? 1 : IDX_PUMP;
+    if (applyChannelSwitch(pumpCh, want, pumpOnSince, pumpLockUntil, "ปั๊ม")) controlDirty = true;
+  }
+  // ⚠️ ต้องเรียก "หลัง" อ่าน mode + หลัง role remap เสมอ — fanCh/pumpCh ต้องเป็นค่าล่าสุดก่อนตัดสิน
+  enforceRoleModeInvariant();
   // threshold floats — helper คุมการ pair key↔var + epsilon compare ที่เดียว (กัน mis-pair + NVS thrash)
   if (applyFloatThresh(json, d, "thresholds/temp_on",          thresh_temp_on))          controlDirty = true;
   if (applyFloatThresh(json, d, "thresholds/temp_off",         thresh_temp_off))         controlDirty = true;
@@ -1497,34 +1716,36 @@ void autoControl() {
   const char* pumpWhyOn = pumpHeatOn ? (airDryOn ? "ร้อน+แห้ง" : "ร้อน") : "แห้ง";
 
   // precedence: ถ้า channel เปิด Schedule อยู่ → ปล่อยให้ checkSchedule คุม (ข้าม auto)
-  // CH3 พัดลม — เปิดตาม dec.fanOn (ร้อน หรือ แห้ง)
-  if (ch_isAuto[IDX_FAN] && !ch_schedEnabled[IDX_FAN]) {
+  // พัดลม — ปกติ CH3 แต่สลับไป CH1 ได้ถ้า fanCh ถูกตั้งเป็นช่องสำรอง (ดู loadControlFromFirebase)
+  bool* fanState = chStatePtr(fanCh);
+  if (ch_isAuto[fanCh] && !ch_schedEnabled[fanCh]) {
     // v2.8.0: พัดลมกลับมาผูกกับ safety cutoff — เปิดได้เฉพาะพ้น fanLockUntil (พักคู่ปั๊ม)
     // ⚠️ trade-off: พัดลมอาจพักช่วงร้อน = เสี่ยง overshoot (CSV 2026-07-20) — ยอมรับตามคำสั่งหน้างาน
-    if (dec.fanOn && !ch3_fanIn && !lockActive(fanLockUntil)) {
-      ch3_fanIn = true;  setRelay(PIN_RELAY_CH3, true);
-      Serial.printf("[AUTO] พัดลมเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanWhy, avgAT, avgAH);
+    if (dec.fanOn && !*fanState && !lockActive(fanLockUntil)) {
+      *fanState = true;  setRelay(chPin(fanCh), true);
+      Serial.printf("[AUTO] พัดลมเปิด (CH%d) (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanCh+1, fanWhy, avgAT, avgAH);
     }
-    if (!dec.fanOn && ch3_fanIn) {
-      ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false);
-      if (!sensorOk) Serial.printf("[AUTO] พัดลมปิด (เซนเซอร์เชื่อไม่ได้ — พลาด %d ครั้งติด) — ค่าล่าสุด %.1f°C %.1f%%\n", airSensorFailCount, avgAT, avgAH);
-      else           Serial.printf("[AUTO] พัดลมปิด — อากาศ %.1f°C ความชื้น %.1f%%\n", avgAT, avgAH);
+    if (!dec.fanOn && *fanState) {
+      *fanState = false; setRelay(chPin(fanCh), false);
+      if (!sensorOk) Serial.printf("[AUTO] พัดลมปิด (CH%d) (เซนเซอร์เชื่อไม่ได้ — พลาด %d ครั้งติด) — ค่าล่าสุด %.1f°C %.1f%%\n", fanCh+1, airSensorFailCount, avgAT, avgAH);
+      else           Serial.printf("[AUTO] พัดลมปิด (CH%d) — อากาศ %.1f°C ความชื้น %.1f%%\n", fanCh+1, avgAT, avgAH);
     }
   }
-  // CH4 ปั๊มน้ำ — เปิดตาม dec.pumpOn (ปั๊มไล่ร้อน หรือ แห้ง) · เปิดได้เฉพาะพ้น safety lock (cooldown)
-  if (ch_isAuto[IDX_PUMP] && !ch_schedEnabled[IDX_PUMP]) {
-    if (dec.pumpOn && !ch4_spare && !lockActive(pumpLockUntil)) {
-      ch4_spare = true;  setRelay(PIN_RELAY_CH4, true);  lastPumpSwitchTime = millis();
-      Serial.printf("[AUTO] ปั๊มเปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOn, avgAT, avgAH);
+  // ปั๊มน้ำ — ปกติ CH4 แต่สลับไป CH2 ได้ถ้า pumpCh ถูกตั้งเป็นช่องสำรอง · เปิดได้เฉพาะพ้น safety lock (cooldown)
+  bool* pumpState = chStatePtr(pumpCh);
+  if (ch_isAuto[pumpCh] && !ch_schedEnabled[pumpCh]) {
+    if (dec.pumpOn && !*pumpState && !lockActive(pumpLockUntil)) {
+      *pumpState = true;  setRelay(chPin(pumpCh), true);  lastPumpSwitchTime = millis();
+      Serial.printf("[AUTO] ปั๊มเปิด (CH%d) (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpCh+1, pumpWhyOn, avgAT, avgAH);
     }
-    if (!dec.pumpOn && ch4_spare) {
-      ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = millis();
+    if (!dec.pumpOn && *pumpState) {
+      *pumpState = false; setRelay(chPin(pumpCh), false); lastPumpSwitchTime = millis();
       // แยกเหตุผลให้ตรง — เซนเซอร์เสียต้องไม่ถูกรายงานว่า "อากาศชื้นเกิน"
       const char* pumpWhyOff;
       if      (!sensorOk)             pumpWhyOff = "เซนเซอร์เชื่อไม่ได้";
       else if (airHotOn && !airDryOn) pumpWhyOff = "อากาศชื้นเกิน พ่นน้ำไม่ช่วย (พัดลมยังเปิด)";
       else                            pumpWhyOff = "ไม่ร้อนไม่แห้ง";
-      Serial.printf("[AUTO] ปั๊มปิด (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpWhyOff, avgAT, avgAH);
+      Serial.printf("[AUTO] ปั๊มปิด (CH%d) (%s) — อากาศ %.1f°C ความชื้น %.1f%%\n", pumpCh+1, pumpWhyOff, avgAT, avgAH);
     }
   }
 }
@@ -1535,7 +1756,7 @@ void autoControl() {
 bool applyManualControl() {
   bool changed = false;
   // precedence: ถ้า channel เปิด Schedule อยู่ → checkSchedule คุม (ข้าม manual)
-  // CH1 = สำรอง (manual/schedule) · CH2 ไม่ได้ใช้ (เผื่อ dashboard ส่งค่ามา)
+  // CH1/CH2 = สำรอง — manual/schedule เมื่อไม่ได้เป็น fanCh/pumpCh (auto คุมแทนตอนถูกเลือก ดู autoControl())
   if (!ch_isAuto[0] && !ch_schedEnabled[0] && (bool)ch_manual[0] != ch1_pump) {
     ch1_pump = ch_manual[0];
     setRelay(PIN_RELAY_CH1, ch1_pump);
@@ -1638,10 +1859,10 @@ void pumpSafetyCheck() {
 
   SafetyTimerInputs in;
   in.now          = (uint32_t)now;
-  in.pumpRelayOn  = ch4_spare;
-  in.fanRelayOn   = ch3_fanIn;
-  in.pumpAuto     = ch_isAuto[IDX_PUMP] || ch_schedEnabled[IDX_PUMP];
-  in.fanAuto      = ch_isAuto[IDX_FAN]  || ch_schedEnabled[IDX_FAN];
+  in.pumpRelayOn  = *chStatePtr(pumpCh);
+  in.fanRelayOn   = *chStatePtr(fanCh);
+  in.pumpAuto     = ch_isAuto[pumpCh] || ch_schedEnabled[pumpCh];
+  in.fanAuto      = ch_isAuto[fanCh]  || ch_schedEnabled[fanCh];
   in.maxRuntimeMs = PUMP_MAX_RUNTIME_MS;
   in.cooldownMs   = PUMP_COOLDOWN_MS;
 
@@ -1661,8 +1882,8 @@ void pumpSafetyCheck() {
     //   ถ้าตั้งเฉพาะช่อง auto: cutoff ตอนปั๊มเป็น manual → pumpLockUntil ไม่ถูกตั้ง → ผู้ใช้สลับปั๊มกลับเป็น
     //   auto กลางช่วงพัก 5 นาที → ปั๊มเปิดได้ทันทีขณะพัดลมยังถูกล็อกปิด = ปั๊มพ่นน้ำโดยไม่มีพัดลม (เคสที่ห้าม)
     //   ตั้งทั้งคู่แล้ว lock ที่ค้างอยู่จะคุมช่องนั้นทันทีที่มันกลับเข้าโหมด auto/schedule
-    if (res.cutPumpRelay) { ch4_spare = false; setRelay(PIN_RELAY_CH4, false); lastPumpSwitchTime = now; }
-    if (res.cutFanRelay)  { ch3_fanIn = false; setRelay(PIN_RELAY_CH3, false); }
+    if (res.cutPumpRelay) { *chStatePtr(pumpCh) = false; setRelay(chPin(pumpCh), false); lastPumpSwitchTime = now; }
+    if (res.cutFanRelay)  { *chStatePtr(fanCh)  = false; setRelay(chPin(fanCh),  false); }
     const bool pumpMaxed = res.pumpMaxed;
     const char* trigger = pumpMaxed ? "ปั๊ม" : "พัดลม";
     Serial.printf("[SAFETY] ตัดปั๊ม+พัดลม — %s เดินครบ 15 นาที (พักคู่กัน 5 นาที)\n", trigger);
@@ -1710,7 +1931,10 @@ void pushStatus() {
   j.set("ch2_fan_out", ch2_fanOut);
   j.set("ch3_fan_in",  ch3_fanIn);
   j.set("ch4_spare",   ch4_spare);
-  j.set("firmware",    "2.9.4");
+  // v2.9.5: บอก dashboard ว่าพัดลม/ปั๊ม "จริงๆ" กำลังวิ่งอยู่ที่ช่องไหน (ยืนยันจากเฟิร์มแวร์ ไม่ใช่แค่เสียงเรียกจาก dashboard)
+  j.set("fan_channel",  fanCh  == IDX_FAN  ? "ch3" : "ch1");
+  j.set("pump_channel", pumpCh == IDX_PUMP ? "ch4" : "ch2");
+  j.set("firmware",    "2.9.6");
   // Boot diagnostics — dashboard เห็นย้อนหลังได้ว่าบอร์ดรีสตาร์ทเพราะอะไร ไม่ต้องนั่งเฝ้า Serial Monitor
   // boot_count พุ่งเร็ว = reboot loop · last_reset_reason บอกว่าโทษไฟ (BROWNOUT) หรือโทษโค้ด (PANIC/TASK_WDT)
   j.set("last_reset_reason", resetReasonStr(bootResetReason));
@@ -2033,14 +2257,14 @@ void checkSchedule() {
       shouldBeOn = (now >= onT || now < offT);
     }
 
-    // ปั๊ม (CH4) เคารพ safety lock — ห้ามเปิดระหว่าง cooldown
-    if (i == IDX_PUMP && shouldBeOn && lockActive(pumpLockUntil)) continue;
-    if (i == IDX_FAN  && shouldBeOn && lockActive(fanLockUntil))  continue;   // v2.8.0: พัดลมพักคู่ปั๊ม
+    // ปั๊ม/พัดลม (ช่องที่กำลังเล่นบทบาทนั้นจริง — pumpCh/fanCh อาจสลับไปช่องสำรอง) เคารพ safety lock
+    if (i == pumpCh && shouldBeOn && lockActive(pumpLockUntil)) continue;
+    if (i == fanCh  && shouldBeOn && lockActive(fanLockUntil))  continue;   // v2.8.0: พัดลมพักคู่ปั๊ม
 
     if (shouldBeOn != *states[i]) {
       *states[i] = shouldBeOn;
       setRelay(pins[i], shouldBeOn);
-      if (i == IDX_PUMP) lastPumpSwitchTime = millis();
+      if (i == pumpCh) lastPumpSwitchTime = millis();
       Serial.printf("[SCHED] CH%d → %s (now:%s on:%s off:%s)\n",
         i+1, shouldBeOn?"ON":"OFF", nowBuf, ch_schedOn[i], ch_schedOff[i]);
     }
@@ -2084,8 +2308,8 @@ void updateLCD() {
       break;
 
     case 2:
-      snprintf(buf1, sizeof(buf1), "Pump: %s", ch4_spare ? "ON" : "OFF");
-      snprintf(buf2, sizeof(buf2), "Fan: %s",  ch3_fanIn ? "ON" : "OFF");
+      snprintf(buf1, sizeof(buf1), "Pump%d: %s", pumpCh+1, *chStatePtr(pumpCh) ? "ON" : "OFF");
+      snprintf(buf2, sizeof(buf2), "Fan%d: %s",  fanCh+1,  *chStatePtr(fanCh)  ? "ON" : "OFF");
       lcd->setCursor(0, 0); lcd->print(buf1);
       lcd->setCursor(0, 1); lcd->print(buf2);
       break;

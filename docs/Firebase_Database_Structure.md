@@ -117,23 +117,34 @@ Firebase Realtime Database
         "humidity_alert": 40.0,
         "water_temp_alert": 35.0
       },
-      "buzzer_enabled": true
+      "buzzer_enabled": true,
+      "fan_channel": "ch3",
+      "pump_channel": "ch4"
     }
   }
 }
 ```
 
-**Channel mapping (การเดินสายจริง 2026-06-26):**
+**Channel mapping (การเดินสายจริง 2026-06-26 · role remap v2.9.5):**
 
 | Key | Relay/GPIO | อุปกรณ์ | คุมด้วย |
 |-----|-----------|---------|---------|
-| `ch1_pump` | CH1 / GPIO26 | สำรอง | manual / schedule เท่านั้น (ไม่มี auto) |
-| `ch2_fan_out` | CH2 / GPIO27 | ไม่ได้ใช้ | ค้าง OFF (ซ่อนใน dashboard) |
-| `ch3_fan_in` | CH3 / GPIO14 | **พัดลม 220V (ดูดเข้า)** | อุณหภูมิ + ความชื้น + vent (3 latch OR กัน — ดูตาราง thresholds ด้านล่าง) |
-| `ch4_spare` | CH4 / GPIO25 | **ปั๊มน้ำ 24V** | ความชื้น + evaporative cooling + pump safety · ⚠️ ช่อง CH4 บนบอร์ดรีเลย์เสีย เดินสายเลี่ยงไว้ฝั่งฮาร์ดแวร์ |
+| `ch1_pump` | CH1 / GPIO26 | พัดลมสำรอง | auto เฉพาะตอนเป็น `fan_channel` ที่ active จริง · ไม่งั้น manual / schedule |
+| `ch2_fan_out` | CH2 / GPIO27 | ปั๊มสำรอง | auto เฉพาะตอนเป็น `pump_channel` ที่ active จริง · ไม่งั้น manual / schedule |
+| `ch3_fan_in` | CH3 / GPIO14 | **พัดลม 220V (ดูดเข้า)** — ช่องหลัก (default) | อุณหภูมิ + ความชื้น + vent (3 latch OR กัน — ดูตาราง thresholds ด้านล่าง) |
+| `ch4_spare` | CH4 / GPIO25 | **ปั๊มน้ำ 24V** — ช่องหลัก (default) | ความชื้น + evaporative cooling + pump safety · ⚠️ ช่อง CH4 บนบอร์ดรีเลย์เสีย เดินสายเลี่ยงไว้ฝั่งฮาร์ดแวร์ |
 
 > ⚠️ ชื่อ key เป็นชื่อ "ตำแหน่งเดิม" ไม่ตรงกับหน้าที่จริง (`ch4_spare` = ปั๊ม, `ch1_pump` = สำรอง) —
 > คงชื่อไว้เพื่อไม่ให้ dashboard/rules/firmware หลุด sync · ดู `IDX_FAN`/`IDX_PUMP` ใน firmware
+
+**`fan_channel` / `pump_channel`** (v2.9.5) — เลือกว่าบทบาทพัดลม/ปั๊มใช้ช่องไหนจริง:
+
+| Field | ค่า | ความหมาย |
+|-------|-----|---------|
+| `fan_channel` | `"ch3"` (default) \| `"ch1"` | ช่องที่ `autoControl()` ขับเป็นพัดลมจริง — สลับแล้ว CH3/CH1 ที่ไม่ได้ active กลับไป manual/schedule |
+| `pump_channel` | `"ch4"` (default) \| `"ch2"` | ช่องที่ `autoControl()` ขับเป็นปั๊มจริง — สลับแล้ว CH4/CH2 ที่ไม่ได้ active กลับไป manual/schedule |
+
+> สลับแล้ว ESP32 ปิดรีเลย์ช่องเก่าทันที + บังคับช่องใหม่เป็น `mode: "auto"` — ดู `applyChannelSwitch()` ใน firmware
 
 | Field | ค่า | ความหมาย |
 |-------|-----|---------|
@@ -168,6 +179,8 @@ Firebase Realtime Database
       "ch2_fan_out": false,
       "ch3_fan_in": true,
       "ch4_spare": false,
+      "fan_channel": "ch3",
+      "pump_channel": "ch4",
       "firmware": "2.9.2",
       "sensor_ok": true,
       "sensor_stale": false,
@@ -195,6 +208,7 @@ Firebase Realtime Database
 |-------|------|---------|
 | `online` | bool | ESP32 กำลังทำงาน |
 | `ch1_pump`..`ch4_spare` | bool | สถานะ relay จริง (ตรงกับ key ใน control) |
+| `fan_channel` / `pump_channel` | string | v2.9.5: ช่องที่ firmware "จริงๆ" ใช้เป็นพัดลม/ปั๊มตอนนี้ (`"ch3"`\|`"ch1"`, `"ch4"`\|`"ch2"`) — ยืนยันจากเฟิร์มแวร์ ไม่ใช่แค่ echo ค่าที่เพิ่งเขียนไปใน control |
 | `firmware` | string (<16) | เวอร์ชัน firmware ปัจจุบัน = `"2.9.2"` — อยู่ 6 ที่ในโค้ด/repo ต้องขยับพร้อมกัน (checklist หัวไฟล์ `.ino`) |
 | `sensor_ok` | bool | อ่านเซนเซอร์อากาศรอบล่าสุดสำเร็จ (พลาด 1 ครั้ง = false) |
 | `sensor_stale` | bool | พลาดจนเลิกเชื่อแล้ว (≥12 ครั้งติด) → **auto ปิดทุกช่อง** — เรื่องใหญ่ ต้องเด้งเตือน |

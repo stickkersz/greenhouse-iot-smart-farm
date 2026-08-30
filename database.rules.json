@@ -18,6 +18,8 @@
         "ch2_fan_out": { ".validate": "newData.isBoolean()" },
         "ch3_fan_in":  { ".validate": "newData.isBoolean()" },
         "ch4_spare":   { ".validate": "newData.isBoolean()" },
+        "fan_channel":  { ".validate": "newData.isString() && (newData.val() == 'ch3' || newData.val() == 'ch1')" },
+        "pump_channel": { ".validate": "newData.isString() && (newData.val() == 'ch4' || newData.val() == 'ch2')" },
         "sensor_ok":    { ".validate": "newData.isBoolean()" },
         "sensor_stale": { ".validate": "newData.isBoolean()" },
         "water_ok":    { ".validate": "newData.isBoolean()" },
@@ -82,6 +84,8 @@
           },
           "$other": { ".validate": false }
         },
+        "fan_channel":  { ".validate": "newData.isString() && (newData.val() == 'ch3' || newData.val() == 'ch1')" },
+        "pump_channel": { ".validate": "newData.isString() && (newData.val() == 'ch4' || newData.val() == 'ch2')" },
         "thresholds": {
           "temp_on":        { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && newData.val() > newData.parent().child('temp_off').val() && (!newData.parent().child('temp_alert').exists() || newData.val() < newData.parent().child('temp_alert').val())" },
           "temp_off":       { ".validate": "newData.isNumber() && newData.val() > -20 && newData.val() < 70 && (!newData.parent().child('temp_on').exists() || newData.val() < newData.parent().child('temp_on').val())" },

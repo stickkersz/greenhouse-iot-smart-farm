@@ -233,6 +233,8 @@
     .mode-btn{flex:1;font-size:.68rem;font-weight:600;padding:5px 0;border-radius:6px;border:none;background:transparent;color:var(--muted);cursor:pointer;transition:.2s;font-family:'Prompt',sans-serif}
     .mode-note{flex:2;display:flex;align-items:center;justify-content:center;font-size:.6rem;color:var(--muted);opacity:.75;text-align:center;line-height:1.2}
     .mode-btn.active{background:var(--mode-active-bg);color:var(--accent-text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+    .mode-btn:disabled{opacity:.35;cursor:not-allowed}
+    .role-inactive-note{font-size:.64rem;color:var(--muted);opacity:.8;text-align:center;line-height:1.3}
 
     /* ── Global Auto/Manual switch (สลับ CH3+CH4 พร้อมกัน) ── */
     .global-mode-card{background:var(--card);border:1.5px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow-sm)}
@@ -632,6 +634,28 @@
         <div class="global-mode-hint">สลับพัดลม + ปั๊มน้ำพร้อมกัน — ค่า threshold ที่ตั้งไว้ใน Settings จะกลับมาใช้ทันทีเมื่อสลับกลับ Auto (ไม่ได้ถูกลบ)</div>
       </div>
 
+      <!-- v2.9.5: Channel Role Switch — เผื่อ CH3(พัดลม)/CH4(ปั๊ม) พังจริง ย้ายบทบาทไปช่องสำรอง CH1/CH2 -->
+      <div class="global-mode-card">
+        <div class="global-mode-label">🔀 ช่องที่ใช้งานจริง (เผื่อรีเลย์หลักพัง)</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <div style="font-size:.72rem;font-weight:600;color:var(--sub);margin-bottom:5px">💨 พัดลม</div>
+            <div class="global-mode-row">
+              <button class="global-mode-btn" id="fanRoleBtn_ch3" onclick="setChannelRole('fan_channel','ch3')">CH3 (หลัก)</button>
+              <button class="global-mode-btn" id="fanRoleBtn_ch1" onclick="setChannelRole('fan_channel','ch1')">CH1 (สำรอง)</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:.72rem;font-weight:600;color:var(--sub);margin-bottom:5px">💧 ปั๊มน้ำ</div>
+            <div class="global-mode-row">
+              <button class="global-mode-btn" id="pumpRoleBtn_ch4" onclick="setChannelRole('pump_channel','ch4')">CH4 (หลัก)</button>
+              <button class="global-mode-btn" id="pumpRoleBtn_ch2" onclick="setChannelRole('pump_channel','ch2')">CH2 (สำรอง)</button>
+            </div>
+          </div>
+        </div>
+        <div class="global-mode-hint">สลับที่นี่ถ้า CH3 หรือ CH4 เสียจริง — ช่องที่เลือกรับ auto ทันที ช่องเดิมปิดตัวเองและกลับไปเป็นควบคุมเอง (manual/schedule เท่านั้น)</div>
+      </div>
+
       <div class="relay-grid">
 
         <div class="relay-card" id="relayCard_ch4">
@@ -642,8 +666,8 @@
             <div class="relay-badge s-off" id="relayBadge_ch4">OFF</div>
           </div>
           <div class="mode-row">
-            <button class="mode-btn active" onclick="setMode('ch4_spare','auto',this)">🤖 AUTO</button>
-            <button class="mode-btn" onclick="setMode('ch4_spare','manual',this)">✋ MANUAL</button>
+            <button class="mode-btn active auto-btn" onclick="setMode('ch4_spare','auto',this)">🤖 AUTO</button>
+            <button class="mode-btn manual-btn" onclick="setMode('ch4_spare','manual',this)">✋ MANUAL</button>
           </div>
           <details class="schedule-wrap">
             <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
@@ -667,8 +691,8 @@
             <div class="relay-badge s-off" id="relayBadge_ch3">OFF</div>
           </div>
           <div class="mode-row">
-            <button class="mode-btn active" onclick="setMode('ch3_fan_in','auto',this)">🤖 AUTO</button>
-            <button class="mode-btn" onclick="setMode('ch3_fan_in','manual',this)">✋ MANUAL</button>
+            <button class="mode-btn active auto-btn" onclick="setMode('ch3_fan_in','auto',this)">🤖 AUTO</button>
+            <button class="mode-btn manual-btn" onclick="setMode('ch3_fan_in','manual',this)">✋ MANUAL</button>
           </div>
           <details class="schedule-wrap">
             <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
@@ -687,17 +711,16 @@
         <div class="relay-card" id="relayCard_ch1">
           <div class="relay-top">
             <div class="relay-icon" id="relayIcon_ch1">⚡</div>
-            <div class="relay-info"><div class="relay-name">สำรอง</div><div class="relay-ch">CH1 · GPIO26</div></div>
+            <div class="relay-info"><div class="relay-name">พัดลมสำรอง</div><div class="relay-ch">CH1 · GPIO26</div></div>
             <label class="toggle"><input type="checkbox" id="toggle_ch1" onchange="setRelay('ch1_pump',this.checked)"><span class="slider"></span></label>
             <div class="relay-badge s-off" id="relayBadge_ch1">OFF</div>
           </div>
-          <!-- ⚠️ ไม่มีปุ่ม AUTO โดยเจตนา — firmware ไม่มี auto logic ให้ CH1 เลย (autoControl() คุมแค่
-               IDX_FAN=CH3 กับ IDX_PUMP=CH4) · ปุ่ม AUTO เคยมีอยู่ตรงนี้ แต่กดแล้วจะไม่มีโค้ดฝั่งไหน
-               สั่งรีเลย์ช่องนี้อีกเลย = ค้างสถานะเดิมและคุมจาก dashboard ไม่ได้จนกว่าจะกลับเป็น MANUAL
-               ช่องนี้ใช้ manual หรือตั้งเวลาเท่านั้น (v2.9.3 ถอดปุ่มออก) -->
+          <!-- v2.9.5: ปุ่ม AUTO กลับมาแล้ว — แต่ auto มีความหมายเฉพาะตอน CH1 เป็น fan_channel ที่ "กำลังใช้งานจริง"
+               (ดูช่องสลับด้านบน) เท่านั้น ไม่งั้น autoControl() ไม่มีโค้ดฝั่งไหนขับรีเลย์ช่องนี้เลย = ค้างสถานะเดิม
+               (บั๊กเดิมที่ v2.9.3 ถอดปุ่มออกไปกัน) — updateChannelRoleUI() เป็นคน disable ปุ่มนี้เมื่อ CH1 ไม่ได้เป็น fan_channel -->
           <div class="mode-row">
-            <button class="mode-btn active" onclick="setMode('ch1_pump','manual',this)">✋ MANUAL</button>
-            <span class="mode-note">ช่องสำรอง — สั่งเอง/ตั้งเวลาเท่านั้น</span>
+            <button class="mode-btn active auto-btn" onclick="setMode('ch1_pump','auto',this)">🤖 AUTO</button>
+            <button class="mode-btn manual-btn" onclick="setMode('ch1_pump','manual',this)">✋ MANUAL</button>
           </div>
           <details class="schedule-wrap">
             <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
@@ -709,6 +732,33 @@
               </div>
               <button class="sched-save" onclick="saveSchedule('ch1_pump','ch1')">💾 บันทึกตาราง</button>
               <div class="sched-status" id="schedStatus_ch1"></div>
+            </div>
+          </details>
+        </div>
+
+        <div class="relay-card" id="relayCard_ch2">
+          <div class="relay-top">
+            <div class="relay-icon" id="relayIcon_ch2">⚡</div>
+            <div class="relay-info"><div class="relay-name">ปั๊มสำรอง</div><div class="relay-ch">CH2 · GPIO27</div></div>
+            <label class="toggle"><input type="checkbox" id="toggle_ch2" onchange="setRelay('ch2_fan_out',this.checked)"><span class="slider"></span></label>
+            <div class="relay-badge s-off" id="relayBadge_ch2">OFF</div>
+          </div>
+          <!-- v2.9.5: เดิม CH2 ซ่อนใน dashboard เพราะไม่ได้ต่ออะไรเลย ตอนนี้ทำหน้าที่ปั๊มสำรองได้ (ดูช่องสลับด้านบน)
+               auto มีความหมายเฉพาะตอน CH2 เป็น pump_channel ที่กำลังใช้งานจริง เหมือน CH1/พัดลมด้านบน -->
+          <div class="mode-row">
+            <button class="mode-btn active auto-btn" onclick="setMode('ch2_fan_out','auto',this)">🤖 AUTO</button>
+            <button class="mode-btn manual-btn" onclick="setMode('ch2_fan_out','manual',this)">✋ MANUAL</button>
+          </div>
+          <details class="schedule-wrap">
+            <summary>⏰ ตั้งเวลาอัตโนมัติ</summary>
+            <div class="schedule-body">
+              <label class="sched-en"><input type="checkbox" id="schedEn_ch2"><span>เปิดใช้งานตัวตั้งเวลา</span></label>
+              <div class="sched-times">
+                <div class="sched-time"><span>เวลาเปิด</span><input type="time" id="schedOn_ch2" value="07:00"></div>
+                <div class="sched-time"><span>เวลาปิด</span><input type="time" id="schedOff_ch2" value="18:00"></div>
+              </div>
+              <button class="sched-save" onclick="saveSchedule('ch2_fan_out','ch2')">💾 บันทึกตาราง</button>
+              <div class="sched-status" id="schedStatus_ch2"></div>
             </div>
           </details>
         </div>
@@ -795,11 +845,11 @@
           </div>
           <div class="ch-assign-item">
             <span class="ch-num spare">CH1</span>
-            <div><div class="ch-desc">⚡ สำรอง</div><div class="ch-ctrl">Manual / Schedule only</div></div>
+            <div><div class="ch-desc">⚡ พัดลมสำรอง</div><div class="ch-ctrl">Auto เฉพาะตอนสลับมาใช้ (ดู 🔀 ด้านบน) ไม่งั้น Manual/Schedule</div></div>
           </div>
           <div class="ch-assign-item">
             <span class="ch-num spare">CH2</span>
-            <div><div class="ch-desc">— ไม่ได้ใช้</div><div class="ch-ctrl">GPIO27 · ว่าง</div></div>
+            <div><div class="ch-desc">⚡ ปั๊มสำรอง</div><div class="ch-ctrl">Auto เฉพาะตอนสลับมาใช้ (ดู 🔀 ด้านบน) ไม่งั้น Manual/Schedule</div></div>
           </div>
         </div>
 
@@ -873,7 +923,7 @@
 
 </main>
 
-<footer>🌿 SmartFarm v2.9.4 · บริษัท ปุ๋ยไวกิ้ง จำกัด · กรกฎาคม 2569</footer>
+<footer>🌿 SmartFarm v2.9.6 · บริษัท ปุ๋ยไวกิ้ง จำกัด · สิงหาคม 2569</footer>
 
 <nav class="bottom-nav">
   <div class="bnav-inner">
@@ -1186,8 +1236,12 @@ function startListeners() {
     renderWaterCard();
     updateRelayUI('ch4', d.ch4_spare);   // ปั๊มน้ำ
     updateRelayUI('ch3', d.ch3_fan_in);  // พัดลม
-    updateRelayUI('ch1', d.ch1_pump);    // สำรอง
-    // CH2 ไม่ได้ใช้ — ไม่แสดงใน dashboard
+    updateRelayUI('ch1', d.ch1_pump);    // พัดลมสำรอง
+    updateRelayUI('ch2', d.ch2_fan_out); // ปั๊มสำรอง (v2.9.5 — เดิม CH2 ไม่ได้ใช้เลย)
+    // v2.9.5: fan_channel/pump_channel = ยืนยันจาก firmware ว่ากำลังใช้ช่องไหนจริง (ไม่ใช่แค่ค่าที่เพิ่งเขียนไป)
+    activeFanCh  = d.fan_channel  || 'ch3';
+    activePumpCh = d.pump_channel || 'ch4';
+    updateChannelRoleUI();
     if (d.firmware) document.getElementById('firmwareVer').textContent = 'v' + d.firmware;
     updateHealth();
   }, err => onListenerError('status', err));
@@ -1224,17 +1278,28 @@ function startListeners() {
     // Buzzer enable state (ถ้าไม่มีค่า = เปิดอยู่ เพราะ firmware เดิม beep เสมอ)
     updateBuzzerChip(d.buzzer_enabled === false ? false : true);
 
-    const chMap = {ch4_spare:'ch4', ch3_fan_in:'ch3', ch1_pump:'ch1'};   // ปั๊มน้ำ (CH4) + พัดลม (CH3) + สำรอง (CH1)
+    // ปั๊มน้ำ (CH4/CH2 สำรอง) + พัดลม (CH3/CH1 สำรอง) — v2.9.5 เพิ่ม ch2_fan_out เข้ามา (เดิมไม่ได้ใช้)
+    const chMap = {ch4_spare:'ch4', ch2_fan_out:'ch2', ch3_fan_in:'ch3', ch1_pump:'ch1'};
+    // v2.9.5: auto มีความหมายเฉพาะช่องที่ "กำลังเล่นบทบาทจริง" เท่านั้น
+    // ⚠️ อ่านจาก d.fan_channel/d.pump_channel ของ snapshot ก้อนนี้เอง ไม่ใช่ activeFanCh/activePumpCh
+    //    (ซึ่งมาจาก listener /smartfarm/status คนละตัว) — ตอนกดปุ่มสลับช่อง listener นี้เด้งทันทีจาก
+    //    การเขียน control/fan_channel แต่ status ยังไม่ทันอัปเดต = ตัดสินใจด้วยบทบาทเก่า แล้วเขียน
+    //    mode:'manual' ทับช่องที่เพิ่งถูกเลื่อนขึ้นมา ตีกับ firmware ไปมา · snapshot เดียวกันจึงสอดคล้องเสมอ
+    const snapFanCh  = d.fan_channel  || 'ch3';
+    const snapPumpCh = d.pump_channel || 'ch4';
+    const roleActiveFor = {
+      ch4_spare:   snapPumpCh === 'ch4', ch2_fan_out: snapPumpCh === 'ch2',
+      ch3_fan_in:  snapFanCh  === 'ch3', ch1_pump:    snapFanCh  === 'ch1',
+    };
     const modesByChannel = {};
     for (const [key, id] of Object.entries(chMap)) {
       if (!d[key]) continue;
       let mode = d[key].mode || 'auto';
-      // ⚠️ v2.9.3 กู้คืน CH1 ที่ค้างโหมด auto: ปุ่ม AUTO ถูกถอดออกแล้ว (firmware ไม่เคยมี auto logic
-      //    ให้ช่องนี้) แต่ค่าที่ค้างใน DB จากตอนที่ยังมีปุ่มจะทำให้ toggle ถูก disable ถาวร =
-      //    คุมช่องนี้ไม่ได้เลยและไม่มีปุ่ม AUTO ให้กดกลับด้วย · เขียน manual ทับให้อัตโนมัติครั้งเดียว
-      if (key === 'ch1_pump' && mode === 'auto') {
+      // กู้คืนช่องที่ "เพิ่งไม่ได้เล่นบทบาท" แต่ค้างโหมด auto — ไม่งั้น toggle disable ค้างและไม่มีปุ่ม AUTO
+      // ให้กดกลับ (บั๊กเดิมของ CH1 ก่อน v2.9.3 ตอนนี้ทั่วไปกว่าเดิม เกิดกับช่องไหนก็ได้ที่เพิ่งถูกปลดบทบาท)
+      if (!roleActiveFor[key] && mode === 'auto') {
         mode = 'manual';
-        db.ref('/smartfarm/control/ch1_pump').update({mode: 'manual'});
+        db.ref('/smartfarm/control/' + key).update({mode: 'manual'});
       }
       modesByChannel[key] = mode;
       const toggle = document.getElementById('toggle_' + id);
@@ -1460,7 +1525,86 @@ function toggleBuzzer() {
 }
 
 // ── Relay Control ─────────────────────────────────────
-const CH_LABELS = {ch4_spare:'ปั๊มน้ำ (CH4)', ch3_fan_in:'พัดลม (CH3)', ch1_pump:'สำรอง (CH1)'};
+const CH_LABELS = {ch4_spare:'ปั๊มน้ำ (CH4)', ch2_fan_out:'ปั๊มสำรอง (CH2)', ch3_fan_in:'พัดลม (CH3)', ch1_pump:'พัดลมสำรอง (CH1)'};
+
+// ── Channel Role Remap (v2.9.5) — พัดลม/ปั๊มย้ายไปช่องสำรองได้ (ดู smartfarm_firmware.ino fanCh/pumpCh) ──
+let activeFanCh  = 'ch3';   // ยืนยันจาก status/fan_channel (firmware) ไม่ใช่แค่ค่าที่ dashboard เพิ่งเขียนไป
+let activePumpCh = 'ch4';
+
+// v2.9.6: dashboard เป็นคนเขียน mode ของทั้ง 2 ช่อง "พร้อมกับ" role ในก้อน multi-path update ก้อนเดียว
+// ⚠️ ทำไมต้องเป็น dashboard ไม่ใช่ firmware: rules ของ /smartfarm/control ต้องการ auth.token.email
+//    แต่ ESP32 auth แบบ anonymous → firmware เขียน control ไม่ได้เลย (permission_denied · มีเทสต์ยืนยัน)
+//    และห้ามแก้ rules ให้ anonymous เขียนได้ — ใครก็สมัคร anonymous ด้วย API key ที่ฝังในหน้านี้ได้
+// ⚠️ ทำไมต้องก้อนเดียว: RTDB multi-path update เป็น atomic → firmware ไม่มีทางอ่านเจอ role ใหม่
+//    โดยที่ mode ยังเป็นค่าเก่า · ถ้าแยกเขียน จะมีช่วงที่ poll (ทุก 1.5 วิ) อ่าน role ใหม่ + mode เก่า
+//    แล้วเอา mode เก่าไปทับ = ช่องที่เพิ่งเลื่อนขึ้นมาหลุด auto / ช่องเก่าค้าง auto แบบไม่มีใครขับ
+// ⚠️ key ที่มี '/' ใน update() = deep update ทีละ leaf → schedule/enabled ถูกปิดโดยที่ on_time/off_time
+//    ยังอยู่ครบ · ถ้าส่งเป็น object ซ้อน {schedule:{enabled:false}} RTDB จะ "แทนที่" ทั้ง node = เวลาหาย
+function setChannelRole(role, channel) {
+  const isFan   = role === 'fan_channel';
+  const primary = isFan ? 'ch3_fan_in' : 'ch4_spare';
+  const spare   = isFan ? 'ch1_pump'   : 'ch2_fan_out';
+  const promoted = (channel === 'ch1' || channel === 'ch2') ? spare : primary;
+  const demoted  = promoted === spare ? primary : spare;
+
+  const updates = {
+    [role]: channel,
+    // ช่องที่เลื่อนขึ้นมา: auto ทันที + ปิด schedule (schedule มี precedence เหนือ auto)
+    [`${promoted}/mode`]: 'auto',
+    [`${promoted}/schedule/enabled`]: false,
+    // ช่องที่ถูกปลด: manual + ปิดค้าง + ปิดตารางเดิม (ไม่งั้นรีเลย์ที่เพิ่งถูกปลดเด้งเปิดตามเวลาเก่า)
+    [`${demoted}/mode`]: 'manual',
+    [`${demoted}/manual_state`]: false,
+    [`${demoted}/schedule/enabled`]: false,
+  };
+
+  db.ref('/smartfarm/control').update(updates).then(() => {
+    const label = channel === 'ch1' ? 'พัดลม → CH1 (สำรอง)'
+                : channel === 'ch3' ? 'พัดลม → CH3 (หลัก)'
+                : channel === 'ch2' ? 'ปั๊มน้ำ → CH2 (สำรอง)'
+                :                     'ปั๊มน้ำ → CH4 (หลัก)';
+    logAction(`สลับช่อง: ${label}`);
+    showToast(`🔀 ${label}`);
+  }).catch(err => {
+    // ล้มแล้วต้องรู้ — ถ้าเงียบ ผู้ใช้จะคิดว่าสลับแล้วทั้งที่ยังคุมช่องเดิมอยู่
+    showToast('⚠️ สลับช่องไม่สำเร็จ: ' + err.message);
+  });
+}
+
+// เรียกทุกครั้งที่ status/fan_channel หรือ pump_channel เปลี่ยน (ยืนยันจาก firmware)
+// ปุ่ม AUTO ต้องกดได้เฉพาะช่องที่ "กำลังเล่นบทบาทจริง" เท่านั้น — ช่องที่เหลือไม่มีโค้ดฝั่งไหนขับรีเลย์
+// (กดแล้วรีเลย์ค้างสถานะเดิม คุมไม่ได้จนกว่าจะกลับ manual — บั๊กเดิมของ CH1 ก่อน v2.9.3)
+function updateChannelRoleUI() {
+  document.getElementById('fanRoleBtn_ch3')?.classList.toggle('active', activeFanCh === 'ch3');
+  document.getElementById('fanRoleBtn_ch1')?.classList.toggle('active', activeFanCh === 'ch1');
+  document.getElementById('pumpRoleBtn_ch4')?.classList.toggle('active', activePumpCh === 'ch4');
+  document.getElementById('pumpRoleBtn_ch2')?.classList.toggle('active', activePumpCh === 'ch2');
+  setAutoAvailable('ch3', activeFanCh === 'ch3');
+  setAutoAvailable('ch1', activeFanCh === 'ch1');
+  setAutoAvailable('ch4', activePumpCh === 'ch4');
+  setAutoAvailable('ch2', activePumpCh === 'ch2');
+}
+
+function setAutoAvailable(id, available) {
+  const card = document.getElementById('relayCard_' + id);
+  if (!card) return;
+  const autoBtn = card.querySelector('.auto-btn');
+  if (autoBtn) {
+    autoBtn.disabled = !available;
+    autoBtn.title = available ? '' : 'ช่องนี้ไม่ได้ใช้งานอยู่ตอนนี้ — สลับที่ช่องด้านบนก่อนถึงจะตั้ง Auto ได้';
+  }
+  let note = card.querySelector('.role-inactive-note');
+  if (!available) {
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'role-inactive-note';
+      note.textContent = '⏸ ไม่ได้ใช้งานอยู่ตอนนี้ — ควบคุมเองได้ (manual/schedule)';
+      card.querySelector('.mode-row')?.after(note);
+    }
+  } else {
+    note?.remove();
+  }
+}
 
 function setRelay(channel, state) {
   db.ref('/smartfarm/control/' + channel).update({manual_state: state});
@@ -1502,14 +1646,17 @@ function setMode(channel, mode, btn) {
   showToast(mode==='auto' ? '🤖 โหมด AUTO' : '✋ โหมด MANUAL');
 }
 
-// ── Global Mode Switch — สลับพัดลม (CH3) + ปั๊มน้ำ (CH4) เป็น auto/manual พร้อมกัน ──
-// (CH1 สำรอง ไม่รวมด้วย เพราะ firmware ไม่มี auto logic ให้ช่องนี้จริง — manual/schedule เท่านั้น)
+// ── Global Mode Switch — สลับพัดลม + ปั๊มน้ำ เป็น auto/manual พร้อมกัน ──
+// v2.9.5: ต้องตามช่องที่ "กำลังใช้งานจริง" (activeFanCh/activePumpCh) ไม่ใช่ CH3/CH4 ตายตัวอีกต่อไป —
+// ถ้าพัดลมย้ายไป CH1 แล้วปุ่มนี้ยังไปสั่ง ch3_fan_in อยู่ = สั่งช่องที่ไม่มีอะไรฟังอยู่ ช่องจริงไม่ขยับ
 // threshold ใน /smartfarm/control/thresholds ไม่ถูกแตะต้อง — สลับกลับ auto เมื่อไหร่ค่าเดิมใช้ได้ทันที
-const GLOBAL_MODE_CHANNELS = ['ch3_fan_in', 'ch4_spare'];
+function globalModeChannels() {
+  return [activeFanCh === 'ch1' ? 'ch1_pump' : 'ch3_fan_in', activePumpCh === 'ch2' ? 'ch2_fan_out' : 'ch4_spare'];
+}
 
 function setGlobalMode(mode) {
   const updates = {};
-  GLOBAL_MODE_CHANNELS.forEach(ch => { updates[ch + '/mode'] = mode; });
+  globalModeChannels().forEach(ch => { updates[ch + '/mode'] = mode; });
   db.ref('/smartfarm/control').update(updates).then(() => {
     logAction(`โหมดควบคุมรวม → ${mode === 'auto' ? 'AUTO ทั้งหมด (พัดลม+ปั๊ม)' : 'MANUAL ทั้งหมด (พัดลม+ปั๊ม)'}`);
     showToast(mode === 'auto'
@@ -1521,7 +1668,7 @@ function setGlobalMode(mode) {
 // เรียกจาก control listener ทุกครั้งที่ mode เปลี่ยน — สะท้อนสถานะรวมให้ปุ่ม global ตรงความจริงเสมอ
 // (auto=เขียวทั้งคู่, manual=เทาทั้งคู่, ผสม=ใช้ per-channel toggle แยกกันมาก่อน)
 function updateGlobalModeUI(modesByChannel) {
-  const modes = GLOBAL_MODE_CHANNELS.map(ch => modesByChannel[ch] || 'auto');
+  const modes = globalModeChannels().map(ch => modesByChannel[ch] || 'auto');
   const allAuto   = modes.every(m => m === 'auto');
   const allManual = modes.every(m => m === 'manual');
   const btnAuto   = document.getElementById('globalModeBtn_auto');

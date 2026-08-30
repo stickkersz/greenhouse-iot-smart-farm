@@ -2,7 +2,7 @@
 
 ระบบควบคุมโรงเรือนอัตโนมัติด้วย ESP32 + Firebase — พัดลมและปั๊มพ่นหมอกทำงานเองตามอุณหภูมิ/ความชื้น พร้อม dashboard สั่งงานและดูข้อมูลย้อนหลังแบบ real-time.
 
-**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.4** · ESP32 DevKit V1
+**บริษัท ปุ๋ยไวกิ้ง จำกัด** · Firmware **v2.9.6** · ESP32 DevKit V1
 
 ---
 
@@ -76,10 +76,12 @@ Three independently deployable layers:
 
 | Channel | GPIO | Load | Controlled by |
 |---|---|---|---|
-| **CH1** | 26 | สำรอง (spare) | manual / schedule only — no auto |
-| **CH2** | 27 | ไม่ได้ใช้ (unused) | hidden in dashboard, forced OFF |
-| **CH3** | 14 | พัดลม 220 V AC (ดูดเข้า) | **temperature + humidity** (auto) |
-| **CH4** | 25 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) |
+| **CH1** | 26 | พัดลมสำรอง (fan spare) | auto only while selected as the active fan channel — otherwise manual/schedule |
+| **CH2** | 27 | ปั๊มสำรอง (pump spare) | auto only while selected as the active pump channel — otherwise manual/schedule |
+| **CH3** | 14 | พัดลม 220 V AC (ดูดเข้า) | **temperature + humidity** (auto) — default fan channel |
+| **CH4** | 25 | ปั๊มน้ำ 24 V DC | **humidity + pump safety** (auto) — default pump channel |
+
+> **v2.9.5 — channel role remap.** The dashboard's "🔀 ช่องที่ใช้งานจริง" control can move the fan role from CH3 to CH1, or the pump role from CH4 to CH2, if the primary relay dies. Only one channel per role runs auto logic at a time — the vacated channel is switched off and reverts to plain manual/schedule control, same as CH1 always was before this. See `smartfarm_firmware.ino`'s `fanCh`/`pumpCh` and `applyChannelSwitch()`.
 
 ### Other pins
 
@@ -204,7 +206,7 @@ Reference docs worth reading: `docs/Firebase_Database_Structure.md`, `docs/pinou
    arduino-cli upload -p /dev/cu.usbserial-XXXX smartfarm_firmware
    ```
 
-4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.4 ===`.
+4. **Watch serial** (115200 baud) — banner should read `=== Greenhouse IoT Smart Farm v2.9.6 ===`.
 
 ---
 
@@ -282,10 +284,10 @@ Run all three green before flashing or deploying.
 
 1. `npm test` → both suites green.
 2. `arduino-cli compile smartfarm_firmware` → clean (~44% flash on huge_app).
-3. Flash the board, watch serial for `v2.9.4`.
+3. Flash the board, watch serial for `v2.9.6`.
 4. `firebase deploy --only database` then `--only hosting`.
 5. **Verify on hardware** (per this project's incremental-testing practice — host tests are not a substitute for a real SHT35):
-   - Banner reads `v2.9.4`.
+   - Banner reads `v2.9.6`.
    - On a humid test, vent arms at RH ≥ `humidity_vent` (`[AUTO] พัดลมเปิด (...ชื้นเกิน...)`).
    - **No** `[AUTO] ⚠️ ปิด vent` warning on a valid config (that means firmware thinks the config is unusable).
    - Pump and fan never run in a way that violates `pumpOn → fanOn`.
@@ -315,7 +317,32 @@ Run all three green before flashing or deploying.
 - **`VENT_HYST` lives in three layers** (`auto_control_logic.h`, dashboard `VENT_HYST_PCT`, rules literal `5`) — unavoidably, since C++, browser JS, and Firebase rules JSON cannot import from each other, and rules have no variables at all. `auto_control_logic.h` is the source of truth; tuning it means editing all three, and **`npm run test:sync` fails if they diverge** (`tests/vent_hyst_sync.check.js`). A guard rather than codegen on purpose: `firebase deploy` ships whatever rules file is on disk, so a forgotten regeneration step would deploy a stale value silently — worse than the duplication.
 - Full changelog is at the top of `smartfarm_firmware.ino`. Deeper rationale, incident history, and hardware gotchas are in `docs/PROJECT_MEMORY.md`.
 
-**v2.9.4** (latest) — final review sweep, all of it on the alert path:
+**v2.9.6** (latest) — the TASK_WDT reboots finally have a root cause, and it was two numbers that happened to be equal:
+
+The Firebase library's TLS handshake timeout is hardcoded at **60 s** (`BSSL_TCP_Client.h:444`, `_handshake_timeout = 60000`). `WDT_TIMEOUT_S` is also **60**. `loop()` feeds the watchdog once at the top of each pass, so a single stalled handshake exhausts the entire watchdog budget by itself — everything else in that pass is already overtime. That is the whole bug: not heap fragmentation, not brownout, not several tasks contending. It matches every symptom on record — `last_reset_reason = TASK_WDT`, clustering at poor RSSI (−74/−76), and being maddeningly intermittent, since it needs a handshake to actually stall. v2.9.2 fixed a *different* path to the same watchdog (`syncNTP`), which is why the reboots continued after it.
+
+The library's own `config.timeout.sslHandshake` cannot fix this — the field is declared in `FB_Const.h:1307` and **never read anywhere in the library**, so setting it does nothing. The timeout has to be set through `fbData.tcpClient.client()->setHandshakeTimeout()` (public the whole way down; takes **seconds**, not ms). The underlying client is allocated once in the constructor and freed only in the destructor, so setting it a single time holds for the life of the program.
+
+Every network operation is now capped well under the watchdog — handshake 60→**15 s**, socket connect 10→**5 s**, server response 10→**8 s** (the latter two are honored from `fbConfig`) — putting the worst case for one Firebase call at 28 s. The watchdog is also now fed at the boundaries *between* completed phases of `loop()`, because a single pass can legitimately perform several individually-bounded network operations whose **sum** exceeds 60 s, rebooting a board that was never actually stuck. This is not the blanket feeding v2.9.2 warned against: that warning is about feeding *while waiting on something unfinished*, which blinds the watchdog; feeding after a phase completes reports real forward progress, which is exactly what a watchdog is meant to measure. Any single phase that genuinely wedges past 60 s still trips it.
+
+Audited the rest of the file for unbounded blocking while here; everything else already has a ceiling (`syncNTP` 10 s, `wifiMulti.run` 20 s + ~5 s scan, `buzzerBeep` ~0.55 s, remaining `delay()`s confined to `setup()` or immediately before `ESP.restart()`).
+
+**v2.9.5** — CH1/CH2 become swappable backups for the fan and pump:
+
+Previously CH1 was a manual-only spare and CH2 was hidden entirely — neither had any auto logic. Now the dashboard's "🔀 ช่องที่ใช้งานจริง" control can move the fan role from CH3 to CH1, or the pump role from CH4 to CH2, one click, no reflash — for when a relay physically dies and swapping the load to the spare terminal is faster than fixing the board. Only one channel per role runs auto logic at a time; switching turns the vacated channel's relay off and drops it back to plain manual/schedule control (which is what CH1 always was). The choice persists through reboot (NVS) and survives a WiFi-less boot the same way every other control setting does. See `fanCh`/`pumpCh` and `applyChannelSwitch()` in `smartfarm_firmware.ino`.
+
+Also fixes a latent bug the *previous* CH1-frozen-relay fix (v2.9.3) didn't generalize: the dashboard's global AUTO/MANUAL switch was hardcoded to `ch3_fan_in`/`ch4_spare` — after a role swap it would have kept toggling the now-inactive primary channel while the spare, quietly running the actual climate control, went untouched by the "MANUAL ทั้งหมด" button. It now follows whichever channel is currently active.
+
+**Two bugs caught in review of this feature, before it ever shipped** — both from treating the role switch as local state when `mode` is actually owned by Firebase and re-read every 1.5 s poll:
+
+1. **The switch didn't stick, in both directions.** `applyChannelSwitch()` set `ch_isAuto[]` in RAM but nothing persisted the new modes. Since the control poll overwrites `ch_isAuto[]` from Firebase on every cycle, and `applyChannelSwitch()` only runs on the one poll where the channel actually changes, the whole switch unwound 1.5 seconds later: the **promoted** channel fell back out of auto (Firebase still said `"manual"`), so nothing ran climate control at all — the exact opposite of what a failover is for — and the **demoted** channel stayed stuck at `"auto"` with nothing driving it, which also makes `applyManualControl()` refuse to touch it (it requires `!ch_isAuto`). That second half is the same frozen-relay class of bug v2.9.3 fixed for CH1; this feature would have recreated it on all four channels.
+
+   The first fix attempted was to have the **firmware** write the modes back to `/smartfarm/control` — and it could never have worked. The ESP32 authenticates *anonymously*, while `control` requires `auth.token.email != null`, so every one of those writes returns `permission_denied`. It compiled, it raised no runtime error, and it only surfaced when the writes were exercised against the rules emulator *in the exact shape the firmware sends* — a test now locks that down. Relaxing the rule was never an option either: anonymous sign-up is available to anyone holding the API key, which ships in the dashboard page, so allowing it would let a stranger flip the greenhouse's relay modes. The permission split was correct; the design was not. The fix divides the work along the permissions each side actually has — the **dashboard** (email-authed, and the initiator of every switch) writes the role and both channels' modes as a single atomic multi-path update, so the firmware can never observe the new role alongside stale modes; and the **firmware** enforces the safety half locally with no network at all (`enforceRoleModeInvariant()`: a channel that isn't the active fan or pump may never be in auto), which holds even offline, on a stale NVS restore, or if the dashboard write fails outright.
+2. **The dashboard's recovery fixup raced the firmware and clobbered the promoted channel.** It decided which channel was "active" from `activeFanCh`/`activePumpCh`, which are populated by the `/smartfarm/status` listener — a *different* listener that hasn't updated yet at the instant the `/smartfarm/control` write for the switch fires its own listener. So it evaluated with the pre-switch role, concluded the newly promoted channel shouldn't be in auto, and wrote `mode:"manual"` over it — fighting the firmware every cycle. It now derives the role from the same `/smartfarm/control` snapshot it is already reading, so the decision is always self-consistent.
+
+Switching also now disables the schedule flag on **both** channels (preserving `on_time`/`off_time` — the update uses `/`-separated keys, which RTDB applies leaf-by-leaf, rather than a nested object, which would replace the whole `schedule` node and drop the times): on the promoted channel because schedule outranks auto and would otherwise silence the failover, and on the demoted one so a relay you just took out of service — usually because it's broken — can't re-open itself on its old timetable.
+
+**v2.9.4** — final review sweep, all of it on the alert path:
 
 1. **The alert node was written field by field, so the dashboard read torn alerts.** `pumpSafetyCheck()` wrote `type` then `message` as two calls; `reportAlert()` wrote three. The dashboard listens on the parent node, so it fired on the intermediate state — a pump cutoff at 14:05 rendered the new title against the *previous* alert's text, and `saveAlertHistory()`'s 5-minute per-type dedup then suppressed the corrected event, making the wrong text the permanent history record. Now one `FirebaseJson` + `setJSONAsync`, atomic per event (the async variant because the library only adds `print=silent` to async requests — the plain call echoes the ~230-450 byte payload back into a 512-byte BSSL receive buffer that nobody reads). `setJSON` and not the `updateNodeSilent` merge used everywhere else in the firmware, deliberately: `last_alert` is one event, not accumulated state, and a PATCH strands the previous alert's fields. Live proof, read out of the database on 2026-08-05: `{"type":"fan_cutoff", "message":"พัดลมพัก…", "value":12}` — the cutoff path never writes `value` at all, so 12 is a stale `airSensorFailCount` from some earlier `sensor_fail`, and the dashboard was both displaying it and keying its dedup on it.
 2. **Repeated cutoff alerts were silently dropped.** The dashboard dedups on `type|message|value`, and the cutoff path writes a constant message with no `value` — so the 2nd, 3rd… cutoff produced a byte-identical key. On a hot afternoon the pump cuts out every ~20 minutes, but "ตรวจสอบระดับน้ำ" appeared exactly once per page load: the one alert meaning *the tank may be empty* was the one that stopped repeating. Firmware now stamps every alert with `seq` (uptime seconds) and the dashboard includes it in the key.
