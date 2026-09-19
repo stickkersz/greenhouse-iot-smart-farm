@@ -30,6 +30,8 @@ An ESP32 reads air temperature/humidity (SHT35) and water temperature (DS18B20),
 
 A browser dashboard (Firebase Hosting) shows live readings, historical charts, and lets staff switch each channel between **AUTO / MANUAL / SCHEDULE**, tune thresholds, and load seasonal presets.
 
+It also shows a **VPD** (vapor-pressure deficit) card, computed in the browser from the air temperature and humidity already being pushed — no firmware, rules or database change. Its target band (`VPD_BAND` in `dashboard/index.html`, currently 0.8–1.2 kPa) is a **provisional, unverified** reference: no source for a general range was found, and the right band depends on the crop. Set it once the crop is known. Tests: `npm run test:vpd`.
+
 ---
 
 ## Architecture

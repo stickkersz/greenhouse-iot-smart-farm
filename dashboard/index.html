@@ -611,6 +611,16 @@
           <div class="gauge-wrap" id="waterTempGauge"></div>
           <div class="sensor-status" id="waterTempStatus">⏳ รอรับข้อมูล...</div>
         </div>
+        <!-- VPD: คำนวณในเบราว์เซอร์จาก air_temp + air_humidity ที่มีอยู่แล้ว — ไม่แตะ firmware/rules/Firebase -->
+        <div class="sensor-card amber" onclick="openSensorDetail('vpd')">
+          <div class="sensor-top">
+            <span class="sensor-label">🍃 VPD (ความต่างแรงดันไอน้ำ)</span>
+            <span class="sensor-badge badge-offline" id="vpdBadge">รอข้อมูล</span>
+          </div>
+          <div class="gauge-wrap" id="vpdGauge"></div>
+          <div class="sensor-status" id="vpdStatus">⏳ รอรับข้อมูล...</div>
+          <div class="sensor-status" id="vpdNote"></div>
+        </div>
       </div>
     </div>
 
@@ -1081,7 +1091,8 @@ function showTab(name) {
 }
 
 // ── Gauge ─────────────────────────────────────────────
-function buildGauge(value, min, max, color, unit) {
+// decimals: ไม่ใส่ = พฤติกรรมเดิม (จำนวนเต็มโชว์เต็ม ไม่งั้นทศนิยม 1 ตำแหน่ง) · ใส่ = บังคับจำนวนตำแหน่ง (VPD ใช้ 2)
+function buildGauge(value, min, max, color, unit, decimals) {
   const cx = 80, cy = 80, r = 58, START = 120, SWEEP = 300;
   const toRad = d => d * Math.PI / 180;
   const pt = d => [cx + r * Math.cos(toRad(d)), cy + r * Math.sin(toRad(d))];
@@ -1092,7 +1103,9 @@ function buildGauge(value, min, max, color, unit) {
   };
   const pct = value != null ? Math.max(0.002, Math.min(0.998, (value - min) / (max - min))) : 0;
   const end = START + pct * SWEEP;
-  const dv  = value != null ? (Number.isInteger(value) ? String(value) : value.toFixed(1)) : '—';
+  const dv  = value != null
+    ? (decimals != null ? value.toFixed(decimals) : (Number.isInteger(value) ? String(value) : value.toFixed(1)))
+    : '—';
   const [lx,ly] = pt(START), [rx,ry] = pt(START + SWEEP);
   return `<svg viewBox="0 0 160 130" xmlns="http://www.w3.org/2000/svg">
     <path d="${arc(START,START+SWEEP)}" style="stroke:var(--track)" stroke-width="11" fill="none" stroke-linecap="round"/>
@@ -1104,11 +1117,42 @@ function buildGauge(value, min, max, color, unit) {
   </svg>`;
 }
 
+// ── VPD (ฟังก์ชันล้วน) ────────────────────────────────
+// tests/vpd_calc.check.js ดึงบล็อกระหว่าง VPD_BEGIN…VPD_END ไปรันตรงๆ — อย่าให้บล็อกนี้แตะ DOM/ตัวแปรภายนอก
+// VPD_BEGIN
+// ⚠️ Unverified: ช่วงเป้าหมายนี้ยังไม่มีแหล่งอ้างอิงยืนยัน (ค้นแล้ว 2026-09-19 ไม่พบช่วงทั่วไปที่อ้างได้ — งานที่พบเป็น
+//    มะเขือเทศชนิดเดียว: PMC4519188, ตั้งพ่นหมอกที่ 0.5 kPa) และเหมาะกับพืชแต่ละชนิด/ช่วงโตต่างกัน
+//    เมื่อรู้ชนิดผักที่ปลูกจริง ให้แก้เฉพาะตรงนี้ที่เดียว แล้วอัปเดตข้อความอ้างอิงด้านล่าง
+const VPD_BAND = { min: 0.8, max: 1.2 };   // kPa
+
+// Tetens: ความดันไอน้ำอิ่มตัว (kPa) ที่ tC °C · VPD = อิ่มตัว × (1 − RH/100)
+// ถือว่าอุณหภูมิใบ = อุณหภูมิอากาศ (ไม่มี sensor วัดใบ) · ค่าไม่ครบ/ไม่ใช่ตัวเลข/RH นอก 0–100 → null (ไม่ใช่ 0)
+function calcVPD(tC, rh) {
+  if (typeof tC !== 'number' || typeof rh !== 'number') return null;
+  if (!Number.isFinite(tC) || !Number.isFinite(rh) || rh < 0 || rh > 100) return null;
+  const svp = 0.6108 * Math.exp(17.27 * tC / (tC + 237.3));
+  return svp * (1 - rh / 100);
+}
+
+// 'low' | 'ok' | 'high' | null — ขอบเขตทั้งสองด้านนับเป็น 'ok'
+function vpdStatus(vpd) {
+  if (typeof vpd !== 'number' || !Number.isFinite(vpd)) return null;
+  if (vpd < VPD_BAND.min) return 'low';
+  if (vpd > VPD_BAND.max) return 'high';
+  return 'ok';
+}
+
+function vpdBandNote() {
+  return `ช่วงอ้างอิงชั่วคราว ${VPD_BAND.min}–${VPD_BAND.max} kPa (ยังไม่ยืนยันแหล่งที่มา)`;
+}
+// VPD_END
+
 // ── Loading Skeleton ──────────────────────────────────
 const GAUGE_INIT = [
   ['airTempGauge',   0, 50, '#16a34a', '°C'],
   ['airHumGauge',    0, 100,'#2563eb', '%'],
   ['waterTempGauge', 0, 50, '#0f766e', '°C'],
+  ['vpdGauge',       0, 3,  '#d97706', 'kPa'],
 ];
 let sensorsEverLoaded = false;
 
@@ -1184,6 +1228,7 @@ function startListeners() {
 
     // การ์ดน้ำวาดในฟังก์ชันแยก — ต้องวาดใหม่ได้จาก status listener ด้วย (ดู renderWaterCard)
     renderWaterCard();
+    renderVpdCard();   // VPD ใช้ค่าที่เพิ่ง cache ไว้ด้านบน — เรียกจาก status listener ด้วยเหมือนการ์ดน้ำ
 
     if (d.uptime_sec != null) {
       const u = d.uptime_sec;
@@ -1234,6 +1279,7 @@ function startListeners() {
     // ⚠️ ต้องวาดการ์ดน้ำใหม่ตรงนี้ด้วย — water_ok เพิ่งเปลี่ยนจาก listener นี้
     // ถ้าไม่เรียก การ์ดจะค้างสถานะเก่าจนกว่า sensors จะยิงรอบถัดไป (บั๊กเดิม ดู renderWaterCard)
     renderWaterCard();
+    renderVpdCard();   // sensor_ok/sensor_stale เพิ่งเปลี่ยนจาก listener นี้ — ต้องวาด VPD ใหม่ตามด้วย
     updateRelayUI('ch4', d.ch4_spare);   // ปั๊มน้ำ
     updateRelayUI('ch3', d.ch3_fan_in);  // พัดลม
     updateRelayUI('ch1', d.ch1_pump);    // พัดลมสำรอง
@@ -1388,6 +1434,34 @@ function renderWaterCard() {
   if      (wt > T.water_temp_alert)     { setBadge('waterTempBadge','badge-danger','ร้อน'); setText('waterTempStatus',`🔴 น้ำร้อนเกินไป (เกิน ${T.water_temp_alert}°C)`); }
   else if (wt > T.water_temp_alert - 3) { setBadge('waterTempBadge','badge-warn','สูง');    setText('waterTempStatus','🟡 น้ำอุ่น — ใกล้เกณฑ์เตือน'); }
   else                                  { setBadge('waterTempBadge','badge-ok','ปกติ');     setText('waterTempStatus','🟢 อุณหภูมิน้ำปกติ'); }
+}
+
+// การ์ด VPD — วาดจากค่า air_temp/air_humidity ที่ cache ไว้ (sensorLive) + sysStatus
+// เรียกจากทั้ง sensors และ status listener แบบเดียวกับ renderWaterCard: sensor_ok/sensor_stale มาจาก status listener
+// ถ้าวาดจาก sensors listener อย่างเดียว การ์ดจะค้างสถานะเก่าจนกว่าจะมี push รอบถัดไป
+// ตอน sensor เสีย/ขัดข้อง: ไม่คำนวณจากค่าเก่า (VPD จะดูเหมือนสด) — โชว์ "—" แล้วหรี่เกจ
+function renderVpdCard() {
+  const gauge = document.getElementById('vpdGauge');
+  if (!gauge) return;
+  setText('vpdNote', vpdBandNote());
+
+  const bad = sysStatus.sensor_stale || sysStatus.sensor_ok === false;
+  gauge.classList.toggle('stale', !!bad);
+  if (bad) {
+    gauge.innerHTML = buildGauge(null, 0, 3, '#d97706', 'kPa', 2);
+    if (sysStatus.sensor_stale) { setBadge('vpdBadge','badge-danger','เสีย');    setText('vpdStatus','🛑 เซ็นเซอร์อากาศเสีย — ไม่แสดง VPD'); }
+    else                        { setBadge('vpdBadge','badge-warn','ขัดข้อง');   setText('vpdStatus','🔧 อ่านค่าไม่ได้ชั่วคราว — ไม่แสดง VPD'); }
+    return;
+  }
+
+  const vpd = calcVPD(sensorLive.airTemp, sensorLive.airHum);
+  if (vpd == null) return;   // ยังไม่เคยได้ค่าครบ — คงสถานะ "รอข้อมูล" ไว้
+  gauge.innerHTML = buildGauge(vpd, 0, 3, '#d97706', 'kPa', 2);
+  // ทุกสถานะมีข้อความ+emoji กำกับ ไม่พึ่งสีอย่างเดียว (คนตาบอดสี/จอสะท้อนแสงในโรงเรือนก็อ่านได้)
+  const st = vpdStatus(vpd);
+  if      (st === 'low')  { setBadge('vpdBadge','badge-warn','ต่ำ');      setText('vpdStatus',`🔵 VPD ต่ำ (<${VPD_BAND.min} kPa) — อากาศชื้นมาก`); }
+  else if (st === 'high') { setBadge('vpdBadge','badge-warn','สูง');      setText('vpdStatus',`🟡 VPD สูง (>${VPD_BAND.max} kPa) — อากาศแห้ง`); }
+  else                    { setBadge('vpdBadge','badge-ok','เหมาะสม');    setText('vpdStatus','🟢 VPD อยู่ในช่วงอ้างอิง'); }
 }
 
 function updateHealth() {
@@ -2210,24 +2284,35 @@ const SENSOR_CFG = {
   airTemp:   {label:'🌡️ อุณหภูมิอากาศ', unit:'°C', color:'#16a34a', logAvg:'air_temp_avg',      logMin:'air_temp_min',      logMax:'air_temp_max'},
   airHum:    {label:'💧 ความชื้นอากาศ',  unit:'%',  color:'#2563eb', logAvg:'air_humidity_avg',   logMin:'air_humidity_min',   logMax:'air_humidity_max'},
   waterTemp: {label:'🌊 อุณหภูมิน้ำ',    unit:'°C', color:'#0f766e', logAvg:'water_temp_avg',     logMin:'water_temp_min',     logMax:'water_temp_max'},
+  // VPD ไม่มีใน /logs — คำนวณจาก air_temp_avg + air_humidity_avg รายชั่วโมง (derived) · ไม่มีเส้นสูงสุด/ต่ำสุด
+  // เพราะ min/max ของสองค่านั้นไม่ได้เกิดพร้อมกัน · ค่าเฉลี่ยของ VPD ≠ VPD ของค่าเฉลี่ย จึงเป็นค่าประมาณ (ระบุไว้ที่ชื่อ)
+  vpd:       {label:'🍃 VPD (ประมาณ)',   unit:'kPa',color:'#d97706', derived:true, decimals:2, trendStep:0.05},
 };
 
 function openSensorDetail(key) {
   const cfg = SENSOR_CFG[key]; if (!cfg) return;
-  const cur  = sensorLive[key];
-  const prev = sensorLive[key + '_prev'];
+  const dp = cfg.decimals ?? 1;
+  // VPD: เซ็นเซอร์อากาศเสีย/ขัดข้อง → ไม่แสดงค่า (ตรงกับการ์ด) · ไม่งั้นคำนวณจาก cache ของอุณหภูมิ+ความชื้น
+  const airBad = sysStatus.sensor_stale || sysStatus.sensor_ok === false;
+  const cur  = cfg.derived ? (airBad ? null : calcVPD(sensorLive.airTemp, sensorLive.airHum))
+                           : sensorLive[key];
+  const prev = cfg.derived ? (airBad ? null : calcVPD(sensorLive.airTemp_prev, sensorLive.airHum_prev))
+                           : sensorLive[key + '_prev'];
+  const step = cfg.trendStep ?? 0.2;
 
   document.getElementById('detailName').textContent        = cfg.label;
   document.getElementById('detailVal').style.color         = cfg.color;
   document.getElementById('detailUnit').textContent        = ' ' + cfg.unit;
-  document.getElementById('detailVal').textContent         = cur != null ? (Number.isInteger(cur) ? cur : cur.toFixed(1)) : '—';
+  document.getElementById('detailVal').textContent         = cur != null
+    ? (cfg.decimals != null ? cur.toFixed(dp) : (Number.isInteger(cur) ? cur : cur.toFixed(1)))
+    : '—';
 
   let trendHtml = '';
   if (cur != null && prev != null) {
     const diff = cur - prev;
-    if      (diff >  0.2) trendHtml = `<span style="color:#ef4444">▲ +${diff.toFixed(1)}${cfg.unit}</span> จากรอบก่อน`;
-    else if (diff < -0.2) trendHtml = `<span style="color:#22c55e">▼ ${diff.toFixed(1)}${cfg.unit}</span> จากรอบก่อน`;
-    else                  trendHtml = `<span style="color:#94a3b8">→ คงที่</span>`;
+    if      (diff >  step) trendHtml = `<span style="color:#ef4444">▲ +${diff.toFixed(dp)}${cfg.derived?' ':''}${cfg.unit}</span> จากรอบก่อน`;
+    else if (diff < -step) trendHtml = `<span style="color:#22c55e">▼ ${diff.toFixed(dp)}${cfg.derived?' ':''}${cfg.unit}</span> จากรอบก่อน`;
+    else                   trendHtml = `<span style="color:#94a3b8">→ คงที่</span>`;
   }
   document.getElementById('detailTrend').innerHTML = trendHtml;
   ['detailMin','detailAvg','detailMax'].forEach(id => document.getElementById(id).textContent = '⏳');
@@ -2262,24 +2347,26 @@ async function loadDetailChart(key, cfg) {
     const td = sT.val()||{}, yd = sY.val()||{};
     const labels=[], avgData=[], minData=[], maxData=[];
     let sumV=0, minV=Infinity, maxV=-Infinity, cnt=0;
+    const dp   = cfg.decimals ?? 1;
+    const uTxt = cfg.derived ? ' ' + cfg.unit : cfg.unit;   // "1.25 kPa" — ตัวเลขติดหน่วยยาวอ่านยาก (°C/% เดิมไม่เว้น)
 
     for (let i=23; i>=0; i--) {
       const d  = new Date(now - i*3600000);
       const ds = fmtDate(d), hr = thHour(d);
       const e  = (ds===today ? td : yd)[hr] || null;
       labels.push(hr+':00');
-      const avg = e?.[cfg.logAvg] ?? null;
-      const mn  = e?.[cfg.logMin] ?? null;
-      const mx  = e?.[cfg.logMax] ?? null;
-      avgData.push(avg!=null ? +avg.toFixed(1) : null);
-      minData.push(mn !=null ? +mn.toFixed(1)  : null);
-      maxData.push(mx !=null ? +mx.toFixed(1)  : null);
+      const avg = cfg.derived ? calcVPD(e?.air_temp_avg, e?.air_humidity_avg) : (e?.[cfg.logAvg] ?? null);
+      const mn  = cfg.derived ? null : (e?.[cfg.logMin] ?? null);
+      const mx  = cfg.derived ? null : (e?.[cfg.logMax] ?? null);
+      avgData.push(avg!=null ? +avg.toFixed(dp) : null);
+      minData.push(mn !=null ? +mn.toFixed(dp)  : null);
+      maxData.push(mx !=null ? +mx.toFixed(dp)  : null);
       if (avg!=null) { sumV+=avg; cnt++; if(avg<minV)minV=avg; if(avg>maxV)maxV=avg; }
     }
 
-    document.getElementById('detailMin').textContent = cnt ? minV.toFixed(1)+cfg.unit : '—';
-    document.getElementById('detailAvg').textContent = cnt ? (sumV/cnt).toFixed(1)+cfg.unit : '—';
-    document.getElementById('detailMax').textContent = cnt ? maxV.toFixed(1)+cfg.unit : '—';
+    document.getElementById('detailMin').textContent = cnt ? minV.toFixed(dp)+uTxt : '—';
+    document.getElementById('detailAvg').textContent = cnt ? (sumV/cnt).toFixed(dp)+uTxt : '—';
+    document.getElementById('detailMax').textContent = cnt ? maxV.toFixed(dp)+uTxt : '—';
 
     loadEl.style.display = 'none'; canvas.style.display = 'block';
     const cc = chartColors();
@@ -2290,14 +2377,15 @@ async function loadDetailChart(key, cfg) {
         {label:'สูงสุด', data:maxData, borderColor:cfg.color+'66', borderWidth:1.5, borderDash:[5,4], pointRadius:0, tension:.35, spanGaps:true, fill:false},
         {label:'เฉลี่ย', data:avgData, borderColor:cfg.color,      borderWidth:2.5, pointRadius:2, pointHoverRadius:5, tension:.35, spanGaps:true, fill:true, backgroundColor:cfg.color+'1a'},
         {label:'ต่ำสุด', data:minData, borderColor:cfg.color+'44', borderWidth:1.5, borderDash:[5,4], pointRadius:0, tension:.35, spanGaps:true, fill:false},
-      ]},
+      ].filter(s => !cfg.derived || s.label === 'เฉลี่ย')
+       .map(s => cfg.derived ? {...s, label:'VPD เฉลี่ยรายชั่วโมง (ประมาณ)'} : s)},
       options:{
         responsive:true, maintainAspectRatio:false,
         interaction:{mode:'index',intersect:false},
         plugins:{
           legend:{display:true,position:'bottom',labels:{boxWidth:10,font:{size:11,family:'Prompt'},color:cc.tick,padding:12}},
           tooltip:{backgroundColor:'#14532d',titleColor:'#86efac',bodyColor:'#dcfce7',padding:9,cornerRadius:8,
-            callbacks:{label:c=>c.raw==null?`${c.dataset.label}: —`:`${c.dataset.label}: ${c.raw}${cfg.unit}`}},
+            callbacks:{label:c=>c.raw==null?`${c.dataset.label}: —`:`${c.dataset.label}: ${c.raw}${uTxt}`}},
         },
         scales:{
           x:{grid:{color:cc.grid},ticks:{color:cc.tick,font:{size:10,family:'Prompt'},maxTicksLimit:8,maxRotation:0}},
